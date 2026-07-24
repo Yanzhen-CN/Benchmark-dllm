@@ -1,0 +1,36 @@
+# Appendix D.2 — one model, one file, both configs nested under `configs:`.
+# Best and Fast are tested together in one process by default (see cli.py /
+# README "atomic unit = model") — they share this same checkpoint, so it
+# only gets loaded once (models/model_cache.py).
+#
+# `model_name_or_path` is an HF Hub repo id (e.g. "org/model-name"), NOT a
+# local filesystem path — `from_pretrained` downloads it on first use into
+# the HF cache (see dllm_bench/hf_cache.py: defaults to ./.hf_cache under the
+# current directory rather than ~/.cache/huggingface, so it lands on
+# whatever disk/volume the project itself is on). Run `python
+# prepare_model.py --model-config configs/models/dream.yaml` to warm that
+# cache ahead of time instead of downloading lazily mid-benchmark.
+#
+# TODO before formal runs: confirm the shipped HF checkpoint's sampler is
+# already integrated into generate(), or needs the adapter shim described in
+# Appendix D.2 (see dllm_bench/models/hf_diffusion.py).
+model: dream
+configs:
+  best:
+    # gen_length=1024, steps=1024. When a task's output cap is below 1024,
+    # use steps = gen_length instead (set at the experiment level).
+    adapter: dllm_bench.models.hf_diffusion.DreamAdapter
+    init_kwargs:
+      model_name_or_path: "TODO-confirm-dream-hf-repo-id"
+    step_config:
+      gen_length: 1024
+      steps: 1024
+  fast:
+    # gen_length=1024, steps=512. When a task's output cap is below 1024,
+    # use steps = gen_length / 2 instead (set at the experiment level).
+    adapter: dllm_bench.models.hf_diffusion.DreamAdapter
+    init_kwargs:
+      model_name_or_path: "TODO-confirm-dream-hf-repo-id"
+    step_config:
+      gen_length: 1024
+      steps: 512

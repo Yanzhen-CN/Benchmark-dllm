@@ -1,0 +1,11 @@
+dataset: structeval_t
+dataset_class: dllm_bench.datasets.structeval_t.StructEvalTDataset
+primary_metric: complete_correct_rate
+aux_metrics: [format_valid_rate, structure_progress, content_progress, field_completion_rate]
+sample_size: 150
+seed: 42
+# Appendix A.2 — generation-strategy subset (used for section 4.3, not this
+# section-1 score): 20-30 samples, ~4-6 per format, balanced across
+# JSON/YAML/XML/TOML/CSV.
+strategy_subset_size: 25
+strategy_formats: [json, yaml, xml, toml, csv]

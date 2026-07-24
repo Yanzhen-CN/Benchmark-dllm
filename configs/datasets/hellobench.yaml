@@ -1,0 +1,13 @@
+# Section 2.2. Target output lengths: 2K/4K words. Section 6 sampling:
+# 10-20 samples per length.
+dataset: hellobench
+dataset_class: dllm_bench.datasets.hellobench.HelloBenchDataset
+primary_metric: helloeval_score
+aux_metrics: [length_compliance_rate, seq_rep_4]
+target_lengths_words: [2000, 4000]
+samples_per_length: 15
+seed: 42
+# NOTE: HelloEval is an LLM-judge rubric in the real benchmark. Without a
+# judge_fn wired in, HelloBenchDataset falls back to a repetition+length
+# heuristic that is NOT the real metric (see dllm_bench/datasets/hellobench.py).
+judge_fn: null

@@ -1,0 +1,18 @@
+# Appendix D.4 — large-model reference, not part of same-scale conclusions
+# (section 5). Public checkpoint, directly loadable via `transformers`
+# (`trust_remote_code=True` for the `diffusion_gemma` model_type), no
+# additional adapter shim needed. Trace capture via an observational forward
+# hook on the sampler's `accept_canvas` (see dllm_bench/models/dg.py) —
+# following *How DiffusionGemma Actually Commits Tokens*. Only one config,
+# kept under the same `configs:` schema as every other model.
+#
+# `model_name_or_path` is an HF Hub repo id — `from_pretrained` downloads it
+# on first use into ./.hf_cache (see dllm_bench/hf_cache.py), not a local
+# path. `python prepare_model.py --model-config configs/models/dg.yaml` warms
+# that cache ahead of time (this is a large checkpoint, worth pre-warming).
+model: dg
+configs:
+  official:
+    adapter: dllm_bench.models.dg.DGAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it

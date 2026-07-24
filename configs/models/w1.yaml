@@ -1,0 +1,35 @@
+# Appendix D.3 — closed-source, API-only. Kept as configuration only for now
+# (per project decision: W1 will be integrated against a custom/internal API
+# later, so this file just reserves the shape — no adapter code changes
+# needed until that API is finalized).
+#
+# `api_base_url`/`W1_API_KEY` must be supplied via environment (not committed
+# here). `trace_available: false` until the API's trace payload granularity
+# is confirmed against Part 4's requirements (per-position mask state +
+# entropy/confidence per step).
+#
+# Timing is the API's self-reported TPS/latency (TimingResult.source=
+# "self_reported"), not our measured protocol — must be reported in a
+# separate column, never blended with measured numbers (section 5). Energy
+# per Sample is unavailable (no local energy-counter access to a third-party
+# API).
+model: w1
+configs:
+  standard:
+    adapter: dllm_bench.models.w1_api.W1ApiAdapter
+    init_kwargs:
+      api_base_url: "${W1_API_BASE_URL}"
+      checkpoint: w1
+      trace_available: false
+  jump:
+    adapter: dllm_bench.models.w1_api.W1ApiAdapter
+    init_kwargs:
+      api_base_url: "${W1_API_BASE_URL}"
+      checkpoint: w1
+      trace_available: false
+  gidd:
+    adapter: dllm_bench.models.w1_api.W1ApiAdapter
+    init_kwargs:
+      api_base_url: "${W1_API_BASE_URL}"
+      checkpoint: w1
+      trace_available: false

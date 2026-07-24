@@ -1,0 +1,39 @@
+# Appendix D.1 — one model, one file, both configs nested under `configs:`.
+# Best and Fast are tested together in one process by default (see cli.py /
+# README "atomic unit = model") — they share this same checkpoint, so it
+# only gets loaded once (models/model_cache.py).
+#
+# `model_name_or_path` is an HF Hub repo id (e.g. "org/model-name"), NOT a
+# local filesystem path — `from_pretrained` downloads it on first use into
+# the HF cache (see dllm_bench/hf_cache.py: defaults to ./.hf_cache under the
+# current directory rather than ~/.cache/huggingface, so it lands on
+# whatever disk/volume the project itself is on). Run `python
+# prepare_model.py --model-config configs/models/illada.yaml` to warm that
+# cache ahead of time instead of downloading lazily mid-benchmark.
+#
+# TODO before formal runs: confirm the official iLLaDA repo id and whether it
+# is already a HF `PreTrainedModel` subclass or needs the adapter shim
+# described in Appendix D.1 (see dllm_bench/models/hf_diffusion.py).
+model: illada
+configs:
+  best:
+    # block_length=32, steps_per_block=32 (1 token/step), corresponds to
+    # Bertolani et al. Figure 2's steps=1024 point (LLaDa curve used as a
+    # proxy for iLLaDA, which the paper does not test directly).
+    adapter: dllm_bench.models.hf_diffusion.IlladaAdapter
+    init_kwargs:
+      model_name_or_path: "TODO-confirm-illada-hf-repo-id"
+    step_config:
+      gen_length: null  # falls back to request.max_new_tokens (see hf_diffusion.py)
+      block_length: 32
+      steps_per_block: 32
+  fast:
+    # block_length=32, steps_per_block=16 (2 tokens/step), corresponds to
+    # Bertolani et al. Figure 2's steps=512 point.
+    adapter: dllm_bench.models.hf_diffusion.IlladaAdapter
+    init_kwargs:
+      model_name_or_path: "TODO-confirm-illada-hf-repo-id"
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 16

@@ -1,0 +1,9 @@
+dataset: mbpp
+dataset_class: dllm_bench.datasets.mbpp.MBPPDataset
+primary_metric: pass_at_1
+aux_metrics: [executable_rate, complete_rate]
+sample_size: 150
+seed: 42
+# Passed straight to MBPPDataset(**dataset_kwargs) by registry.build_dataset.
+dataset_kwargs:
+  timeout_s: 10.0

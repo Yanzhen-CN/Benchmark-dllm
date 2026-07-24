@@ -1,0 +1,8 @@
+dataset: sudoku
+dataset_class: dllm_bench.datasets.sudoku.SudokuDataset
+primary_metric: accuracy_by_difficulty  # reported separately for easy/hard, not blended
+aux_metrics: [cell_accuracy, constraint_satisfaction_rate, completion_rate, conflict_rate]
+sample_size: 150
+seed: 42
+# Difficulty is derived (classify_difficulty), not assigned: easy = solvable
+# by naked-single elimination alone; hard = needs >=1 trial-and-error step.

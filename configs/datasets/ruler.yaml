@@ -1,0 +1,14 @@
+# Section 2.1. Lengths: the largest length every model can jointly run, plus
+# each model's own 0.5x/1.0x max legal context. Positions: front/middle/back.
+# Section 6 sampling: 20 samples per (length x position).
+dataset: ruler
+dataset_class: dllm_bench.datasets.ruler.RulerDataset
+primary_metric: accuracy
+aux_metrics: [partial_match_rate]
+task_types: [niah, multi_hop, aggregation]
+positions: [front, middle, back]
+samples_per_length_x_position: 20
+seed: 42
+# NOTE: build_niah_sample() in dllm_bench/datasets/ruler.py is a synthetic
+# placeholder generator — swap in the official RULER task templates before
+# formal runs.

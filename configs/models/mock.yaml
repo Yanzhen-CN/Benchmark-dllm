@@ -1,0 +1,18 @@
+# Pure-Python fake backend for exercising the framework end-to-end without a
+# GPU/real weights (see dllm_bench/models/mock.py). Useful for CI and for
+# smoke-testing the pipeline/report/CLI, including the default
+# sweep-every-variant-in-one-process behavior (mock has no real weights to
+# share via models/model_cache.py, but the CLI/output-path mechanics are the
+# same as a real multi-variant model like illada.yaml).
+model: mock
+configs:
+  default:
+    adapter: dllm_bench.models.mock.MockDiffusionAdapter
+    init_kwargs:
+      name: mock
+      steps: 8
+  fast:
+    adapter: dllm_bench.models.mock.MockDiffusionAdapter
+    init_kwargs:
+      name: mock
+      steps: 4
