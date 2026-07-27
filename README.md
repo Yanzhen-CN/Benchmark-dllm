@@ -40,7 +40,10 @@ point that needs a real checkpoint/API/judge/GPU to finish.
 ## Layout
 
 ```
-run_bench.py                   # main entry: full matrix by default, -m filters models
+run_bench.py                   # compatibility: same-machine all-in-one pipeline
+run_model.py                   # server: generate model_output only
+run_score.py                   # local: score transferred model_output
+run_visualization.py           # local: visualize + build reports
 setup_venv.py / run_tests.py   # venv dispatcher / test runner (see below)
 prepare_model.py               # pre-warm a model's HF checkpoint cache (see below)
 prepare_data.py                # prepare/cache every real dataset in the matrix
@@ -73,28 +76,32 @@ src/dllm_bench/
 tests/              # one file per module area; see Testing for the current suite
 ```
 
-## Main entry point
+## Main entry points
 
-`run_bench.py` is the normal way to launch the benchmark. With no `-m`, it
-runs every model and variant declared in `configs/experiments/full_matrix.yaml`:
+Use the stage-specific entry points for the normal server/local workflow.
+With no `-m`, each command covers every model and variant declared in
+`configs/experiments/full_matrix.yaml`:
 
 ```bash
-python run_bench.py                    # all matrix models
-python run_bench.py -m illada          # iLLaDA Best + Fast
-python run_bench.py -m dreamreasoner   # DreamReasoner Best + Fast
-python run_bench.py -m qwen3_4b        # AR baseline only
-python run_bench.py -m diffusiongemma  # large-model reference
-python run_bench.py -m illada -m qwen3_4b
+# GPU server: generation only
+python run_model.py
+python run_model.py -m illada
+
+# Local machine after copying output/model_output/
+python run_score.py
+python run_visualization.py
 ```
 
 Useful controls:
 
 ```bash
-python run_bench.py --list-models
-python run_bench.py --dry-run -m illada
-python run_bench.py -m illada --stage generate --n-samples 20
-python run_bench.py --real-data  # use samples_file entries from the matrix
+python run_model.py --list-models
+python run_model.py --dry-run -m illada
+python run_model.py -m illada --n-samples 20
+python run_score.py --dry-run -m illada
 ```
+
+`run_bench.py` remains available for backward-compatible same-machine runs.
 
 Runs are resumable by default. The built-in demo dataset is the default. A
 real-data run checks the normalized cache first and automatically invokes the
@@ -125,7 +132,7 @@ Every model has one public script with the same four actions:
 | `setup` | Create or update the model-specific virtualenv |
 | `check` | Validate dependencies and construct every configured adapter |
 | `prepare` | Download and load the checkpoint without generating samples |
-| `run` | Run generation, scoring, and the result table |
+| `run` | Internal compatibility action used by the top-level dispatcher |
 
 Available entry points and environments:
 
@@ -136,7 +143,7 @@ Available entry points and environments:
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
 | W1 | `venv_scripts/w1.py` | `.venvs/w1` |
-| Mock | `venv_scripts/mock.py` | `.venvs/mock` |
+| Local non-model stages | `venv_scripts/root.py` | `.venvs/root` |
 
 Example lifecycle:
 
@@ -144,11 +151,11 @@ Example lifecycle:
 python venv_scripts/qwen3_4b.py setup
 python venv_scripts/qwen3_4b.py check
 python venv_scripts/qwen3_4b.py prepare
-python venv_scripts/qwen3_4b.py run
+python run_model.py -m qwen3_4b
 ```
 
-`run` creates the environment automatically when it is missing, then launches
-the model's matrix rows explicitly with that venv's Python executable. It does
+`run_model.py` creates the environment automatically when it is missing, then
+launches the model's generation rows with that venv's Python executable. It does
 not depend on shell activation. Override settings with environment variables:
 
 ```bash
@@ -202,7 +209,7 @@ python prepare_data.py
 python prepare_data.py --force  # rebuild matching prepared artifacts
 ```
 
-The first command automatically creates the lightweight `.venvs/data`
+The first command automatically creates the lightweight `.venvs/root`
 environment when missing, installs only the base project dependencies there,
 and restarts itself inside that environment. It does not modify the system
 Python or install model/Torch dependencies. Model preparation similarly
@@ -225,7 +232,7 @@ by a manifest. The fingerprint covers the dataset YAML, loader implementation,
 and raw source contents, so rerunning is idempotent while source/config changes
 create a distinct cache artifact.
 
-`python run_bench.py --real-data` uses exactly the same function: cache hit
+`python run_model.py` uses exactly the same function: cache hit
 means immediate reuse; cache miss means prepare first, then start model work.
 Data download, validation, normalization, and loading therefore remain outside
 the per-sample timing window. A dataset without an official loader must provide
@@ -300,12 +307,25 @@ dllm-bench generate --model-config configs/models/illada.yaml \
   --samples-file data/gsm8k.jsonl --max-new-tokens 256
 ```
 
-Run the complete declared matrix with isolated model environments:
+Recommended cross-machine workflow:
 
 ```bash
-python prepare_data.py          # recommended: finish data work first
-python run_bench.py --real-data # also auto-prepares any missing artifact
+# GPU server: system Python only dispatches into managed venvs
+python prepare_data.py
+python prepare_model.py
+python run_model.py --output-root output
+
+# Copy output/model_output/ to the local machine, then:
+python prepare_data.py
+python run_score.py --output-root output
+python run_visualization.py --output-root output
 ```
+
+`run_model.py` always runs generation only and uses `.venvs/<model>`.
+`run_score.py` and `run_visualization.py` always use `.venvs/root`; they never
+instantiate model adapters or load weights. `run_bench.py` remains as a
+backward-compatible same-machine all-stage entry point, but is not the
+recommended server/local workflow.
 
 Pass `--variant best` to run just one, or `--variants best,fast` to name an
 explicit subset. `score`/`visualize` deterministically reconstruct the same

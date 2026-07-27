@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from click.testing import CliRunner
 
-import prepare_data as prepare_data_script
+from venv_scripts import root as root_venv
 from dllm_bench.cli import main
 from dllm_bench.datasets.base import Dataset, Sample, ScoreResult
 from dllm_bench.runner.data_preparation import (
@@ -124,12 +124,12 @@ def test_prepare_data_help_works_outside_repository_without_creating_venv(tmp_pa
     assert "--experiment-config" in result.stdout
 
 
-def test_prepare_data_creates_and_reexecutes_in_dedicated_venv(tmp_path, monkeypatch):
-    data_venv = tmp_path / ".venvs" / "data"
-    python = prepare_data_script._venv_python(data_venv)
+def test_prepare_data_creates_and_reexecutes_in_root_venv(tmp_path, monkeypatch):
+    root_directory = tmp_path / ".venvs" / "root"
+    python = root_venv.venv_python(root_directory)
     commands: list[list[str]] = []
-    monkeypatch.setattr(prepare_data_script, "DATA_VENV", data_venv)
-    monkeypatch.delenv(prepare_data_script._INSIDE_DATA_VENV, raising=False)
+    monkeypatch.setattr(root_venv, "ROOT_VENV", root_directory)
+    monkeypatch.delenv(root_venv.INSIDE_ROOT_VENV, raising=False)
 
     def fake_run(command, **kwargs):
         command = [str(value) for value in command]
@@ -137,19 +137,19 @@ def test_prepare_data_creates_and_reexecutes_in_dedicated_venv(tmp_path, monkeyp
         if command[1:3] == ["-m", "venv"]:
             python.parent.mkdir(parents=True, exist_ok=True)
             python.touch()
-        if command[-2:] == ["-c", "import dllm_bench, yaml"]:
+        if command[-2:] == ["-c", "import dllm_bench, yaml, matplotlib"]:
             return SimpleNamespace(returncode=1)
         return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(prepare_data_script.subprocess, "run", fake_run)
+    monkeypatch.setattr(root_venv.subprocess, "run", fake_run)
     monkeypatch.setattr(
-        prepare_data_script.os,
+        root_venv.os,
         "execve",
         lambda *args: (_ for _ in ()).throw(RuntimeError("reexec")),
     )
 
     with pytest.raises(RuntimeError, match="reexec"):
-        prepare_data_script._run_in_data_venv()
+        root_venv.run_in_root_venv(PREPARE_SCRIPT, [])
 
     assert any(command[1:3] == ["-m", "venv"] for command in commands)
     assert any(command[-4:] == ["pip", "install", "-e", "."] for command in commands)

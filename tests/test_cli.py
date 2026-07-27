@@ -9,6 +9,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import dllm_bench.cli as cli_module
 from dllm_bench.cli import main
 from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.gsm8k import GSM8KDataset
@@ -23,7 +24,7 @@ def _run(runner, args):
     return result
 
 
-def test_generate_score_visualize_report_pipeline(tmp_path):
+def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     runner = CliRunner()
     output_root = tmp_path / "output"
     model_config = str(CONFIGS_DIR / "models" / "mock.yaml")
@@ -51,6 +52,16 @@ def test_generate_score_visualize_report_pipeline(tmp_path):
         "--output-root", str(output_root),
     ])
     assert "generated=0 skipped=3" in resume_result.output
+
+    # Local stages derive output names from YAML and must never construct a
+    # model adapter or touch model dependencies/weights.
+    monkeypatch.setattr(
+        cli_module,
+        "build_model_adapter",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("local stage constructed a model adapter")
+        ),
+    )
 
     score_result = _run(runner, [
         "score",

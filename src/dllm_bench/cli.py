@@ -50,6 +50,7 @@ from .registry import (
     dataset_run_defaults,
     list_model_variants,
     load_yaml,
+    model_name,
 )
 from .report.tables import (
     compute_converted_row,
@@ -227,11 +228,11 @@ def score(
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
     samples, _ = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
+    configured_model = model_name(model_config)
 
     for v in variant_list:
-        adapter = build_model_adapter(model_config, variant=v)
-        model_out = model_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
-        score_out = score_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
+        model_out = model_output_dir(output_root, configured_model, v, dataset.name)
+        score_out = score_output_dir(output_root, configured_model, v, dataset.name)
         result = run_scoring(dataset, samples, model_out, score_out, resume=resume)
 
         click.echo(f"[{v}] q={result.summary.q:.4f}  scored={result.scored}  skipped={result.skipped}  -> {score_out / 'summary.json'}")
@@ -259,6 +260,7 @@ def visualize(
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
     samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
+    configured_model = model_name(model_config)
 
     all_samples = samples
     if sample_ids:
@@ -274,10 +276,9 @@ def visualize(
         representative_ids = {sample.sample_id for sample in all_samples}
 
     for v in variant_list:
-        adapter = build_model_adapter(model_config, variant=v)
-        model_out = model_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
-        score_out = score_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
-        viz_out = visualization_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
+        model_out = model_output_dir(output_root, configured_model, v, dataset.name)
+        score_out = score_output_dir(output_root, configured_model, v, dataset.name)
+        viz_out = visualization_output_dir(output_root, configured_model, v, dataset.name)
 
         if not (model_out / "_meta.json").exists():
             raise click.UsageError(f"no _meta.json under {model_out} — run `dllm-bench generate` first")

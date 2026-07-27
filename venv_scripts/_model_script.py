@@ -44,7 +44,6 @@ PROFILES: Mapping[str, ModelProfile] = {
         "dev,diffusiongemma,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
     ),
     "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
-    "mock": ModelProfile("mock", "mock", "configs/models/mock.yaml", "dev"),
 }
 
 
