@@ -50,9 +50,19 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
 
         metadata["torch_version"] = torch.__version__
         metadata["cuda_available"] = torch.cuda.is_available()
+        metadata["cuda_runtime"] = torch.version.cuda
+        metadata["cuda_device_count"] = torch.cuda.device_count()
+        metadata["cuda_devices"] = [
+            torch.cuda.get_device_name(index)
+            for index in range(torch.cuda.device_count())
+        ]
     except ImportError:
         metadata["torch_version"] = None
         metadata["cuda_available"] = False
+
+    checkpoint = getattr(adapter, "_model_name", None)
+    if checkpoint:
+        metadata["checkpoint"] = checkpoint
 
     git_commit = _get_git_commit()
     if git_commit:

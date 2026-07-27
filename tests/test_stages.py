@@ -96,6 +96,40 @@ def test_run_generation_resumes_and_skips_existing_samples(tmp_path):
     assert call_count["n"] == 0  # nothing re-generated
 
 
+def test_run_generation_refuses_to_mix_legacy_measurement_protocol(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    samples = build_demo_samples("gsm8k", n=1)
+    out_dir = tmp_path / "model_output"
+    out_dir.mkdir()
+    (out_dir / "_meta.json").write_text(
+        '{"run_metadata": {"measurement_protocol": "legacy"}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="--no-resume"):
+        run_generation(
+            adapter, "gsm8k", samples, max_new_tokens=16, out_dir=out_dir
+        )
+
+
+def test_run_generation_require_all_metrics_fails_before_persisting_missing_metrics(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    samples = build_demo_samples("gsm8k", n=1)
+    out_dir = tmp_path / "model_output"
+
+    with pytest.raises(RuntimeError, match="energy_joules, peak_vram_gb"):
+        run_generation(
+            adapter,
+            "gsm8k",
+            samples,
+            max_new_tokens=16,
+            out_dir=out_dir,
+            require_all_metrics=True,
+        )
+
+    assert not (out_dir / f"{samples[0].sample_id}.json").exists()
+
+
 def test_run_generation_no_resume_regenerates_everything(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
     samples = build_demo_samples("gsm8k", n=2)

@@ -38,6 +38,8 @@ DEFAULT_DIFFUSIONGEMMA_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
 
 
 class DiffusionGemmaAdapter(BaseModelAdapter):
+    deferred_measurement = True
+
     def __init__(
         self,
         model_name_or_path: str = DEFAULT_DIFFUSIONGEMMA_CHECKPOINT,
@@ -119,6 +121,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             # processor before formal runs.
             encoded = self._processor(text=request.prompt, return_tensors="pt").to(self._device)
             prompt_len = encoded["input_ids"].shape[1]
+            self._start_measurement()
             with torch.inference_mode():
                 output = self._model.generate(
                     **encoded,
@@ -127,6 +130,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
                     disable_compile=True,
                     return_dict_in_generate=True,
                 )
+            self._stop_measurement()
         finally:
             self._model._prepare_sampler = original_prepare_sampler
 

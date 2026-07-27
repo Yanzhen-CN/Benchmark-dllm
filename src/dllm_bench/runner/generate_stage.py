@@ -8,6 +8,7 @@ on a GPU box, with ``model_output/`` copied elsewhere afterward).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -30,6 +31,8 @@ GenerationProgress = Callable[
     [str, int, int, Sample, GenerationResult | None], None
 ]
 
+MEASUREMENT_PROTOCOL = "gpu-synced-v2"
+
 
 def run_generation(
     adapter: ModelAdapter,
@@ -39,6 +42,7 @@ def run_generation(
     out_dir: str | Path,
     extra_config: dict | None = None,
     measure_compute: bool = False,
+    require_all_metrics: bool = False,
     seed: int = DEFAULT_SEED,
     resume: bool = True,
     progress: GenerationProgress | None = None,
@@ -50,13 +54,34 @@ def run_generation(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     meta_path = out_dir / "_meta.json"
+    if resume and meta_path.exists():
+        existing_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        existing_run = existing_meta.get("run_metadata", {})
+        if (
+            existing_run.get("measurement_protocol") != MEASUREMENT_PROTOCOL
+            or bool(existing_run.get("measure_compute")) != measure_compute
+            or bool(existing_run.get("require_all_metrics")) != require_all_metrics
+        ):
+            raise RuntimeError(
+                f"existing outputs under {out_dir} use an incompatible measurement "
+                "protocol or compute setting; rerun with --no-resume (overwrites this "
+                "dataset) or choose a fresh --output-root"
+            )
     if not (resume and meta_path.exists()):
         save_meta(
             {
                 "model_name": adapter.name,
                 "config_name": adapter.config_name,
                 "dataset_name": dataset_name,
-                "run_metadata": collect_run_metadata(adapter),
+                "run_metadata": collect_run_metadata(
+                    adapter,
+                    {
+                        "measurement_protocol": MEASUREMENT_PROTOCOL,
+                        "measure_compute": measure_compute,
+                        "require_all_metrics": require_all_metrics,
+                        "energy_backend": "nvml-total-energy",
+                    },
+                ),
             },
             meta_path,
         )
@@ -85,8 +110,29 @@ def run_generation(
         generation = adapter.generate(request)
 
         if measure_compute and hasattr(adapter, "profile_compute"):
+            if progress is not None:
+                progress("compute", index, len(samples), sample, generation)
             compute_handle = adapter.profile_compute(request)
             generation.compute_tflops = compute_handle.tflops if compute_handle.available else None
+
+        if require_all_metrics and generation.status.value == "success":
+            missing: list[str] = []
+            if generation.timing is None or generation.timing.wall_clock_seconds <= 0:
+                missing.append("timing")
+            if not adapter.natively_measures_resources:
+                if generation.energy_joules is None:
+                    missing.append("energy_joules")
+                if generation.peak_vram_gb is None:
+                    missing.append("peak_vram_gb")
+                if measure_compute and generation.compute_tflops is None:
+                    missing.append("compute_tflops")
+            if adapter.supports_trace and not generation.trace:
+                missing.append("trace")
+            if missing:
+                raise RuntimeError(
+                    f"sample {sample.sample_id} is missing required formal metrics: "
+                    f"{', '.join(missing)}"
+                )
 
         save_generation_result(generation, sample_path)
         generated += 1

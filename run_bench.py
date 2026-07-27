@@ -96,7 +96,18 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--real-data", dest="data_source", action="store_const", const="real")
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument("--output-root", default="output")
-    parser.add_argument("--measure-compute", action="store_true")
+    compute = parser.add_mutually_exclusive_group()
+    compute.add_argument("--measure-compute", dest="measure_compute", action="store_true")
+    compute.add_argument("--no-measure-compute", dest="measure_compute", action="store_false")
+    parser.set_defaults(measure_compute=False)
+    metrics = parser.add_mutually_exclusive_group()
+    metrics.add_argument("--require-all-metrics", dest="require_all_metrics", action="store_true")
+    metrics.add_argument("--allow-missing-metrics", dest="require_all_metrics", action="store_false")
+    parser.set_defaults(require_all_metrics=False)
+    resume = parser.add_mutually_exclusive_group()
+    resume.add_argument("--resume", dest="resume", action="store_true")
+    resume.add_argument("--no-resume", dest="resume", action="store_false")
+    parser.set_defaults(resume=True)
     parser.add_argument("--n-representative", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true", help="Print model script commands without running them")
     parser.add_argument("--list-models", action="store_true")
@@ -123,6 +134,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "STAGE": args.stage,
         "OUTPUT_ROOT": args.output_root,
         "MEASURE_COMPUTE": "1" if args.measure_compute else "0",
+        "REQUIRE_ALL_METRICS": "1" if args.require_all_metrics else "0",
+        "RESUME": "1" if args.resume else "0",
         "N_REPRESENTATIVE": str(args.n_representative),
     }
     if args.n_samples is not None:

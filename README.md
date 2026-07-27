@@ -327,6 +327,21 @@ instantiate model adapters or load weights. `run_bench.py` remains as a
 backward-compatible same-machine all-stage entry point, but is not the
 recommended server/local workflow.
 
+Formal `run_model.py` runs record timing, NVML energy, peak PyTorch VRAM,
+trace, and compute by default. Compute uses the design-approved separate FLOP
+profiling replay, so it increases total job duration but never contaminates
+the stored generation wall-clock/energy window. Formal runs also enable
+`--require-all-metrics`: a sample is not persisted if a required metric is
+unavailable, so an NVML or compute setup problem fails immediately instead of
+silently producing an incomplete result. Use `--no-measure-compute` together
+with `--allow-missing-metrics` only for an explicitly non-formal smoke run.
+Before the first measured sample
+of each model/config/dataset, an 8-token untimed warmup initializes kernels;
+tokenization, model loading, warmup, progress output, and persistence stay
+outside the measured wall-clock window. Energy defaults to the physical GPU
+mapped to CUDA logical device 0; set `DLLM_NVML_GPU_INDICES=0,1` explicitly
+for a future multi-GPU model.
+
 Output run IDs append a variant only when it distinguishes configurations:
 Qwen writes under `model_output/qwen3_4b/`, while multi-configuration models
 use names such as `illada_best` and `illada_fast`. Local readers still accept

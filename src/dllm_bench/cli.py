@@ -44,6 +44,7 @@ from pathlib import Path
 import click
 
 from .hf_cache import configure_default_cache_dir
+from .interfaces import GenerationRequest
 from .registry import (
     build_dataset,
     build_model_adapter,
@@ -186,6 +187,7 @@ def prepare_data_command(dataset_config: str, samples_file: str | None, force: b
 @_common_options
 @click.option("--max-new-tokens", required=True, type=int)
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
+@click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
 @click.option("--resume/--no-resume", default=True, show_default=True, help="Skip samples that already have a model_output file")
 def generate(
     model_config: str,
@@ -199,6 +201,7 @@ def generate(
     output_root: str,
     max_new_tokens: int,
     measure_compute: bool,
+    require_all_metrics: bool,
     resume: bool,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
@@ -229,10 +232,34 @@ def generate(
         elif not needs_generation:
             click.echo(f"[{v}] all sample outputs already exist; model load skipped")
 
+        warmup_generation = getattr(adapter, "warmup_generation", None)
+        if needs_generation and callable(warmup_generation):
+            warmup_sample = next(
+                sample for sample in samples
+                if not resume or not (out_dir / f"{sample.sample_id}.json").exists()
+            )
+            warmup_tokens = min(
+                8,
+                int(warmup_sample.meta.get("max_new_tokens", max_new_tokens)),
+            )
+            click.echo(f"[{v}] running untimed {warmup_tokens}-token warmup ...")
+            warmup_generation(
+                GenerationRequest(
+                    prompt=warmup_sample.prompt,
+                    max_new_tokens=warmup_tokens,
+                    sample_id="__warmup__",
+                    seed=resolved_seed,
+                )
+            )
+            click.echo(f"[{v}] warmup complete")
+
         def log_progress(event, index, total, sample, generation):
             prefix = f"[{v}] [{index}/{total}] {sample.sample_id}"
             if event == "start":
                 click.echo(f"{prefix}: generating ...")
+                return
+            if event == "compute":
+                click.echo(f"{prefix}: profiling compute replay ...")
                 return
             elapsed = (
                 generation.timing.wall_clock_seconds
@@ -257,6 +284,12 @@ def generate(
                         sample_bar.update(0, current_item=f"{sample.sample_id} generating")
                         sample_bar.render_progress()
                         return
+                    if event == "compute":
+                        sample_bar.update(
+                            0, current_item=f"{sample.sample_id} compute replay"
+                        )
+                        sample_bar.render_progress()
+                        return
                     elapsed = (
                         generation.timing.wall_clock_seconds
                         if generation is not None and generation.timing is not None
@@ -271,13 +304,15 @@ def generate(
                 summary = run_generation(
                     adapter, dataset.name, samples, max_new_tokens,
                     out_dir=out_dir, measure_compute=measure_compute,
-                    seed=resolved_seed, resume=resume, progress=bar_progress,
+                    require_all_metrics=require_all_metrics, seed=resolved_seed,
+                    resume=resume, progress=bar_progress,
                 )
         else:
             summary = run_generation(
                 adapter, dataset.name, samples, max_new_tokens,
                 out_dir=out_dir, measure_compute=measure_compute,
-                seed=resolved_seed, resume=resume, progress=log_progress,
+                require_all_metrics=require_all_metrics, seed=resolved_seed,
+                resume=resume, progress=log_progress,
             )
         click.echo(f"[{v}] generated={summary.generated} skipped={summary.skipped} total={summary.total} -> {out_dir}")
 
@@ -448,6 +483,8 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
 @click.option("--n-samples", default=None, type=int)
 @click.option("--output-root", default="output", show_default=True, type=click.Path())
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
+@click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
+@click.option("--resume/--no-resume", default=True, show_default=True)
 @click.option("--n-representative", default=3, show_default=True, type=int)
 @click.pass_context
 def matrix_command(
@@ -459,6 +496,8 @@ def matrix_command(
     n_samples: int | None,
     output_root: str,
     measure_compute: bool,
+    require_all_metrics: bool,
+    resume: bool,
     n_representative: int,
 ) -> None:
     """Run every model-variant x dataset row declared in an experiment YAML."""
@@ -485,7 +524,8 @@ def matrix_command(
         if stage in {"generate", "all"}:
             ctx.invoke(
                 generate, **common, max_new_tokens=job.max_new_tokens,
-                measure_compute=measure_compute, resume=True,
+                measure_compute=measure_compute,
+                require_all_metrics=require_all_metrics, resume=resume,
             )
         if stage in {"score", "all"}:
             ctx.invoke(score, **common, resume=True)

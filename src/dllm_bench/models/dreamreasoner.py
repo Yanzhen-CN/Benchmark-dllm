@@ -188,6 +188,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             self._tokenizer, prompt, device=device
         )["input_ids"]
         prompt_len = input_ids.shape[1]
+        self._start_measurement()
 
         num_blocks = max(1, math.ceil((prompt_len + gen_length) / block_length))
         total_length = num_blocks * block_length

@@ -22,6 +22,8 @@ from .prompting import tokenize_instruction_prompt
 
 
 class QwenARAdapter(BaseModelAdapter):
+    deferred_measurement = True
+
     def __init__(
         self,
         model_name_or_path: str = "Qwen/Qwen3-4B",
@@ -74,6 +76,7 @@ class QwenARAdapter(BaseModelAdapter):
         )
         prompt_len = inputs["input_ids"].shape[1]
 
+        self._start_measurement()
         with torch.no_grad():
             output = self._model.generate(
                 **inputs,
@@ -82,6 +85,7 @@ class QwenARAdapter(BaseModelAdapter):
                 output_scores=self._capture_trace,
                 return_dict_in_generate=self._capture_trace,
             )
+        self._stop_measurement()
 
         sequence = output.sequences[0] if self._capture_trace else output[0]
         generated_ids = sequence[prompt_len:]

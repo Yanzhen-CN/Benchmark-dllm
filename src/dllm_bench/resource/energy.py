@@ -15,6 +15,7 @@ non-NVIDIA hardware) energy cannot be measured locally — callers must treat
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -25,7 +26,7 @@ class EnergyUnavailableError(RuntimeError):
 
 
 def _read_energy_mj_per_gpu() -> dict[int, float]:
-    """Read the cumulative energy counter (mJ) for every visible GPU."""
+    """Read cumulative energy (mJ) for the benchmark's selected GPU(s)."""
     try:
         import pynvml
     except ImportError as exc:
@@ -35,7 +36,7 @@ def _read_energy_mj_per_gpu() -> dict[int, float]:
         pynvml.nvmlInit()
         device_count = pynvml.nvmlDeviceGetCount()
         readings: dict[int, float] = {}
-        for index in range(device_count):
+        for index in _energy_gpu_indices(device_count):
             handle = pynvml.nvmlDeviceGetHandleByIndex(index)
             readings[index] = float(pynvml.nvmlDeviceGetTotalEnergyConsumption(handle))
         return readings
@@ -46,6 +47,42 @@ def _read_energy_mj_per_gpu() -> dict[int, float]:
             pynvml.nvmlShutdown()
         except Exception:
             pass
+
+
+def _energy_gpu_indices(device_count: int) -> list[int]:
+    """Resolve physical NVML indices without summing unrelated host GPUs.
+
+    Current adapters place the whole model on CUDA logical device 0. The first
+    numeric CUDA_VISIBLE_DEVICES entry is its physical NVML index. Complex
+    UUID/MIG mappings can be pinned explicitly with DLLM_NVML_GPU_INDICES.
+    """
+    if device_count <= 0:
+        return []
+    configured = os.environ.get("DLLM_NVML_GPU_INDICES")
+    if configured:
+        try:
+            indices = [int(value.strip()) for value in configured.split(",") if value.strip()]
+        except ValueError as exc:
+            raise EnergyUnavailableError(
+                f"invalid DLLM_NVML_GPU_INDICES={configured!r}"
+            ) from exc
+        if not indices or any(index < 0 or index >= device_count for index in indices):
+            raise EnergyUnavailableError(
+                f"DLLM_NVML_GPU_INDICES={configured!r} is outside 0..{device_count - 1}"
+            )
+        return list(dict.fromkeys(indices))
+
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if cuda_visible and cuda_visible not in {"-1", "none", "None"}:
+        first = cuda_visible.split(",")[0].strip()
+        if first.isdigit():
+            physical = int(first)
+            if physical < device_count:
+                return [physical]
+            # Some containers remap the assigned physical device to NVML 0.
+            if device_count == 1:
+                return [0]
+    return [0]
 
 
 @dataclass

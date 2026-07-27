@@ -107,6 +107,13 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
              "safetensors>=0.8.0", "sentencepiece"],
             env=install_env,
         )
+    if "gpu" in profile.extras.split(","):
+        subprocess.run(
+            [str(python), "-m", "pip", "uninstall", "-y", "pynvml"],
+            cwd=REPO_ROOT,
+            env=install_env,
+            check=False,
+        )
     run([python, "-m", "pip", "install", "-e", f".[{profile.extras}]"], env=install_env)
     run([python, "-m", "pip", "check"], env=install_env)
     run([python, "-c", _IMPORT_CHECK])
@@ -215,6 +222,8 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
         "--demo" if data_source == "demo" else "--no-demo",
         "--output-root", os.environ.get("OUTPUT_ROOT", "output"),
         "--measure-compute" if os.environ.get("MEASURE_COMPUTE", "0") == "1" else "--no-measure-compute",
+        "--require-all-metrics" if os.environ.get("REQUIRE_ALL_METRICS", "0") == "1" else "--allow-missing-metrics",
+        "--resume" if os.environ.get("RESUME", "1") == "1" else "--no-resume",
         "--n-representative", os.environ.get("N_REPRESENTATIVE", "3"),
     ]
     if os.environ.get("N_SAMPLES"):

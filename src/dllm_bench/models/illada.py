@@ -67,6 +67,7 @@ class IlladaAdapter(HFDiffusionAdapter):
             self._tokenizer, prompt, device=device
         )["input_ids"]
         prompt_len = input_ids.shape[1]
+        self._start_measurement()
 
         x = torch.full((1, prompt_len + padded_gen_length), MASK_ID, dtype=torch.long, device=device)
         x[:, :prompt_len] = input_ids
