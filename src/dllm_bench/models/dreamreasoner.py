@@ -95,6 +95,7 @@ import math
 from ..interfaces import PositionState, TraceStep
 from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
 from .model_cache import get_or_load
+from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
 
@@ -183,7 +184,9 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         mask_token_id = self._resolve_mask_token_id(step_config)
 
         device = self._device
-        input_ids = self._tokenizer(prompt, return_tensors="pt")["input_ids"].to(device)
+        input_ids = tokenize_instruction_prompt(
+            self._tokenizer, prompt, device=device
+        )["input_ids"]
         prompt_len = input_ids.shape[1]
 
         num_blocks = max(1, math.ceil((prompt_len + gen_length) / block_length))
