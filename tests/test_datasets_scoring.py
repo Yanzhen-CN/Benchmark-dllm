@@ -5,11 +5,6 @@ import pytest
 from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.gsm8k import GSM8K_REVISION, GSM8KDataset, _load_official_test_samples, extract_final_number
 from dllm_bench.datasets.hellobench import HelloBenchDataset, HelloBenchReference, seq_rep_n
-from dllm_bench.datasets.ifeval import (
-    IFEvalDataset,
-    IFEvalSample,
-    InstructionSpec,
-)
 from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample, extract_code
 from dllm_bench.datasets.ruler import RulerDataset, RulerReference, position_robustness
 from dllm_bench.datasets.structeval_t import (
@@ -191,51 +186,6 @@ def test_structeval_csv_basic():
     progress = evaluate_struct_progress("name,age\nAlice,30\n", schema)
     assert progress.parseability == 1.0
     assert progress.key_coverage == 1.0
-
-
-# ---------------------------------------------------------------------------
-# IFEval
-# ---------------------------------------------------------------------------
-
-def test_ifeval_all_constraints_satisfied():
-    ds = IFEvalDataset()
-    ref = IFEvalSample(
-        form_constraints=[InstructionSpec("format:number_bullets", {"count": 2, "relation": "at_least"})],
-        content_requirements=[InstructionSpec("keywords:existence", {"keywords": ["python"]})],
-    )
-    sample = Sample(sample_id="1", prompt="p", reference=ref)
-    output = "- I like python.\n- It is great."
-    result = ds.score(sample, output)
-    assert result.primary_score == 1.0
-    assert result.aux["instruction_level_strict"] == 1.0
-
-
-def test_ifeval_partial_failure_lowers_instruction_level_but_not_prompt_level():
-    ds = IFEvalDataset()
-    ref = IFEvalSample(
-        form_constraints=[InstructionSpec("case:all_uppercase", {})],
-        content_requirements=[InstructionSpec("keywords:existence", {"keywords": ["python"]})],
-    )
-    sample = Sample(sample_id="1", prompt="p", reference=ref)
-    output = "I like PYTHON but this is not all uppercase."
-    result = ds.score(sample, output)
-    assert result.primary_score == 0.0
-    assert result.aux["instruction_level_strict"] == pytest.approx(0.5)
-
-
-def test_ifeval_terminal_constraint_excluded_from_constraint_progress():
-    ref = IFEvalSample(
-        form_constraints=[
-            InstructionSpec("format:title", {}),
-            InstructionSpec("startend:end_phrase", {"end_phrase": "The End"}, terminal=True),
-        ],
-        content_requirements=[],
-    )
-    from dllm_bench.datasets.ifeval import evaluate_ifeval_progress
-
-    constraint_progress, content_progress, _ = evaluate_ifeval_progress("<<My Title>> some body without ending", ref)
-    # only the non-terminal title constraint counts toward constraint_progress
-    assert constraint_progress == 1.0
 
 
 # ---------------------------------------------------------------------------

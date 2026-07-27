@@ -10,7 +10,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "full_matrix.yaml")
 
     assert seed == 42
-    assert len(jobs) == 5 * 7
+    assert len(jobs) == 5 * 6
     assert {job.model_name for job in jobs} == {
         "qwen3_4b",
         "illada",
@@ -22,7 +22,6 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         "gsm8k",
         "mbpp",
         "structeval_t",
-        "ifeval",
         "sudoku",
         "ruler",
         "hellobench",

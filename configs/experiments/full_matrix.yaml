@@ -1,5 +1,5 @@
 # Reference list of the section-5 model x dataset matrix (9 formal configs x
-# 7 datasets + DiffusionGemma as a large-model reference, not part of same-scale
+# 6 datasets + DiffusionGemma as a large-model reference, not part of same-scale
 # conclusions). This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
 # `config`, `samples_file`, and task-specific `max_new_tokens` fields.
@@ -26,7 +26,6 @@ datasets:
   - configs/datasets/gsm8k.yaml
   - configs/datasets/mbpp.yaml
   - configs/datasets/structeval_t.yaml
-  - configs/datasets/ifeval.yaml
   - configs/datasets/sudoku.yaml
   - config: configs/datasets/ruler.yaml
     max_new_tokens: 64  # fallback; formal samples also carry this per sample

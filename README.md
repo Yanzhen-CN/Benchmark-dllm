@@ -8,7 +8,7 @@ commit-order, certainty).
 
 ## Status
 
-The framework (unified model interface, all Part 3/4 metric math, all seven formal
+The framework (unified model interface, all Part 3/4 metric math, all six formal
 dataset scorers, resource measurement plumbing, the 3-stage pipeline, and
 report/visualization generation) is fully implemented and unit-tested (255
 tests, see [Testing](#testing)). A pure-Python mock model backend
@@ -57,7 +57,7 @@ src/dllm_bench/
                      # hf_diffusion.py (iLLaDA/DreamReasoner shared base + DiffusionStepConfig),
                      # illada.py, dreamreasoner.py (each model's real sampler — see Status),
                      # diffusiongemma.py, w1_api.py, mock.py
-  datasets/         # base.py + gsm8k/mbpp/structeval_t/ifeval/sudoku/ruler/hellobench
+  datasets/         # base.py + gsm8k/mbpp/structeval_t/sudoku/ruler/hellobench
   resource/         # timing.py/energy.py/compute.py/vram.py (Appendix B protocol)
   metrics/          # quality_resource.py/long_context.py (Part 3),
                      # trace_parallelism.py/strategy_score.py/commit_order.py/

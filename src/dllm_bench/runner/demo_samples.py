@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from ..datasets.base import Sample
 from ..datasets.hellobench import HelloBenchReference
-from ..datasets.ifeval import IFEvalSample, InstructionSpec
 from ..datasets.mbpp import MbppSample
 from ..datasets.ruler import build_niah_sample
 from ..datasets.structeval_t import StructEvalSchema
@@ -86,28 +85,6 @@ def _structeval_t_samples(n: int) -> list[Sample]:
     return samples
 
 
-def _ifeval_samples(n: int) -> list[Sample]:
-    samples = []
-    for i in range(n):
-        samples.append(
-            Sample(
-                sample_id=f"ifeval-demo-{i}",
-                prompt=f"List {i + 2} programming languages as bullet points, and mention 'python' at least once.",
-                reference=IFEvalSample(
-                    form_constraints=[
-                        InstructionSpec(
-                            "format:number_bullets", {"count": i + 2, "relation": "at_least"}
-                        )
-                    ],
-                    content_requirements=[
-                        InstructionSpec("keywords:existence", {"keywords": ["python"]})
-                    ],
-                ),
-            )
-        )
-    return samples
-
-
 def _sudoku_samples(n: int) -> list[Sample]:
     text, puzzle = _sudoku_puzzle_text()
     samples = []
@@ -154,7 +131,6 @@ _BUILDERS = {
     "gsm8k": _gsm8k_samples,
     "mbpp": _mbpp_samples,
     "structeval_t": _structeval_t_samples,
-    "ifeval": _ifeval_samples,
     "sudoku": _sudoku_samples,
     "ruler": _ruler_samples,
     "hellobench": _hellobench_samples,

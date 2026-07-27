@@ -1,7 +1,7 @@
-"""Shared abstractions for the seven formal dataset scorers.
+"""Shared abstractions for the six formal dataset scorers.
 
 Every concrete dataset (``gsm8k.py``, ``mbpp.py``, ``structeval_t.py``,
-``ifeval.py``, ``sudoku.py``, ``ruler.py``, ``hellobench.py``) exposes a
+``sudoku.py``, ``ruler.py``, ``hellobench.py``) exposes a
 ``Dataset`` subclass whose ``score(sample, output_text)`` returns a
 ``ScoreResult`` with a primary task score in ``[0, 1]`` (section 1's "统一到
 [0,1]" requirement for the quality-resource metrics in Part 3) plus whatever
