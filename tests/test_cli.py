@@ -38,6 +38,8 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
         "--output-root", str(output_root),
     ])
     assert "generated=3 skipped=0" in generate_result.output
+    assert "loading model into runtime device (outside sample timing)" in generate_result.output
+    assert "[default] [1/3] gsm8k-demo-0: generating" in generate_result.output
 
     model_out = output_root / "model_output" / "mock_default" / "gsm8k"
     assert (model_out / "_meta.json").exists()
@@ -52,6 +54,7 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
         "--output-root", str(output_root),
     ])
     assert "generated=0 skipped=3" in resume_result.output
+    assert "all sample outputs already exist; model load skipped" in resume_result.output
 
     # Local stages derive output names from YAML and must never construct a
     # model adapter or touch model dependencies/weights.

@@ -414,7 +414,7 @@ local/ephemeral disk — so `hf_cache.py` points `HF_HOME` at the repository's
 An explicit `HF_HOME`/`HF_HUB_CACHE`/`TRANSFORMERS_CACHE` still wins.
 `cli.py` and `prepare_model.py` apply this before any model is touched.
 
-To download/load a model ahead of time instead of lazily mid-benchmark:
+To download a model snapshot ahead of time instead of lazily mid-benchmark:
 
 ```bash
 # all models in the matrix, each through its own isolated environment
@@ -427,8 +427,17 @@ python prepare_model.py -m illada -m qwen3_4b
 python prepare_model.py --model-config configs/models/illada.yaml
 # warms every variant declared in the file — for illada.yaml that's
 # `best`+`fast`, but since they share one checkpoint (models/model_cache.py)
-# this only downloads/loads it once, same as `dllm-bench generate` does.
+# this downloads the shared repository snapshot only once.
 ```
+
+Environment mutation is intentionally outside this checkpoint-preparation
+stage. `setup_venv.py` owns dependency/project installation;
+`prepare_model.py` reads the checkpoint IDs from YAML and uses Hub snapshot
+download only: it does not construct an adapter, import model code, load
+weights into RAM, or touch the GPU. A compatibility repair
+for a legacy incomplete editable install, if needed, is deferred until
+`run_model.py` starts that model and remains outside the measured generation
+window.
 
 ## Visualization
 

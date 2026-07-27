@@ -59,9 +59,11 @@ class BaseModelAdapter(ABC):
         return handle
 
     def warm(self) -> None:
-        """Pre-load model weights without generating anything (see
-        ``prepare_model.py``). A no-op for adapters with nothing to load
-        (e.g. the mock backend) rather than an error."""
+        """Pre-load weights for explicit runtime checks without generating.
+
+        Checkpoint preparation itself uses Hub snapshot download and does not
+        call this method. A no-op for adapters with nothing to load.
+        """
         ensure_loaded = getattr(self, "_ensure_loaded", None)
         if ensure_loaded is not None:
             ensure_loaded()

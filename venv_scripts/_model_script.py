@@ -146,10 +146,8 @@ def _project_importable(python: Path) -> bool:
     return result.returncode == 0
 
 
-def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
-    python = venv_python(venv_dir(profile))
-    if not python.is_file():
-        return setup_environment(profile, cuda_index)
+def repair_project_installation(profile: ModelProfile, python: Path) -> None:
+    """Repair a legacy editable install immediately before model execution."""
     if not _project_importable(python):
         # A venv may survive an interrupted/older setup with its heavyweight
         # model dependencies intact but without this repository installed.
@@ -171,7 +169,11 @@ def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
             env=install_env,
         )
         run([python, "-c", "import dllm_bench; print('dllm_bench: OK')"])
-    return python
+
+
+def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
+    python = venv_python(venv_dir(profile))
+    return python if python.is_file() else setup_environment(profile, cuda_index)
 
 
 def model_environment(profile: ModelProfile) -> dict[str, str]:
@@ -236,7 +238,15 @@ def main(model_id: str, argv: Sequence[str] | None = None) -> int:
         setup_environment(profile, args.cuda_index)
         return 0
 
-    python = ensure_environment(profile, args.cuda_index)
+    if args.action == "prepare":
+        python = venv_python(venv_dir(profile))
+        if not python.is_file():
+            raise SystemExit(
+                f"model environment is missing: {venv_dir(profile)}; "
+                f"run `python setup_venv.py -m {profile.model_id}` first"
+            )
+    else:
+        python = ensure_environment(profile, args.cuda_index)
     if args.action == "check":
         check_environment(profile, python)
     elif args.action == "prepare":
@@ -247,5 +257,6 @@ def main(model_id: str, argv: Sequence[str] | None = None) -> int:
             command.extend(["--variants", os.environ["PREPARE_MODEL_VARIANTS"]])
         run(command, env=model_environment(profile))
     else:
+        repair_project_installation(profile, python)
         run([python, *benchmark_arguments(profile)], env=model_environment(profile))
     return 0

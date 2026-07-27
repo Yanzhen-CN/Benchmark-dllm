@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ..datasets.base import Sample
-from ..interfaces import GenerationRequest, ModelAdapter
+from ..interfaces import GenerationRequest, GenerationResult, ModelAdapter
 from .persistence import save_generation_result, save_meta
 from .sampling import DEFAULT_SEED, collect_run_metadata
 
@@ -25,6 +26,11 @@ class GenerateStageSummary:
     total: int
 
 
+GenerationProgress = Callable[
+    [str, int, int, Sample, GenerationResult | None], None
+]
+
+
 def run_generation(
     adapter: ModelAdapter,
     dataset_name: str,
@@ -35,6 +41,7 @@ def run_generation(
     measure_compute: bool = False,
     seed: int = DEFAULT_SEED,
     resume: bool = True,
+    progress: GenerationProgress | None = None,
 ) -> GenerateStageSummary:
     if not samples:
         raise ValueError("samples must be non-empty")
@@ -55,7 +62,7 @@ def run_generation(
         )
 
     generated = skipped = 0
-    for sample in samples:
+    for index, sample in enumerate(samples, start=1):
         sample_path = out_dir / f"{sample.sample_id}.json"
         if resume and sample_path.exists():
             skipped += 1
@@ -73,6 +80,8 @@ def run_generation(
             sample_id=sample.sample_id,
             seed=seed,
         )
+        if progress is not None:
+            progress("start", index, len(samples), sample, None)
         generation = adapter.generate(request)
 
         if measure_compute and hasattr(adapter, "profile_compute"):
@@ -81,6 +90,8 @@ def run_generation(
 
         save_generation_result(generation, sample_path)
         generated += 1
+        if progress is not None:
+            progress("finish", index, len(samples), sample, generation)
 
     return GenerateStageSummary(
         out_dir=str(out_dir), generated=generated, skipped=skipped, total=len(samples)

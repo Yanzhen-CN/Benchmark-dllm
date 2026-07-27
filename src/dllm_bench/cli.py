@@ -203,9 +203,35 @@ def generate(
     for v in variant_list:
         adapter = build_model_adapter(model_config, variant=v)
         out_dir = model_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
+        needs_generation = not resume or any(
+            not (out_dir / f"{sample.sample_id}.json").exists()
+            for sample in samples
+        )
+        warm = getattr(adapter, "warm", None)
+        if needs_generation and callable(warm):
+            click.echo(f"[{v}] loading model into runtime device (outside sample timing) ...")
+            warm()
+            click.echo(f"[{v}] model ready")
+        elif not needs_generation:
+            click.echo(f"[{v}] all sample outputs already exist; model load skipped")
+
+        def report_progress(event, index, total, sample, generation):
+            prefix = f"[{v}] [{index}/{total}] {sample.sample_id}"
+            if event == "start":
+                click.echo(f"{prefix}: generating ...")
+                return
+            elapsed = (
+                generation.timing.wall_clock_seconds
+                if generation is not None and generation.timing is not None
+                else 0.0
+            )
+            status = generation.status.value if generation is not None else "unknown"
+            click.echo(f"{prefix}: {status} ({elapsed:.2f}s)")
+
         summary = run_generation(
             adapter, dataset.name, samples, max_new_tokens,
-            out_dir=out_dir, measure_compute=measure_compute, seed=resolved_seed, resume=resume,
+            out_dir=out_dir, measure_compute=measure_compute, seed=resolved_seed,
+            resume=resume, progress=report_progress,
         )
         click.echo(f"[{v}] generated={summary.generated} skipped={summary.skipped} total={summary.total} -> {out_dir}")
 

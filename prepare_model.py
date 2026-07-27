@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Pre-downloads/loads a model's HF checkpoint without running any
-generation — useful for warming the cache before a benchmark run, especially
+"""Downloads a model's HF checkpoint without loading it or running any
+generation — useful for filling the cache before a benchmark run, especially
 on a server where the default HF cache location (``~/.cache/huggingface``)
 would land on local/ephemeral disk instead of the mounted network volume
 (see ``dllm_bench.hf_cache``, which this script points at the repository's
@@ -12,9 +12,9 @@ just needs to point `init_kwargs.model_name_or_path` at the real HF repo ID
 checkpoint path.
 
 With no arguments, this dispatches every model in the full matrix through its
-own isolated environment. By default direct ``--model-config`` mode warms
+own isolated environment. By default direct ``--model-config`` mode prepares
 *every* variant declared in that model config (Best and Fast share one
-checkpoint, so this only downloads/loads it once — see ``models/model_cache.py``).
+checkpoint, so its repository snapshot is downloaded only once).
 Pass ``-m`` to select matrix models or ``--variant``/``--variants`` in direct
 mode to narrow variants.
 
@@ -32,17 +32,30 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+SOURCE_ROOT = PROJECT_ROOT / "src"
+for source_path in (PROJECT_ROOT, SOURCE_ROOT):
+    if str(source_path) not in sys.path:
+        sys.path.insert(0, str(source_path))
 
 
 def _running_in_venv() -> bool:
     return bool(os.environ.get("DLLM_VENV")) or sys.prefix != sys.base_prefix
 
 
+def _download_snapshot(repo_id: str, revision: str | None, cache_dir: Path) -> str:
+    """Download one complete model repository without importing model code."""
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(
+        repo_id=repo_id,
+        revision=revision,
+        cache_dir=cache_dir / "hub",
+    )
+
+
 def _prepare_one(model_config: str, variant: str | None, variants_arg: str | None) -> None:
     from dllm_bench.hf_cache import configure_default_cache_dir
-    from dllm_bench.registry import build_model_adapter, list_model_variants
+    from dllm_bench.registry import list_model_variants, load_yaml
 
     cache_dir = configure_default_cache_dir()
 
@@ -56,18 +69,34 @@ def _prepare_one(model_config: str, variant: str | None, variants_arg: str | Non
         variants = list_model_variants(model_config)
 
     print(f"HF cache directory: {cache_dir}")
-    print(f"Warming variants {variants} of {model_config} ...")
+    config = load_yaml(model_config)
+    print(f"Preparing variants {variants} of {model_config} ...")
+    snapshots: dict[tuple[str, str | None], list[str]] = {}
     for resolved_variant in variants:
-        adapter = build_model_adapter(model_config, variant=resolved_variant)
-        if not hasattr(adapter, "warm"):
+        if resolved_variant not in config["configs"]:
+            available = list(config["configs"])
+            raise SystemExit(
+                f"unknown variant {resolved_variant!r}; available: {available}"
+            )
+        init_kwargs = config["configs"][resolved_variant].get("init_kwargs", {})
+        repo_id = init_kwargs.get("model_name_or_path")
+        if not repo_id:
             print(
-                f"[{resolved_variant}] {adapter.name}: "
-                "no local weights to warm (API-backed) — skipping"
+                f"[{resolved_variant}] {config['model']}: "
+                "no Hugging Face checkpoint to download — skipping"
             )
             continue
-        print(f"[{resolved_variant}] {adapter.name}: loading ...")
-        adapter.warm()
-        print(f"[{resolved_variant}] {adapter.name}: ready")
+        revision = init_kwargs.get("revision")
+        snapshots.setdefault((str(repo_id), revision), []).append(resolved_variant)
+
+    for (repo_id, revision), shared_variants in snapshots.items():
+        revision_label = revision or "default revision"
+        print(
+            f"[{','.join(shared_variants)}] downloading {repo_id} "
+            f"({revision_label}) ..."
+        )
+        snapshot_path = _download_snapshot(repo_id, revision, cache_dir)
+        print(f"[{','.join(shared_variants)}] cached: {snapshot_path}")
     print("Done.")
 
 

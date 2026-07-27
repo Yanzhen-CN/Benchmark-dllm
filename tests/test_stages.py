@@ -34,6 +34,30 @@ def test_run_generation_writes_one_file_per_sample(tmp_path):
         assert (out_dir / f"{sample.sample_id}.json").exists()
 
 
+def test_run_generation_reports_per_sample_start_and_finish(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    samples = build_demo_samples("gsm8k", n=2)
+    events = []
+
+    run_generation(
+        adapter,
+        "gsm8k",
+        samples,
+        max_new_tokens=16,
+        out_dir=tmp_path / "model_output",
+        progress=lambda event, index, total, sample, generation: events.append(
+            (event, index, total, sample.sample_id, generation is not None)
+        ),
+    )
+
+    assert events == [
+        ("start", 1, 2, samples[0].sample_id, False),
+        ("finish", 1, 2, samples[0].sample_id, True),
+        ("start", 2, 2, samples[1].sample_id, False),
+        ("finish", 2, 2, samples[1].sample_id, True),
+    ]
+
+
 def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
     samples = build_demo_samples("gsm8k", n=2)
