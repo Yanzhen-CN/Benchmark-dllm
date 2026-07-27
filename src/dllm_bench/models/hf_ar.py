@@ -75,6 +75,7 @@ class QwenARAdapter(BaseModelAdapter):
             chat_template_kwargs={"enable_thinking": self._enable_thinking},
         )
         prompt_len = inputs["input_ids"].shape[1]
+        capture_trace = self._capture_trace and self._trace_instrumentation_enabled()
 
         self._start_measurement()
         with torch.no_grad():
@@ -82,17 +83,17 @@ class QwenARAdapter(BaseModelAdapter):
                 **inputs,
                 max_new_tokens=request.max_new_tokens,
                 do_sample=False,
-                output_scores=self._capture_trace,
-                return_dict_in_generate=self._capture_trace,
+                output_scores=capture_trace,
+                return_dict_in_generate=capture_trace,
             )
         self._stop_measurement()
 
-        sequence = output.sequences[0] if self._capture_trace else output[0]
+        sequence = output.sequences[0] if capture_trace else output[0]
         generated_ids = sequence[prompt_len:]
         text = self._tokenizer.decode(generated_ids, skip_special_tokens=True)
 
         trace: list[TraceStep] = []
-        if self._capture_trace:
+        if capture_trace:
             generated_token_ids = generated_ids.tolist()
             generated_token_texts = [
                 self._tokenizer.decode([token_id], skip_special_tokens=True)

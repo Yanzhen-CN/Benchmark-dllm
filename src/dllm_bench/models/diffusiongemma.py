@@ -91,16 +91,18 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
 
             def wrapped_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step):
                 accepted_canvas = original_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step)
-                entropy = torch.distributions.Categorical(logits=logits).entropy()
-                captured_steps.append(
-                    {
-                        "cur_step": cur_step,
-                        "accepted_canvas": accepted_canvas.detach().to("cpu"),
-                        "accepted_token_mask": sampler.accepted_token_mask.detach().to("cpu"),
-                        "entropy": entropy.detach().to("cpu"),
-                        "vocab_size": logits.shape[-1],
-                    }
-                )
+                if self._trace_instrumentation_enabled():
+                    with self._exclude_from_measurement():
+                        entropy = torch.distributions.Categorical(logits=logits).entropy()
+                        captured_steps.append(
+                            {
+                                "cur_step": cur_step,
+                                "accepted_canvas": accepted_canvas.detach().to("cpu"),
+                                "accepted_token_mask": sampler.accepted_token_mask.detach().to("cpu"),
+                                "entropy": entropy.detach().to("cpu"),
+                                "vocab_size": logits.shape[-1],
+                            }
+                        )
                 return accepted_canvas
 
             sampler.accept_canvas = wrapped_accept_canvas

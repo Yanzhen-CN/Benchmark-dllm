@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import random
 from abc import ABC, abstractmethod
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 
 from ..interfaces import GenerationRequest, GenerationResult, RunStatus, TimingResult
 from ..resource.compute import ComputeHandle, measure_compute_tflops
@@ -39,6 +39,28 @@ class BaseModelAdapter(ABC):
         measurement = getattr(self, "_active_measurement", None)
         if measurement is not None:
             measurement.stop()
+
+    def _trace_instrumentation_enabled(self) -> bool:
+        return not getattr(self, "_suppress_trace_instrumentation", False)
+
+    @contextmanager
+    def _exclude_from_measurement(self):
+        """Pause every formal resource counter around instrumentation work.
+
+        Iterative adapters call this around trace-only entropy conversion,
+        tensor copies and decoding.  All measured generation segments are
+        accumulated into one sample result, keeping time and energy on the
+        same boundary while allowing a complete trace from the same run.
+        """
+        measurement = getattr(self, "_active_measurement", None)
+        was_active = measurement is not None and measurement.active
+        if was_active:
+            measurement.stop()
+        try:
+            yield
+        finally:
+            if was_active:
+                measurement.start()
 
     @abstractmethod
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
@@ -78,15 +100,25 @@ class BaseModelAdapter(ABC):
         window, since FLOP counting overhead would otherwise contaminate
         Time per Sample."""
         _seed_everything(request.seed)
-        with measure_compute_tflops() as handle:
-            self._generate_core(request)
+        previous = getattr(self, "_suppress_trace_instrumentation", False)
+        self._suppress_trace_instrumentation = True
+        try:
+            with measure_compute_tflops() as handle:
+                self._generate_core(request)
+        finally:
+            self._suppress_trace_instrumentation = previous
         return handle
 
     def warmup_generation(self, request: GenerationRequest) -> None:
         """Run a short untimed generation to initialize kernels/caches."""
         _seed_everything(request.seed)
         self._active_measurement = None
-        self._generate_core(request)
+        previous = getattr(self, "_suppress_trace_instrumentation", False)
+        self._suppress_trace_instrumentation = True
+        try:
+            self._generate_core(request)
+        finally:
+            self._suppress_trace_instrumentation = previous
 
     def warm(self) -> None:
         """Pre-load weights for explicit runtime checks without generating.
@@ -107,6 +139,17 @@ class _SampleMeasurement:
         self._wall = None
         self._energy = None
         self._vram = None
+        self._wall_total = 0.0
+        self._wall_seen = False
+        self._energy_total = 0.0
+        self._energy_seen = False
+        self._energy_available = True
+        self._peak_vram: float | None = None
+        self._vram_available = True
+
+    @property
+    def active(self) -> bool:
+        return self._stack is not None
 
     def start(self) -> None:
         if self._stack is not None:
@@ -125,22 +168,38 @@ class _SampleMeasurement:
             return
         self._stack.close()
         self._stack = None
+        if self._wall is not None and self._wall.seconds is not None:
+            self._wall_total += self._wall.seconds
+            self._wall_seen = True
+        if self._energy is None or not self._energy.available or self._energy.joules is None:
+            self._energy_available = False
+        else:
+            self._energy_total += self._energy.joules
+            self._energy_seen = True
+        if self._vram is None or not self._vram.available or self._vram.peak_gb is None:
+            self._vram_available = False
+        else:
+            self._peak_vram = (
+                self._vram.peak_gb
+                if self._peak_vram is None
+                else max(self._peak_vram, self._vram.peak_gb)
+            )
 
     @property
     def wall_clock_seconds(self) -> float | None:
-        return self._wall.seconds if self._wall is not None else None
+        return self._wall_total if self._wall_seen else None
 
     @property
     def energy_joules(self) -> float | None:
-        if self._energy is None or not self._energy.available:
+        if not self._energy_available or not self._energy_seen:
             return None
-        return self._energy.joules
+        return self._energy_total
 
     @property
     def peak_vram_gb(self) -> float | None:
-        if self._vram is None or not self._vram.available:
+        if not self._vram_available:
             return None
-        return self._vram.peak_gb
+        return self._peak_vram
 
 
 def _seed_everything(seed: int) -> None:

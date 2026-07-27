@@ -31,7 +31,7 @@ GenerationProgress = Callable[
     [str, int, int, Sample, GenerationResult | None], None
 ]
 
-MEASUREMENT_PROTOCOL = "gpu-synced-v2"
+MEASUREMENT_PROTOCOL = "gpu-synced-v3-trace-excluded"
 
 
 def run_generation(

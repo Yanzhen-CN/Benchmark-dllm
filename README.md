@@ -338,7 +338,12 @@ with `--allow-missing-metrics` only for an explicitly non-formal smoke run.
 Before the first measured sample
 of each model/config/dataset, an 8-token untimed warmup initializes kernels;
 tokenization, model loading, warmup, progress output, and persistence stay
-outside the measured wall-clock window. Energy defaults to the physical GPU
+outside the measured wall-clock window. Iterative adapters also pause the
+aligned time/energy/VRAM measurement around trace-only entropy calculation,
+tensor copies, token decoding, and trace construction, then accumulate the
+remaining generation segments. Complete traces therefore still come from the
+same generation, but their instrumentation cost only increases end-to-end job
+duration, not the reported TPS/SPS/EPS windows. Energy defaults to the physical GPU
 mapped to CUDA logical device 0; set `DLLM_NVML_GPU_INDICES=0,1` explicitly
 for a future multi-GPU model.
 

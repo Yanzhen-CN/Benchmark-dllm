@@ -267,28 +267,30 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                 cur_x[transfer_index] = x0[transfer_index]
                 x[:, block_start:block_end] = cur_x
 
-                transfer_index_full = torch.zeros_like(x, dtype=torch.bool)
-                transfer_index_full[:, block_start:block_end] = transfer_index
-
-                probs = F.softmax(logits.float(), dim=-1)
-                trace.append(
-                    _build_trace_step(
-                        forward_index=global_step,
-                        x=x,
-                        mask_token_id=mask_token_id,
-                        transfer_index_full=transfer_index_full,
-                        block_start=block_start,
-                        probs=probs,
-                        x0_p=x0_p,
-                        prompt_len=prompt_len,
-                        gen_length=gen_length,
-                        tokenizer=self._tokenizer,
-                    )
-                )
+                if self._trace_instrumentation_enabled():
+                    with self._exclude_from_measurement():
+                        transfer_index_full = torch.zeros_like(x, dtype=torch.bool)
+                        transfer_index_full[:, block_start:block_end] = transfer_index
+                        probs = F.softmax(logits.float(), dim=-1)
+                        trace.append(
+                            _build_trace_step(
+                                forward_index=global_step,
+                                x=x,
+                                mask_token_id=mask_token_id,
+                                transfer_index_full=transfer_index_full,
+                                block_start=block_start,
+                                probs=probs,
+                                x0_p=x0_p,
+                                prompt_len=prompt_len,
+                                gen_length=gen_length,
+                                tokenizer=self._tokenizer,
+                            )
+                        )
                 global_step += 1
 
             x[:, block_start:block_end] = cur_x
 
+        self._stop_measurement()
         output_length = min(total_length, prompt_len + gen_length)
         final_ids = x[0, prompt_len:output_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)

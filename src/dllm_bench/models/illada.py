@@ -115,20 +115,23 @@ class IlladaAdapter(HFDiffusionAdapter):
 
                 x[transfer_index] = x0[transfer_index]
 
-                trace.append(
-                    _build_trace_step(
-                        forward_index=global_step,
-                        x=x,
-                        transfer_index=transfer_index,
-                        probs=probs,
-                        argmax_prob=argmax_prob,
-                        prompt_len=prompt_len,
-                        gen_length=gen_length,
-                        tokenizer=self._tokenizer,
-                    )
-                )
+                if self._trace_instrumentation_enabled():
+                    with self._exclude_from_measurement():
+                        trace.append(
+                            _build_trace_step(
+                                forward_index=global_step,
+                                x=x,
+                                transfer_index=transfer_index,
+                                probs=probs,
+                                argmax_prob=argmax_prob,
+                                prompt_len=prompt_len,
+                                gen_length=gen_length,
+                                tokenizer=self._tokenizer,
+                            )
+                        )
                 global_step += 1
 
+        self._stop_measurement()
         final_ids = x[0, prompt_len : prompt_len + gen_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
         return output_text, trace, len(final_ids)
