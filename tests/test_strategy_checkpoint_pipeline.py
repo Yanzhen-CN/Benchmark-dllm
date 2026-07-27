@@ -1,20 +1,11 @@
-"""Section 4.2.2: scoring a trace's decoded_text at every 4th (StructEval-T)
-or 8th (IFEval) forward, plus always the final forward, then combining the
-resulting curves into one sample's AUC/SFI via
-metrics.strategy_score. This is the pipeline referenced (but never actually
-implemented) since the very first StructEval-T/IFEval module docstrings —
-this file locks in that it's really wired now.
+"""Score a trace's decoded text at fixed checkpoints plus the final forward,
+then combine the resulting curves into one sample's AUC/SFI.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from dllm_bench.datasets.ifeval import (
-    IFEvalSample,
-    InstructionSpec,
-    ifeval_checkpoint_scores,
-)
 from dllm_bench.datasets.structeval_t import (
     StructEvalSchema,
     checkpoint_indices,
@@ -110,49 +101,3 @@ def test_mbpp_checkpoint_scores_feed_directly_into_sfi():
     assert content[-1] == pytest.approx(1.0)
     assert structure[0] > content[0]
     assert strategy_score(structure, content) > 0
-
-
-# ---------------------------------------------------------------------------
-# ifeval_checkpoint_scores
-# ---------------------------------------------------------------------------
-
-def test_ifeval_checkpoint_scores_tracks_progressive_constraint_and_content():
-    sample = IFEvalSample(
-        form_constraints=[InstructionSpec("format:number_bullets", {"count": 2, "relation": "at_least"})],
-        content_requirements=[InstructionSpec("keywords:existence", {"keywords": ["python"]})],
-    )
-    trace = [
-        _step("no bullets yet", 0),
-        _step("- one bullet", 1),
-        _step("- one bullet\n- two bullets", 2),
-        _step("- one bullet about python\n- two bullets", 3),
-        _step("- one bullet about python\n- two bullets more", 4),
-        _step("- one bullet about python\n- two bullets more", 5),
-        _step("- one bullet about python\n- two bullets more", 6),
-        _step("- one bullet about python\n- two bullets more", 7),
-        _step("- one bullet about python\n- two bullets more", 8),
-    ]
-    constraint_scores, content_scores = ifeval_checkpoint_scores(trace, sample, interval=8)
-    assert len(constraint_scores) == 2  # checkpoints 0 and 8 (final) on a 9-step trace
-    assert constraint_scores[0] == 0.0  # no bullets at step 0
-    assert constraint_scores[-1] == 1.0  # 2+ bullets by the end
-    assert content_scores[-1] == 1.0  # "python" present by the end
-
-
-def test_ifeval_checkpoint_scores_empty_trace():
-    sample = IFEvalSample()
-    assert ifeval_checkpoint_scores([], sample) == ([], [])
-
-
-def test_ifeval_checkpoint_scores_feed_directly_into_strategy_score():
-    sample = IFEvalSample(
-        form_constraints=[InstructionSpec("format:title", {})],
-        content_requirements=[InstructionSpec("keywords:existence", {"keywords": ["done"]})],
-    )
-    # content ("done") appears immediately; the required title only forms at
-    # the very end -> content-first strategy (negative SFI).
-    trace = [_step("done done done", i) for i in range(3)] + [_step("<<Title>> done done done", 3)]
-    constraint_scores, content_scores = ifeval_checkpoint_scores(trace, sample, interval=1)
-    score = strategy_score(constraint_scores, content_scores)
-    assert score is not None
-    assert score < 0

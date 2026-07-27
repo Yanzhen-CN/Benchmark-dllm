@@ -18,6 +18,7 @@ import math
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
 from .model_cache import get_or_load
+from .prompting import tokenize_instruction_prompt
 
 
 class QwenARAdapter(BaseModelAdapter):
@@ -27,6 +28,7 @@ class QwenARAdapter(BaseModelAdapter):
         device: str | None = None,
         config_name: str = "ar-baseline",
         capture_trace: bool = True,
+        enable_thinking: bool = False,
     ) -> None:
         self.name = "qwen3_4b"
         self.config_name = config_name
@@ -35,6 +37,7 @@ class QwenARAdapter(BaseModelAdapter):
         self._model_name = model_name_or_path
         self._device = device
         self._capture_trace = capture_trace
+        self._enable_thinking = enable_thinking
         self._model = None
         self._tokenizer = None
 
@@ -63,7 +66,12 @@ class QwenARAdapter(BaseModelAdapter):
         self._ensure_loaded()
         import torch
 
-        inputs = self._tokenizer(request.prompt, return_tensors="pt").to(self._device)
+        inputs = tokenize_instruction_prompt(
+            self._tokenizer,
+            request.prompt,
+            device=self._device,
+            chat_template_kwargs={"enable_thinking": self._enable_thinking},
+        )
         prompt_len = inputs["input_ids"].shape[1]
 
         with torch.no_grad():

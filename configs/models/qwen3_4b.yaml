@@ -15,3 +15,6 @@ configs:
     adapter: dllm_bench.models.hf_ar.QwenARAdapter
     init_kwargs:
       model_name_or_path: Qwen/Qwen3-4B
+      # Use the checkpoint's instruction template without spending the
+      # benchmark output budget on Qwen3's optional reasoning preamble.
+      enable_thinking: false

@@ -3,6 +3,7 @@ mock adapter, using Click's test runner (no subprocess needed)."""
 
 from __future__ import annotations
 
+import json
 import random
 from pathlib import Path
 
@@ -75,6 +76,10 @@ def test_generate_score_visualize_report_pipeline(tmp_path):
 
     viz_out = output_root / "visualization_output" / "mock_default" / "gsm8k"
     assert len(list(viz_out.glob("*_trace.gif"))) == 2
+    trace_summary = json.loads(
+        (viz_out / "dataset_trace_summary.json").read_text(encoding="utf-8")
+    )
+    assert trace_summary["trace_samples"] == 3
 
     report_result = _run(runner, [
         "report", "--output-root", str(output_root), "--dataset", "gsm8k",

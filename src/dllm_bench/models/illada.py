@@ -28,6 +28,7 @@ import math
 
 from ..interfaces import PositionState, TraceStep
 from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
+from .prompting import tokenize_instruction_prompt
 
 MASK_ID = 5
 MASK_DISPLAY = "▢"
@@ -62,7 +63,9 @@ class IlladaAdapter(HFDiffusionAdapter):
         padded_gen_length = num_blocks * block_length
 
         device = self._device
-        input_ids = self._tokenizer(prompt, return_tensors="pt")["input_ids"].to(device)
+        input_ids = tokenize_instruction_prompt(
+            self._tokenizer, prompt, device=device
+        )["input_ids"]
         prompt_len = input_ids.shape[1]
 
         x = torch.full((1, prompt_len + padded_gen_length), MASK_ID, dtype=torch.long, device=device)

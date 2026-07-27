@@ -58,7 +58,7 @@ src/dllm_bench/
                      # hf_diffusion.py (iLLaDA/DreamReasoner shared base + DiffusionStepConfig),
                      # illada.py, dreamreasoner.py (each model's real sampler — see Status),
                      # diffusiongemma.py, w1_api.py, mock.py
-  datasets/         # base.py + gsm8k/mbpp/structeval_t/ifeval/sudoku/ruler/hellobench
+  datasets/         # base.py + gsm8k/mbpp/structeval_t/sudoku/ruler/hellobench
   resource/         # timing.py/energy.py/compute.py/vram.py (Appendix B protocol)
   metrics/          # quality_resource.py/long_context.py (Part 3),
                      # trace_parallelism.py/strategy_score.py/commit_order.py/
@@ -70,7 +70,7 @@ src/dllm_bench/
                      # entry point), token_grid_viz.py + trace_distribution_viz.py
                      # (trace visuals), sudoku_trace_viz.py (Sudoku's extra GIF)
   cli.py            # `dllm-bench generate/score/visualize/report/matrix`
-tests/              # one file per module area, 257 passing + 8 optional skips
+tests/              # one file per module area; see Testing for the current suite
 ```
 
 ## Main entry point
