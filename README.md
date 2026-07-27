@@ -202,6 +202,12 @@ python prepare_data.py
 python prepare_data.py --force  # rebuild matching prepared artifacts
 ```
 
+The first command automatically creates the lightweight `.venvs/data`
+environment when missing, installs only the base project dependencies there,
+and restarts itself inside that environment. It does not modify the system
+Python or install model/Torch dependencies. Model preparation similarly
+dispatches through `.venvs/<model>` rather than the caller's Python.
+
 Or prepare one dataset/source explicitly:
 
 ```bash
