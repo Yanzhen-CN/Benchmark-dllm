@@ -11,6 +11,7 @@ runner/VM), same as upstream MBPP/HumanEval harnesses.
 from __future__ import annotations
 
 import io
+import json
 import keyword
 import re
 import subprocess
@@ -22,6 +23,14 @@ from pathlib import Path
 
 from .base import Dataset, Sample, ScoreResult
 from ..interfaces import TraceStep
+from .remote import ensure_download
+
+MBPP_REVISION = "ec7c3d346277b737bc2decffcd1b533d4b7ec105"
+MBPP_SANITIZED_SHA256 = "ca95deaa9a01ef0a6f439f88bcf0dd3db3563d22f22aad6cae04ebb9a8d8c8e9"
+MBPP_SANITIZED_URL = (
+    "https://raw.githubusercontent.com/google-research/google-research/"
+    f"{MBPP_REVISION}/mbpp/sanitized-mbpp.json"
+)
 
 _CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 _TRAILING_CONTINUATION_RE = re.compile(r"(\\|[+\-*/,(\[{]|\band\b|\bor\b)\s*$")
@@ -92,11 +101,39 @@ class MBPPDataset(Dataset):
     name = "mbpp"
 
     def __init__(self, samples: list[Sample] | None = None, timeout_s: float = 10.0) -> None:
-        self._samples = samples or []
+        self._samples = list(samples) if samples is not None else None
         self._timeout_s = timeout_s
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
-        return self._samples[:n] if n is not None else list(self._samples)
+        if self._samples is not None:
+            samples = list(self._samples)
+        else:
+            source = ensure_download(
+                "mbpp", "sanitized-mbpp.json",
+                url=MBPP_SANITIZED_URL, sha256=MBPP_SANITIZED_SHA256,
+            )
+            rows = json.loads(source.read_text(encoding="utf-8"))
+            # The official evaluation split is task_id 11..510. The sanitized
+            # set inherits those split boundaries from the original MBPP.
+            rows = [row for row in rows if 11 <= int(row["task_id"]) <= 510]
+            samples = [
+                Sample(
+                    sample_id=f"mbpp-sanitized-{int(row['task_id']):04d}",
+                    prompt=str(row["prompt"]),
+                    reference=MbppSample(
+                        test_list=list(row["test_list"]),
+                        test_setup_code="\n".join(row.get("test_imports", [])),
+                    ),
+                    meta={
+                        "source": "google-research/google-research/mbpp",
+                        "source_revision": MBPP_REVISION,
+                        "task_id": int(row["task_id"]),
+                        "reference_code": row.get("code", ""),
+                    },
+                )
+                for row in rows
+            ]
+        return samples[:n] if n is not None else samples
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: MbppSample = sample.reference

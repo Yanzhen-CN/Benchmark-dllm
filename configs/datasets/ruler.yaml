@@ -8,11 +8,15 @@ primary_metric: accuracy
 aux_metrics: [partial_match_rate]
 task_types: [niah, multi_hop, aggregation]
 positions: [front, middle, back]
-samples_per_task_per_context_window: 10
+samples_per_context_window_position: 10
 common_context_window_tokens: 8192
 include_model_max_context_window: true
 max_output_tokens: 64
 seed: 42
-# NOTE: build_niah_sample() in dllm_bench/datasets/ruler.py is a synthetic
-# placeholder generator — swap in the official RULER task templates before
-# formal runs.
+dataset_kwargs:
+  # All formal local-model maxima. Reference-only W1 uses the common 8192
+  # point and therefore needs no separate prepared maximum window.
+  context_windows: [8192, 32768, 40960, 262144]
+  samples_per_context_window_position: 10
+  max_output_tokens: 64
+  seed: 42

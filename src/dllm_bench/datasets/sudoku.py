@@ -11,6 +11,7 @@ is reproducible from the puzzle grid alone.
 from __future__ import annotations
 
 import re
+import random
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -127,11 +128,25 @@ class SudokuReference:
 class SudokuDataset(Dataset):
     name = "sudoku"
 
-    def __init__(self, samples: list[Sample] | None = None) -> None:
-        self._samples = samples or []
+    def __init__(
+        self,
+        samples: list[Sample] | None = None,
+        easy_count: int = 50,
+        hard_count: int = 50,
+        seed: int = 42,
+    ) -> None:
+        self._samples = list(samples) if samples is not None else None
+        self._easy_count = easy_count
+        self._hard_count = hard_count
+        self._seed = seed
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
-        return self._samples[:n] if n is not None else list(self._samples)
+        samples = (
+            list(self._samples)
+            if self._samples is not None
+            else generate_sudoku_bank(self._easy_count, self._hard_count, self._seed)
+        )
+        return samples[:n] if n is not None else samples
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: SudokuReference = sample.reference
@@ -187,3 +202,112 @@ def group_by_difficulty(
         difficulty = ref.difficulty or classify_difficulty(ref.puzzle)
         grouped[difficulty].append(result)
     return grouped
+
+
+def _base_solution(rng: random.Random) -> Grid:
+    pattern = lambda row, col: (row * 3 + row // 3 + col) % 9
+    rows = [group * 3 + row for group in rng.sample(range(3), 3) for row in rng.sample(range(3), 3)]
+    cols = [group * 3 + col for group in rng.sample(range(3), 3) for col in rng.sample(range(3), 3)]
+    digits = rng.sample(range(1, 10), 9)
+    return [[digits[pattern(row, col)] for col in cols] for row in rows]
+
+
+def _count_solutions(grid: Grid, limit: int = 2) -> int:
+    work = deepcopy(grid)
+    count = 0
+
+    def search() -> None:
+        nonlocal count
+        if count >= limit:
+            return
+        best: tuple[int, int, set[int]] | None = None
+        for row in range(9):
+            for col in range(9):
+                if work[row][col] != 0:
+                    continue
+                options = candidates(work, row, col)
+                if not options:
+                    return
+                if best is None or len(options) < len(best[2]):
+                    best = (row, col, options)
+        if best is None:
+            count += 1
+            return
+        row, col, options = best
+        for value in sorted(options):
+            work[row][col] = value
+            search()
+            work[row][col] = 0
+            if count >= limit:
+                return
+
+    search()
+    return count
+
+
+def _make_puzzle(solution: Grid, difficulty: str, rng: random.Random) -> Grid:
+    puzzle = deepcopy(solution)
+    cells = [(row, col) for row in range(9) for col in range(9)]
+    rng.shuffle(cells)
+    target_blanks = 40 if difficulty == "easy" else 48
+    blanks = 0
+    for row, col in cells:
+        previous = puzzle[row][col]
+        puzzle[row][col] = 0
+        unique = _count_solutions(puzzle) == 1
+        derived = classify_difficulty(puzzle)
+        keep = unique and (
+            (difficulty == "easy" and derived == "easy")
+            or difficulty == "hard"
+        )
+        if keep:
+            blanks += 1
+        else:
+            puzzle[row][col] = previous
+        if blanks >= target_blanks and classify_difficulty(puzzle) == difficulty:
+            return puzzle
+    if classify_difficulty(puzzle) != difficulty:
+        raise RuntimeError(f"could not generate a unique {difficulty} Sudoku puzzle")
+    return puzzle
+
+
+def _sudoku_prompt(puzzle: Grid) -> str:
+    rows = [" ".join(str(value) if value else "." for value in row) for row in puzzle]
+    return (
+        "Solve this Sudoku. Return the completed 9x9 grid, one row per line, "
+        "using digits 1-9 only.\n\n" + "\n".join(rows)
+    )
+
+
+def generate_sudoku_bank(easy_count: int, hard_count: int, seed: int = 42) -> list[Sample]:
+    if easy_count < 0 or hard_count < 0 or easy_count + hard_count == 0:
+        raise ValueError("Sudoku counts must be non-negative and not both zero")
+    rng = random.Random(seed)
+    samples: list[Sample] = []
+    for difficulty, count in (("easy", easy_count), ("hard", hard_count)):
+        generated = 0
+        attempts = 0
+        while generated < count:
+            attempts += 1
+            if attempts > count * 30 + 100:
+                raise RuntimeError(f"failed to generate {count} unique {difficulty} puzzles")
+            solution = _base_solution(rng)
+            try:
+                puzzle = _make_puzzle(solution, difficulty, rng)
+            except RuntimeError:
+                continue
+            sample_id = f"sudoku-{difficulty}-{generated:04d}"
+            samples.append(
+                Sample(
+                    sample_id=sample_id,
+                    prompt=_sudoku_prompt(puzzle),
+                    reference=SudokuReference(puzzle, solution, difficulty),
+                    meta={
+                        "source": "deterministic-generator",
+                        "generator_seed": seed,
+                        "difficulty_rule": "naked-singles-vs-backtracking",
+                    },
+                )
+            )
+            generated += 1
+    return samples

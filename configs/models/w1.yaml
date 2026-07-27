@@ -14,7 +14,9 @@
 # per Sample is unavailable (no local energy-counter access to a third-party
 # API).
 model: w1
-max_context_tokens: "${W1_MAX_CONTEXT_TOKENS}"
+# W1 is reference-only in this benchmark. For RULER it uses the common/base
+# 8192-token point rather than introducing a separately prepared max window.
+max_context_tokens: 8192
 configs:
   standard:
     adapter: dllm_bench.models.w1_api.W1ApiAdapter

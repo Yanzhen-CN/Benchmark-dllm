@@ -22,6 +22,14 @@ from typing import Any, Literal
 
 from ..interfaces import TraceStep
 from .base import Dataset, Sample, ScoreResult
+from .remote import ensure_download
+
+STRUCTEVAL_REVISION = "788a40c0bf41aa7b2cbc6a480015c842353a2492"
+STRUCTEVAL_T_SHA256 = "015db23cad946d045f334c6dc23a02462406a6a5849b32adfbb7f680c0acc649"
+STRUCTEVAL_T_URL = (
+    "https://raw.githubusercontent.com/TIGER-AI-Lab/StructEval/"
+    f"{STRUCTEVAL_REVISION}/dataset/nonrenderable.json"
+)
 
 Format = Literal["json", "yaml", "xml", "toml", "csv"]
 
@@ -405,10 +413,19 @@ class StructEvalTDataset(Dataset):
     name = "structeval_t"
 
     def __init__(self, samples: list[Sample] | None = None) -> None:
-        self._samples = samples or []
+        self._samples = list(samples) if samples is not None else None
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
-        return self._samples[:n] if n is not None else list(self._samples)
+        if self._samples is not None:
+            samples = list(self._samples)
+        else:
+            source = ensure_download(
+                "structeval_t", "nonrenderable.json",
+                url=STRUCTEVAL_T_URL, sha256=STRUCTEVAL_T_SHA256,
+            )
+            rows = json.loads(source.read_text(encoding="utf-8"))
+            samples = [_official_structeval_sample(row) for row in rows]
+        return samples[:n] if n is not None else samples
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         schema: StructEvalSchema = sample.reference
@@ -436,3 +453,37 @@ class StructEvalTDataset(Dataset):
             valid=progress.parseability == 1.0,
             complete=complete_correct or progress.value_coverage > 0,
         )
+
+
+def _nesting_prefixes(paths: list[str]) -> list[str]:
+    prefixes: set[str] = set()
+    for path in paths:
+        normalized = re.sub(r"\[\d+\]", "", path)
+        parts = normalized.split(".")
+        for end in range(1, len(parts)):
+            prefixes.add(".".join(parts[:end]))
+    return sorted(prefixes)
+
+
+def _official_structeval_sample(row: dict[str, Any]) -> Sample:
+    fmt = str(row["output_type"]).lower()
+    if fmt not in _PARSERS:
+        raise ValueError(f"unexpected StructEval-T output type: {row['output_type']!r}")
+    required = [str(value) for value in row.get("raw_output_metric", [])]
+    schema = StructEvalSchema(
+        format=fmt,
+        required_keys=required,
+        nesting_paths=_nesting_prefixes(required),
+    )
+    return Sample(
+        sample_id=f"structeval-t-{row['task_id']}",
+        prompt=str(row["query"]),
+        reference=schema,
+        meta={
+            "source": "TIGER-AI-Lab/StructEval",
+            "source_revision": STRUCTEVAL_REVISION,
+            "task_name": row.get("task_name"),
+            "input_type": row.get("input_type"),
+            "output_type": row.get("output_type"),
+        },
+    )

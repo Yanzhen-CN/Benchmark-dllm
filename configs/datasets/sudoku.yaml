@@ -7,6 +7,10 @@ difficulty_counts:
   easy: 50
   hard: 50
 seed: 42
+dataset_kwargs:
+  easy_count: 50
+  hard_count: 50
+  seed: 42
 # Difficulty is derived (classify_difficulty), not assigned: easy = solvable
 # by naked-single elimination alone; hard = needs >=1 trial-and-error step.
 # Formal sample files are stratified to the exact 50/50 split above.

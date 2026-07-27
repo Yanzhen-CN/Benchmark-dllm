@@ -43,6 +43,7 @@ point that needs a real checkpoint/API/judge/GPU to finish.
 run_bench.py                   # main entry: full matrix by default, -m filters models
 setup_venv.py / run_tests.py   # venv dispatcher / test runner (see below)
 prepare_model.py               # pre-warm a model's HF checkpoint cache (see below)
+prepare_data.py                # prepare/cache every real dataset in the matrix
 venv_scripts/                  # one Python venv/install/run script per model
 configs/
   models/       # one YAML per model, one or more named `configs:` variants (Appendix D)
@@ -95,9 +96,9 @@ python run_bench.py -m illada --stage generate --n-samples 20
 python run_bench.py --real-data  # use samples_file entries from the matrix
 ```
 
-Runs are resumable by default. The built-in demo dataset is the default so
-the entry works before formal dataset files are configured; formal benchmark
-runs should declare `samples_file` for every dataset and use `--real-data`.
+Runs are resumable by default. The built-in demo dataset is the default. A
+real-data run checks the normalized cache first and automatically invokes the
+same preparation logic as `prepare_data.py` only when its artifact is absent.
 
 ## Environment setup
 
@@ -171,12 +172,13 @@ DATA_SOURCE=real OUTPUT_ROOT=output/formal \
 
 The default diagnostic suite uses 100 samples for each regular-capability
 dataset. Sudoku is stratified 50 easy / 50 hard. RULER selects 10 samples for
-each of NIAH, multi-hop tracing, and aggregation at both the common 8192-token
-context-window point and the selected model's own maximum window. The 64-token
+each `context-window × position` cell at both the common 8192-token point and
+the selected model's own maximum window; NIAH, multi-hop tracing, and
+aggregation are balanced inside those cells. The 64-token
 answer allowance is included in that window, so the corresponding prompt
 targets are 8128 and `model_max - 64` tokens. If both windows are 8192 (as for
 iLLaDA), the same common point is run once: 30 samples rather than a duplicated
-60. Positions are balanced 4/3/3 within every task/window group.
+60. The formal strengthened profile can raise each cell from 10 to 20.
 
 HelloBench independently measures long output from short prompts: 10 samples
 target 2K words with `max_new_tokens=3072`, and 10 target 4K words with
@@ -187,7 +189,42 @@ Model weights, official/generated datasets, and package wheels are all kept
 under the repository-root `.data/` directory (`huggingface/`, `datasets/`,
 and `pip-cache/`). This makes the cache follow the project onto a mounted
 cloud volume. Set `DLLM_DATA_ROOT=/mounted/path/.data` to override it. W1
-additionally requires `W1_API_BASE_URL` and, when applicable, `W1_API_KEY`.
+additionally requires `W1_API_BASE_URL` and, when applicable, `W1_API_KEY` at
+run time; data preparation does not need either. Reference-only W1 uses the
+common/base 8192-token RULER point.
+
+## Data preparation
+
+Prepare every real dataset declared in the matrix before allocating a GPU:
+
+```bash
+python prepare_data.py
+python prepare_data.py --force  # rebuild matching prepared artifacts
+```
+
+Or prepare one dataset/source explicitly:
+
+```bash
+dllm-bench prepare-data \
+  --dataset-config configs/datasets/gsm8k.yaml
+
+dllm-bench prepare-data \
+  --dataset-config configs/datasets/mbpp.yaml \
+  --samples-file /mounted/raw/mbpp-sanitized.jsonl
+```
+
+Prepared samples land at
+`.data/datasets/prepared/<dataset>/<fingerprint>/samples.jsonl`, accompanied
+by a manifest. The fingerprint covers the dataset YAML, loader implementation,
+and raw source contents, so rerunning is idempotent while source/config changes
+create a distinct cache artifact.
+
+`python run_bench.py --real-data` uses exactly the same function: cache hit
+means immediate reuse; cache miss means prepare first, then start model work.
+Data download, validation, normalization, and loading therefore remain outside
+the per-sample timing window. A dataset without an official loader must provide
+`samples_file`; the error is raised during preparation, before any model is
+loaded or timed.
 
 ## Testing
 
@@ -260,9 +297,8 @@ dllm-bench generate --model-config configs/models/illada.yaml \
 Run the complete declared matrix with isolated model environments:
 
 ```bash
-python run_bench.py --demo
-# For formal runs, add `samples_file` to every dataset entry in the matrix
-# and use --real-data.
+python prepare_data.py          # recommended: finish data work first
+python run_bench.py --real-data # also auto-prepares any missing artifact
 ```
 
 Pass `--variant best` to run just one, or `--variants best,fast` to name an

@@ -15,10 +15,23 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import json
 
 from .base import Dataset, Sample, ScoreResult
+from .remote import ensure_download
 
 LENGTH_TOLERANCE = 0.1
+HELLOBENCH_REVISION = "d403282968b0a61a4963a73c631d3fc1318f17d7"
+HELLOBENCH_SOURCES = {
+    2000: (
+        "heuristic_text_generation_2k.jsonl",
+        "40fadb446bee434f6e1c5800946c80b6a3c8c7f162abeb9df83f09f6f967985e",
+    ),
+    4000: (
+        "heuristic_text_generation_4k.jsonl",
+        "0b9ad86ccf276dbc38ec434b4d11f25b545bd253cd73b7973c06eb1b4ab9c24d",
+    ),
+}
 
 
 @dataclass
@@ -51,11 +64,41 @@ class HelloBenchDataset(Dataset):
         samples: list[Sample] | None = None,
         judge_fn: Callable[[str, str], float] | None = None,
     ) -> None:
-        self._samples = samples or []
+        self._samples = list(samples) if samples is not None else None
         self._judge_fn = judge_fn
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
-        return self._samples[:n] if n is not None else list(self._samples)
+        if self._samples is not None:
+            samples = list(self._samples)
+        else:
+            samples = []
+            for target_words, (filename, checksum) in HELLOBENCH_SOURCES.items():
+                url = (
+                    "https://raw.githubusercontent.com/Quehry/HelloBench/"
+                    f"{HELLOBENCH_REVISION}/data/length_constrained_data/{filename}"
+                )
+                source = ensure_download(
+                    "hellobench", filename, url=url, sha256=checksum
+                )
+                with source.open(encoding="utf-8") as input_file:
+                    for line in input_file:
+                        if not line.strip():
+                            continue
+                        row = json.loads(line)
+                        samples.append(
+                            Sample(
+                                sample_id=f"hellobench-{target_words}-{row['id']}",
+                                prompt=str(row["instruction"]),
+                                reference=HelloBenchReference(target_words),
+                                meta={
+                                    "source": "Quehry/HelloBench",
+                                    "source_revision": HELLOBENCH_REVISION,
+                                    "category": row.get("category"),
+                                    "checklists": row.get("checklists", []),
+                                },
+                            )
+                        )
+        return samples[:n] if n is not None else samples
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: HelloBenchReference = sample.reference

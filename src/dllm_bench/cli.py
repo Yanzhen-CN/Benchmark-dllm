@@ -39,7 +39,6 @@ so pass matching source/count/seed values to every stage.
 
 from __future__ import annotations
 
-import random
 from pathlib import Path
 
 import click
@@ -67,13 +66,17 @@ from .report.plots import (
 )
 from .report.trace_report import render_sample_report
 from .runner.demo_samples import build_demo_samples
-from .datasets.io import load_samples_file
 from .runner.generate_stage import run_generation
 from .runner.output_layout import model_output_dir, score_output_dir, visualization_output_dir
 from .runner.persistence import load_generation_result, load_run_summary_dict, load_score_result
 from .runner.score_stage import run_scoring
 from .runner.matrix import load_matrix_jobs
 from .runner.evaluation_sampling import select_configured_samples
+from .runner.data_preparation import (
+    DataPreparationError,
+    load_prepared_samples,
+    prepare_dataset,
+)
 
 
 @click.group()
@@ -123,11 +126,14 @@ def _resolve_samples(
 
     if resolved_n <= 0:
         raise click.UsageError("--n-samples must be greater than zero")
-    if samples_file:
-        available = load_samples_file(samples_file, dataset.name)
-        if not available:
-            raise click.UsageError(f"samples file is empty: {samples_file}")
+    if samples_file or not demo:
         try:
+            prepared = prepare_dataset(
+                dataset_config,
+                samples_file=samples_file,
+                dataset=dataset,
+            )
+            available = load_prepared_samples(prepared)
             samples = select_configured_samples(
                 available,
                 load_yaml(dataset_config),
@@ -135,30 +141,38 @@ def _resolve_samples(
                 n_samples=n_samples,
                 seed=resolved_seed,
             )
-        except ValueError as exc:
+        except (DataPreparationError, ValueError) as exc:
             raise click.UsageError(str(exc)) from exc
+        if prepared.prepared_now:
+            click.echo(
+                f"Prepared {prepared.sample_count} {dataset.name} samples -> "
+                f"{prepared.samples_path}"
+            )
         return samples, resolved_seed
     if demo:
         samples = build_demo_samples(dataset.name, n=resolved_n)
         return samples, resolved_seed
 
-    try:
-        available = dataset.load_samples()
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise click.ClickException(f"failed to load real {dataset.name} samples: {exc}") from exc
-    if not available:
-        raise click.UsageError(
-            f"real sample loading is not implemented for dataset {dataset.name!r}; use --demo"
-        )
-    if resolved_n > len(available):
-        raise click.UsageError(
-            f"requested {resolved_n} real {dataset.name} samples, but only {len(available)} are available"
-        )
+    raise AssertionError("unreachable sample-source state")
 
-    samples = list(available)
-    random.Random(resolved_seed).shuffle(samples)
-    samples = samples[:resolved_n]
-    return samples, resolved_seed
+
+@main.command("prepare-data")
+@click.option("--dataset-config", required=True, type=click.Path(exists=True))
+@click.option("--samples-file", default=None, type=click.Path(exists=True))
+@click.option("--force", is_flag=True, help="Rebuild the matching prepared artifact")
+def prepare_data_command(dataset_config: str, samples_file: str | None, force: bool) -> None:
+    """Prepare one real dataset now; normal runs do this automatically if absent."""
+    try:
+        prepared = prepare_dataset(
+            dataset_config, samples_file=samples_file, force=force
+        )
+    except DataPreparationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    action = "prepared" if prepared.prepared_now else "cached"
+    click.echo(
+        f"[{prepared.dataset_name}] {action}: {prepared.sample_count} samples -> "
+        f"{prepared.samples_path}"
+    )
 
 
 @main.command()
@@ -378,10 +392,6 @@ def matrix_command(
     for index, job in enumerate(jobs, start=1):
         variants = ",".join(job.variants)
         samples_file = str(job.samples_file) if job.samples_file else None
-        if not demo and samples_file is None:
-            raise click.UsageError(
-                f"matrix dataset {job.dataset_config} has no samples_file; add one or pass --demo"
-            )
         common = dict(
             model_config=str(job.model_config), variant=None, variants=variants,
             dataset_config=str(job.dataset_config), demo=demo,

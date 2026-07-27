@@ -11,6 +11,7 @@ from click.testing import CliRunner
 from dllm_bench.cli import main
 from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.gsm8k import GSM8KDataset
+from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample
 
 CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
 
@@ -135,6 +136,7 @@ def test_variant_and_variants_together_is_a_usage_error(tmp_path):
 
 
 def test_generate_and_score_real_samples_use_the_same_seeded_selection(tmp_path, monkeypatch):
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
     available = [
         Sample(sample_id=f"official-{i}", prompt=f"What is {i}+1?", reference=float(i + 1))
         for i in range(6)
@@ -165,17 +167,29 @@ def test_generate_and_score_real_samples_use_the_same_seeded_selection(tmp_path,
     assert "WARNING" not in score_result.output
 
 
-def test_no_demo_errors_for_dataset_without_real_loader(tmp_path):
+def test_no_demo_auto_prepares_missing_real_dataset_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
+    monkeypatch.setattr(
+        MBPPDataset,
+        "load_samples",
+        lambda self, n=None: [
+            Sample(
+                sample_id="mbpp-official-11",
+                prompt="Write a function add(a, b).",
+                reference=MbppSample(["assert add(1, 2) == 3"]),
+            )
+        ],
+    )
     runner = CliRunner()
     result = runner.invoke(main, [
         "generate",
         "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"), "--variant", "default",
         "--dataset-config", str(CONFIGS_DIR / "datasets" / "mbpp.yaml"),
-        "--no-demo", "--max-new-tokens", "16",
+        "--no-demo", "--n-samples", "1", "--max-new-tokens", "16",
         "--output-root", str(tmp_path / "output"),
     ])
-    assert result.exit_code != 0
-    assert "not implemented" in result.output
+    assert result.exit_code == 0, result.output
+    assert "Prepared 1 mbpp samples" in result.output
 
 
 def test_score_before_generate_gives_clear_error(tmp_path):
