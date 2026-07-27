@@ -1,4 +1,4 @@
-"""Shared Dataset/Sample/ScoreResult abstractions used by all 7 dataset scorers.
+"""Shared abstractions for the six formal scorers plus legacy IFEval support.
 
 Every concrete dataset (``gsm8k.py``, ``mbpp.py``, ``structeval_t.py``,
 ``ifeval.py``, ``sudoku.py``, ``ruler.py``, ``hellobench.py``) exposes a

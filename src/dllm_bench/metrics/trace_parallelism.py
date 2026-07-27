@@ -16,9 +16,10 @@ from .stats_utils import SummaryStats, summarize
 def compute_final_stable_steps(token_id_sequences: list[list[int]]) -> list[int]:
     """``token_id_sequences[t][i]`` is the token id at position i after forward t.
 
-    All inner lists must have equal length (positions are fixed once a sample's
-    canvas size is set). Returns, for each position i, the smallest forward
-    index from which the token never changes again.
+    Shorter early lists are allowed (AR decoding grows one position per
+    forward); a not-yet-created position is treated like a mask. Returns, for
+    each final position i, the earliest forward from which its final token is
+    present and never changes again.
     """
     total_steps = len(token_id_sequences)
     if total_steps == 0:
@@ -30,7 +31,8 @@ def compute_final_stable_steps(token_id_sequences: list[list[int]]) -> list[int]
     for i in range(n_positions):
         stable_from = total_steps - 1
         for t in range(total_steps - 1, -1, -1):
-            if token_id_sequences[t][i] == final_values[i]:
+            current = token_id_sequences[t][i] if i < len(token_id_sequences[t]) else None
+            if current == final_values[i]:
                 stable_from = t
             else:
                 break

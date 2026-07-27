@@ -19,19 +19,23 @@ from dllm_bench.report.tables import (
 from dllm_bench.report.trace_report import render_sample_report
 
 
-def _summary(model, config, q, time_per_sample=1.0, energy_per_sample=None):
+def _summary(model, config, q, tps=1.0, eps=None):
     return {
         "dataset_name": "gsm8k",
         "model_name": model,
         "config_name": config,
         "q": q,
-        "time_per_sample": time_per_sample,
-        "energy_per_sample": energy_per_sample,
+        "tps": tps,
+        "eps": eps,
+        "cps": None,
+        "time_per_sample": 1.0,
+        "energy_per_sample": None,
         "compute_per_sample": None,
         "peak_vram_gb": None,
         "score_per_energy": None,
         "score_per_compute": None,
         "status_counts": {"success": 5},
+        "timing_source": "measured",
     }
 
 
@@ -62,17 +66,17 @@ def test_render_raw_results_table_handles_no_rows():
     assert render_raw_results_table([]) == "(no rows)"
 
 
-def test_compute_converted_row_faster_model_gets_higher_q_time():
-    baseline = _summary("qwen3-4b", "ar-baseline", 0.5, time_per_sample=10.0)
-    fast_model = _summary("illada", "fast", 0.5, time_per_sample=2.0)
+def test_compute_converted_row_faster_model_gets_higher_q_speed():
+    baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
+    fast_model = _summary("illada", "fast", 0.5, tps=50.0)
     row = compute_converted_row(fast_model, baseline)
-    assert row["r_time"] == pytest.approx(5.0)
-    assert row["Q_time"] > 0.5  # resource-equivalent quality upper bound exceeds raw q
+    assert row["r_speed"] == pytest.approx(5.0)
+    assert row["Q_speed"] > 0.5
 
 
 def test_compute_converted_row_missing_energy_leaves_energy_fields_none():
-    baseline = _summary("qwen3-4b", "ar-baseline", 0.5, time_per_sample=10.0)
-    model = _summary("illada", "best", 0.6, time_per_sample=8.0)
+    baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
+    model = _summary("illada", "best", 0.6, tps=8.0)
     row = compute_converted_row(model, baseline)
     assert row["r_energy"] is None
     assert row["Q_energy"] is None
@@ -80,11 +84,11 @@ def test_compute_converted_row_missing_energy_leaves_energy_fields_none():
 
 
 def test_render_converted_results_table_smoke():
-    baseline = _summary("qwen3-4b", "ar-baseline", 0.5, time_per_sample=10.0)
-    model = _summary("illada", "best", 0.6, time_per_sample=8.0)
+    baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
+    model = _summary("illada", "best", 0.6, tps=8.0)
     row = compute_converted_row(model, baseline)
     table = render_converted_results_table([row])
-    assert "r_time" in table
+    assert "r_speed" in table
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +97,9 @@ def test_render_converted_results_table_smoke():
 # ---------------------------------------------------------------------------
 
 def test_plot_quality_vs_resource_writes_file(tmp_path):
-    rows = [raw_results_row(_summary("mock", "default", 0.8, time_per_sample=1.5))]
+    rows = [raw_results_row(_summary("mock", "default", 0.8, tps=1.5))]
     out = tmp_path / "quality_time.png"
-    plot_quality_vs_resource(rows, "Time/sample", str(out))
+    plot_quality_vs_resource(rows, "TPS", str(out))
     assert out.exists()
     assert out.stat().st_size > 0
 
@@ -109,8 +113,8 @@ def test_plot_score_per_unit_skips_when_no_data(tmp_path):
 
 def test_plot_best_vs_fast_writes_file_when_both_configs_present(tmp_path):
     rows = [
-        raw_results_row(_summary("illada", "best", 0.7, time_per_sample=5.0)),
-        raw_results_row(_summary("illada", "fast", 0.6, time_per_sample=2.5)),
+        raw_results_row(_summary("illada", "best", 0.7, tps=5.0)),
+        raw_results_row(_summary("illada", "fast", 0.6, tps=10.0)),
     ]
     out = tmp_path / "best_vs_fast.png"
     plot_best_vs_fast(rows, "q", str(out))
@@ -118,12 +122,12 @@ def test_plot_best_vs_fast_writes_file_when_both_configs_present(tmp_path):
 
 
 def test_plot_scenario_ranking_writes_file(tmp_path):
-    baseline = _summary("qwen3-4b", "ar-baseline", 0.5, time_per_sample=10.0)
-    model = _summary("illada", "best", 0.6, time_per_sample=8.0)
+    baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
+    model = _summary("illada", "best", 0.6, tps=8.0)
     row = compute_converted_row(model, baseline)
     out = tmp_path / "ranking.png"
-    plot_scenario_ranking([row], "Time-priority", str(out))
-    assert not out.exists()  # only one row and Time-priority is None (no energy) -> nothing to plot
+    plot_scenario_ranking([row], "Speed-priority", str(out))
+    assert not out.exists()  # only one row and Speed-priority is None (no energy) -> nothing to plot
 
 
 # ---------------------------------------------------------------------------
@@ -140,23 +144,27 @@ def test_render_sample_report_writes_expected_files(tmp_path):
         trace=result.trace,
         final_valid_length=result.final_valid_length,
         out_dir=str(tmp_path),
-        form_scores=[0.0, 0.5, 1.0],
-        content_scores=[0.0, 0.2, 0.6],
         final_output_text=result.output_text,
         final_score=1.0,
     )
+    # design doc 4.1's exact 3 items (heatmap, certainty, result) plus the
+    # DGtest-style single-sample extras (GIF/final-PNG/position-vs-commit/
+    # speed) — NOT "parallelism"/"strategy": those are 4.2 dataset-level
+    # aggregates now, see report/dataset_trace_report.py, never shown
+    # redundantly for one sample here.
     for key in (
+        "heatmap",
         "token_grid_gif",
         "token_grid_final",
         "position_vs_commit",
         "speed",
-        "parallelism",
-        "strategy",
         "certainty",
         "result",
     ):
         assert key in written
         assert Path(written[key]).exists()
+    assert "parallelism" not in written
+    assert "strategy" not in written
 
 
 def test_render_sample_report_skips_sudoku_gif_for_non_sudoku_dataset(tmp_path):

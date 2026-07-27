@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..interfaces import TraceStep
 from .base import Dataset, Sample, ScoreResult
 
 Format = Literal["json", "yaml", "xml", "toml", "csv"]
@@ -325,6 +326,37 @@ def evaluate_struct_progress(text: str, schema: StructEvalSchema) -> StructProgr
         numeric_bound_satisfaction=numeric_bound_satisfaction,
         length_ratio=_length_ratio(text, schema),
     )
+
+
+def checkpoint_indices(num_steps: int, interval: int) -> list[int]:
+    """Section 4.2.2: score every `interval`-th forward, always including the
+    final forward regardless of whether it lands on the interval."""
+    if num_steps <= 0:
+        return []
+    indices = list(range(0, num_steps, interval))
+    if indices[-1] != num_steps - 1:
+        indices.append(num_steps - 1)
+    return indices
+
+
+def struct_eval_t_checkpoint_scores(
+    trace: list[TraceStep], schema: StructEvalSchema, interval: int = 4
+) -> tuple[list[float], list[float]]:
+    """Section 4.2.2: score `trace`'s decoded_text at every 4th forward (plus
+    always the final forward) using StructEval-T's own detectors, returning
+    (structure_progress_scores, content_progress_scores) — the per-checkpoint
+    curves :mod:`dllm_bench.metrics.strategy_score` turns into one sample's
+    AUC/SFI.
+    """
+    if not trace:
+        return [], []
+    structure_scores = []
+    content_scores = []
+    for i in checkpoint_indices(len(trace), interval):
+        progress = evaluate_struct_progress(trace[i].decoded_text, schema)
+        structure_scores.append(progress.structure_progress)
+        content_scores.append(progress.content_progress)
+    return structure_scores, content_scores
 
 
 def _ratio_present(keys: list[str], flattened: dict[str, Any]) -> float:

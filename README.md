@@ -1,6 +1,6 @@
 # dLLM Benchmark
 
-Benchmark harness for diffusion LLMs (iLLaDA, Dream, W1, DiffusionGemma) vs
+Benchmark harness for diffusion LLMs (iLLaDA, DreamReasoner, W1, DiffusionGemma) vs
 an AR baseline (Qwen3-4B), implementing the design in
 `dLLM_benchmark_设计文档.md`: task quality, long-context robustness,
 resource cost, and generation-process analysis (trace, parallelism,
@@ -8,9 +8,9 @@ commit-order, certainty).
 
 ## Status
 
-The framework (unified model interface, all Part 3/4 metric math, all 7
+The framework (unified model interface, all Part 3/4 metric math, all six formal
 dataset scorers, resource measurement plumbing, the 3-stage pipeline, and
-report/visualization generation) is fully implemented and unit-tested (243
+report/visualization generation) is fully implemented and unit-tested (255
 tests, see [Testing](#testing)). A pure-Python mock model backend
 (`models/mock.py`) exercises the entire pipeline end-to-end without a GPU.
 
@@ -20,18 +20,17 @@ not just interface stubs:
 | Model | Status | Verified against |
 | --- | --- | --- |
 | iLLaDA | **Real, ported sampler** (`models/illada.py`) | `iLLaDAtest`'s reference `generate.py` — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
-| DiffusionGemma | **Real** (`models/dg.py`) | `DGtest`'s `run.py` + the real upstream `transformers` source (`DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` — confirmed merged into `transformers>=5.13.0`, no vendoring needed). Trace capture wraps the real `accept_canvas` method via an instance-level `_prepare_sampler` override. Tests in `tests/test_dg_sampling.py`. |
-| Dream | Best-effort, **not locally verified** (`models/dream.py`) | No reference implementation was available for this one (unlike the two above) — implemented from Dream-7B's publicly documented HF interface (`diffusion_generate`, `output_history`, `alg`). Confirm parameter names/`mask_token_id` against the real model before formal runs. Wiring tests in `tests/test_dream_sampling.py` check data flow, not the (unverifiable-from-here) algorithm itself. |
+| DiffusionGemma | **Real** (`models/diffusiongemma.py`) | Verified against the upstream `DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` implementation. Trace capture wraps `accept_canvas` through `_prepare_sampler`. Tests live in `tests/test_diffusiongemma_sampling.py`. |
+| DreamReasoner | **Real, ported sampler** (`models/dreamreasoner.py`) | GitHub's `DreamLM/DreamReasoner` repo (the design doc's own link) ships only a README + assets, no python — so verified instead by fetching the real `generation_utils.py`/`modeling_dream.py`/`config.json` from the `Dream-org/DreamReasoner-8B` HF repo directly. Confirmed from that source (not assumed): `block_diffusion_generate` returns only `sequences`/`nfe`, no per-step history at all (unlike regular Dream-7B's `output_history`), so this adapter ports the real `_denoise_current_block`/`_select_transfer_index` loop itself (like iLLaDA) rather than calling the model's own convenience method; default `block_length`=`config.block_size`=32; default per-block `denoising_steps`=`block_length` unless `remasking_strategy='low_confidence_static'`; the library's own default remasking strategy (`low_confidence_dynamic`) is already confidence-based, so — unlike regular Dream, where the library default was overridden — no override is applied; `mask_token_id`=`config.mask_token_id`=151669, shipped directly; the real default path uses a prefix KV cache (ported faithfully, since it directly affects real Time/Energy/Compute cost, not just trace fidelity); never revises (same structural reason as iLLaDA). This is a genuinely different, independently trained model from regular Dream-7B (`Dream-org/Dream-v0-Instruct-7B`) — not a config variant of it — and the design doc's own model roster (section 5) no longer includes regular Dream at all, so that adapter/config/tests were removed rather than kept alongside this one. Tests in `tests/test_dreamreasoner_sampling.py`. |
 
 What's still open, and why:
 
 | Piece | Status | Why |
 | --- | --- | --- |
-| W1 | Configuration only (`configs/models/w1.yaml`) | Project decision: W1 will be integrated against a custom/internal API later — no adapter code changes planned until then, just keep the config shape ready. |
+| W1 | API adapter + configuration (`models/w1_api.py`, `configs/models/w1.yaml`) | The transport/timing path is implemented; the private endpoint and its trace payload still need to be validated against the real service before Part 4 is enabled. |
 | HelloEval score | Heuristic fallback in `datasets/hellobench.py` | The real metric is an LLM-judge rubric. Pass `judge_fn` to `HelloBenchDataset` to use a real judge. |
-| RULER / StructEval-T / IFEval task banks | Synthetic/representative samples | No official task-bank files wired in; `ruler.build_niah_sample` and `runner/demo_samples.py` are placeholders. |
-| Real dataset loading | GSM8K implemented | `--no-demo` downloads the official OpenAI GSM8K test split at a pinned revision, verifies its SHA-256, and deterministically samples it. Real MBPP/StructEval-T/IFEval/Sudoku/RULER/HelloBench loaders remain pending. |
-| Batch experiment runner | Not implemented | Each CLI command runs one model-config/variant x dataset-config pair. `configs/experiments/full_matrix.yaml` documents the intended full matrix as a checklist for a future batch script. |
+| Real dataset loading | GSM8K + local files | `--no-demo` downloads pinned/checksummed official GSM8K; every dataset also accepts local JSON/JSONL through `--samples-file`. Remaining official task-bank downloaders are external preparation. |
+| Batch experiment runner | Implemented with isolated environments | `run_bench.py` reads the matrix and delegates each model to its own script/venv. |
 | Running the real models end-to-end | Not done in this environment | No GPU / multi-GB checkpoint downloads here — the sampling loops themselves are ported/verified against reference code and algorithm-tested with fake logits (see table above), but nobody has run them against the actual weights yet. First real run should sanity-check output quality before trusting the pipeline's numbers. |
 
 None of these block the framework from being extended — each is isolated
@@ -41,22 +40,23 @@ point that needs a real checkpoint/API/judge/GPU to finish.
 ## Layout
 
 ```
-setup_env.py / run_tests.py   # root install / test-runner scripts (see below)
+run_bench.py                   # main entry: full matrix by default, -m filters models
+setup_venv.py / run_tests.py   # venv dispatcher / test runner (see below)
 prepare_model.py               # pre-warm a model's HF checkpoint cache (see below)
+venv_scripts/                  # one Python venv/install/run script per model
 configs/
   models/       # one YAML per model, one or more named `configs:` variants (Appendix D)
   datasets/     # one YAML per dataset (section 1/6): dataset class + sample size + seed
-  experiments/  # model x dataset matrix checklist (not yet auto-run)
+  experiments/  # executable model x dataset matrices
 src/dllm_bench/
   interfaces.py     # GenerationRequest/Result, TraceStep, ModelAdapter protocol
   registry.py       # YAML -> instantiated ModelAdapter/Dataset
   hf_cache.py       # project-relative HF cache directory (see below)
   models/           # base.py (resource-measurement wrapper), model_cache.py (shared
                      # loaded-weights cache), hf_ar.py (Qwen3-4B),
-                     # hf_diffusion.py (iLLaDA/Dream shared base + DiffusionStepConfig),
-                     # illada.py, dream.py (each model's real sampler — see Status),
-                     # trace_utils.py (shared snapshot-diffing trace helper),
-                     # dg.py, w1_api.py, mock.py
+                     # hf_diffusion.py (iLLaDA/DreamReasoner shared base + DiffusionStepConfig),
+                     # illada.py, dreamreasoner.py (each model's real sampler — see Status),
+                     # diffusiongemma.py, w1_api.py, mock.py
   datasets/         # base.py + gsm8k/mbpp/structeval_t/ifeval/sudoku/ruler/hellobench
   resource/         # timing.py/energy.py/compute.py/vram.py (Appendix B protocol)
   metrics/          # quality_resource.py/long_context.py (Part 3),
@@ -68,20 +68,50 @@ src/dllm_bench/
   report/           # tables.py/plots.py (3.4), trace_report.py (unified per-sample
                      # entry point), token_grid_viz.py + trace_distribution_viz.py
                      # (trace visuals), sudoku_trace_viz.py (Sudoku's extra GIF)
-  cli.py            # `dllm-bench generate/score/visualize/report`
-tests/              # one file per module area, 243 tests total
+  cli.py            # `dllm-bench generate/score/visualize/report/matrix`
+tests/              # one file per module area, 256 passing + 8 optional skips
 ```
 
-## Install
+## Main entry point
+
+`run_bench.py` is the normal way to launch the benchmark. With no `-m`, it
+runs every model and variant declared in `configs/experiments/full_matrix.yaml`:
 
 ```bash
-python setup_env.py                 # core + dev extra (pytest)
-python setup_env.py --extras hf,gpu # + torch/transformers + pynvml
+python run_bench.py                    # all matrix models
+python run_bench.py -m illada          # iLLaDA Best + Fast
+python run_bench.py -m dreamreasoner   # DreamReasoner Best + Fast
+python run_bench.py -m qwen3_4b        # AR baseline only
+python run_bench.py -m diffusiongemma  # large-model reference
+python run_bench.py -m illada -m qwen3_4b
 ```
 
-This just runs `pip install -e .[...]` against whatever Python you invoke it
-with — no virtualenv is created for you; activate one yourself first if you
-want isolation. A manual `pip install -e ".[dev,hf,gpu]"` works identically.
+Useful controls:
+
+```bash
+python run_bench.py --list-models
+python run_bench.py --dry-run -m illada
+python run_bench.py -m illada --stage generate --n-samples 20
+python run_bench.py --real-data  # use samples_file entries from the matrix
+```
+
+Runs are resumable by default. The built-in demo dataset is the default so
+the entry works before formal dataset files are configured; formal benchmark
+runs should declare `samples_file` for every dataset and use `--real-data`.
+
+## Environment setup
+
+```bash
+python setup_venv.py                   # every model declared in the matrix
+python setup_venv.py -m illada         # only .venv-illada
+python setup_venv.py -m dreamreasoner  # only .venv-dreamreasoner
+python setup_venv.py -m diffusiongemma # only .venv-diffusiongemma
+```
+
+`setup_venv.py` is only a dispatcher. It calls
+`venv_scripts/<model>.py setup`, and each Python script creates its own venv
+with model-specific torch/transformers pins. No model packages are installed
+into the Python running `setup_venv.py`.
 
 ### Model scripts
 
@@ -98,44 +128,43 @@ Available entry points and environments:
 
 | Model | Script | Environment |
 | --- | --- | --- |
-| Qwen3-4B AR | `scripts/qwen3_4b.sh` | `.venv-qwen3-ar` |
-| iLLaDA | `scripts/illada.sh` | `.venv-illada` |
-| Dream | `scripts/dream.sh` | `.venv-dream` |
-| DiffusionGemma | `scripts/diffusiongemma.sh` | `.venv-diffusiongemma` |
-| W1 | `scripts/w1.sh` | `.venv-w1` |
-| Mock | `scripts/mock.sh` | `.venv-mock` |
+| Qwen3-4B AR | `venv_scripts/qwen3_4b.py` | `.venv-qwen3_4b` |
+| iLLaDA | `venv_scripts/illada.py` | `.venv-illada` |
+| DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venv-dreamreasoner` |
+| DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venv-diffusiongemma` |
+| W1 | `venv_scripts/w1.py` | `.venv-w1` |
+| Mock | `venv_scripts/mock.py` | `.venv-mock` |
 
 Example lifecycle:
 
 ```bash
-bash scripts/qwen3_4b.sh setup
-bash scripts/qwen3_4b.sh check
-bash scripts/qwen3_4b.sh prepare
-bash scripts/qwen3_4b.sh run
+python venv_scripts/qwen3_4b.py setup
+python venv_scripts/qwen3_4b.py check
+python venv_scripts/qwen3_4b.py prepare
+python venv_scripts/qwen3_4b.py run
 ```
 
-`run` creates the environment automatically when it is missing and activates it
-inside the process; no manual `source` or `deactivate` is required. Its defaults
-use one built-in GSM8K demo sample, 32 output tokens, and seed 42. Override run
-settings with environment variables:
+`run` creates the environment automatically when it is missing, then launches
+the model's matrix rows explicitly with that venv's Python executable. It does
+not depend on shell activation. Override settings with environment variables:
 
 ```bash
-DATA_SOURCE=demo N_SAMPLES=1 MAX_NEW_TOKENS=32 \
-  OUTPUT_ROOT=output/checks/qwen3-ar bash scripts/qwen3_4b.sh run
+DATA_SOURCE=demo N_SAMPLES=1 STAGE=all \
+  OUTPUT_ROOT=output/checks/qwen3_4b python venv_scripts/qwen3_4b.py run
 ```
 
 CUDA 12.4 is the default package index. Override it during setup when supported:
 
 ```bash
-CUDA_INDEX=cu126 bash scripts/qwen3_4b.sh setup
-CUDA_INDEX=cu121 bash scripts/dream.sh setup
+python venv_scripts/qwen3_4b.py setup --cuda-index cu126
+python venv_scripts/dreamreasoner.py setup --cuda-index cu121
 ```
 
-For a full 150-sample AR run on the official GSM8K test split:
+For formal data declared through `samples_file` in the experiment matrix:
 
 ```bash
-DATA_SOURCE=real N_SAMPLES=150 MAX_NEW_TOKENS=512 SEED=42 \
-  OUTPUT_ROOT=output/official-gsm8k/qwen3-ar bash scripts/qwen3_4b.sh run
+DATA_SOURCE=real N_SAMPLES=150 \
+  OUTPUT_ROOT=output/formal python venv_scripts/qwen3_4b.py run
 ```
 
 Model weights, official datasets, and package wheels are shared through
@@ -158,10 +187,11 @@ generate → score → visualize → report pipeline (including resume behavior)
 through the mock adapter.
 
 The three real sampler implementations are also algorithm-tested against
-fake logits/models (`tests/test_illada_sampling.py`, `test_dg_sampling.py`,
-`test_dream_sampling.py`, `test_trace_utils.py`) — these check the actual
+fake logits/models (`tests/test_illada_sampling.py`, `test_diffusiongemma_sampling.py`,
+`test_dreamreasoner_sampling.py`) — these check the actual
 selection/trace-construction logic (e.g. iLLaDA's top-k-by-confidence commit
-order, DG's `_prepare_sampler` patch-and-restore including under exceptions),
+order, DiffusionGemma's `_prepare_sampler` patch-and-restore under exceptions,
+DreamReasoner's KV-cache store_kv call pattern and force-accept-on-last-step),
 not just that the classes import and wire together. They still can't replace
 running against real weights on a GPU (see the Status table).
 
@@ -171,7 +201,7 @@ Generation, scoring, and visualization are three separate CLI commands
 instead of one combined "run" — this is what lets you:
 
 - run each model independently (skip W1 entirely; run iLLaDA without
-  touching Dream's output);
+  touching DreamReasoner's output);
 - resume a half-finished dataset without redoing already-generated or
   already-scored samples (each stage checks per-sample files first);
 - generate on one machine (e.g. a GPU box) and score/visualize on another —
@@ -197,6 +227,24 @@ dllm-bench visualize --model-config configs/models/mock.yaml \
                      --dataset-config configs/datasets/gsm8k.yaml --demo --n-samples 5
 
 dllm-bench report --output-root output --dataset gsm8k
+```
+
+For real local data, replace `--demo` with a JSON/JSONL file. Records use
+`sample_id`, `prompt`, `reference`, and optional `meta`; common GSM8K
+(`question`/`answer`) and MBPP (`text`/`test_list`) exports are also accepted:
+
+```bash
+dllm-bench generate --model-config configs/models/illada.yaml \
+  --dataset-config configs/datasets/gsm8k.yaml --no-demo \
+  --samples-file data/gsm8k.jsonl --max-new-tokens 256
+```
+
+Run the complete declared matrix with isolated model environments:
+
+```bash
+python run_bench.py --demo
+# For formal runs, add `samples_file` to every dataset entry in the matrix
+# and use --real-data.
 ```
 
 Pass `--variant best` to run just one, or `--variants best,fast` to name an
@@ -232,8 +280,8 @@ dllm-bench generate --model-config configs/models/qwen3_4b.yaml \
 ```
 
 iLLaDA and DiffusionGemma work the same way (`configs/models/illada.yaml`,
-`configs/models/dg.yaml` — DG additionally needs `pip install -e ".[dg]"`
-for its `transformers>=5.13.0` floor). Nobody has run either against real
+`configs/models/diffusiongemma.yaml`). Their isolated scripts install the
+appropriate transformer versions. Nobody has run either against real
 weights yet in this environment (no GPU here) — see the Status table above.
 
 ## Model checkpoints and caching
@@ -337,14 +385,17 @@ dataset's YAML never silently changes what the unit tests assert.
    implement the protocol directly for an API-backed model like `w1_api.py`).
    If it loads HF weights, route `_ensure_loaded` through
    `models/model_cache.get_or_load(model_name_or_path, device, loader)` (see
-   `hf_ar.py`/`hf_diffusion.py`/`dg.py`) so multiple variants pointing at the
-   same checkpoint share one in-memory copy instead of reloading. If your
-   model only exposes raw per-step canvas snapshots (not an explicit
-   "what changed this step" signal), `models/trace_utils.py`'s
-   `trace_steps_from_snapshots` builds `TraceStep`s from that generically —
-   see `dream.py` for the pattern; if it exposes something richer (iLLaDA's
-   per-step selected-positions, DG's `accepted_token_mask`), build
-   `TraceStep`s more precisely from that instead (see `illada.py`/`dg.py`).
+   `hf_ar.py`/`hf_diffusion.py`/`diffusiongemma.py`) so variants pointing at the
+   same checkpoint share one in-memory copy instead of reloading. If the
+   model's own convenience generate method doesn't expose a usable per-step
+   trace (confirm this from its real source first, the way
+   `dreamreasoner.py`/`illada.py`'s module docstrings do — don't assume),
+   reimplement its real denoising loop yourself, calling the model's forward
+   pass directly each step and building `TraceStep`s from whatever
+   confidence/selected-positions signal *that* algorithm actually produces
+   (see `illada.py`/`dreamreasoner.py`); if it exposes something richer
+   through its own generate method (DiffusionGemma's `accepted_token_mask`),
+   hook that instead (see `diffusiongemma.py`).
 2. Add `configs/models/<name>.yaml` with a `configs:` block naming each
    variant you want, pointing `adapter:` at the dotted class path and
    `init_kwargs:`/`step_config:` at its constructor args. If it's HF-backed,

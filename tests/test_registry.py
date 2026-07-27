@@ -113,6 +113,13 @@ def test_illada_variants_carry_distinct_steps_per_block():
     assert fast._step_config.steps_per_block == 16
 
 
+def test_dreamreasoner_variants_carry_distinct_steps_per_block():
+    best = build_model_adapter(CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="best")
+    fast = build_model_adapter(CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="fast")
+    assert best._step_config.steps_per_block == 32
+    assert fast._step_config.steps_per_block == 16
+
+
 def test_w1_yaml_declares_all_three_configs():
     assert set(list_model_variants(CONFIGS_DIR / "models" / "w1.yaml")) == {
         "standard", "jump", "gidd",

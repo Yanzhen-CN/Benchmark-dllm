@@ -10,14 +10,18 @@ runner/VM), same as upstream MBPP/HumanEval harnesses.
 
 from __future__ import annotations
 
+import io
+import keyword
 import re
 import subprocess
 import sys
 import tempfile
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
 from .base import Dataset, Sample, ScoreResult
+from ..interfaces import TraceStep
 
 _CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 _TRAILING_CONTINUATION_RE = re.compile(r"(\\|[+\-*/,(\[{]|\band\b|\bor\b)\s*$")
@@ -108,3 +112,71 @@ class MBPPDataset(Dataset):
             valid=executable,
             complete=complete,
         )
+
+
+def _python_feature_sets(code: str) -> tuple[list[set[str]], list[set[str]]]:
+    """Appendix A.3's four structure and three content feature groups."""
+    brackets: set[str] = set()
+    indents: set[str] = set()
+    keywords: set[str] = set()
+    signatures: set[str] = set()
+    identifiers: set[str] = set()
+    literals: set[str] = set()
+    expressions: set[str] = set()
+
+    tokens = []
+    generator = tokenize.generate_tokens(io.StringIO(code).readline)
+    while True:
+        try:
+            tokens.append(next(generator))
+        except (StopIteration, tokenize.TokenError, IndentationError):
+            break
+
+    for tok in tokens:
+        value = tok.string
+        location = f"{tok.start[0]}:{tok.start[1]}"
+        if tok.type == tokenize.OP:
+            if value in "()[]{}":
+                brackets.add(f"{value}@{location}")
+            if value not in {",", ":", ";", "."}:
+                expressions.add(f"{value}@{location}")
+        elif tok.type == tokenize.INDENT:
+            indents.add(f"indent@{tok.start[0]}")
+        elif tok.type == tokenize.NAME:
+            if keyword.iskeyword(value):
+                keywords.add(f"{value}@{location}")
+            else:
+                identifiers.add(f"{value}@{location}")
+        elif tok.type in {tokenize.NUMBER, tokenize.STRING}:
+            literals.add(f"{value}@{location}")
+
+    for match in re.finditer(r"(?m)^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(", code):
+        signatures.add(match.group(1))
+    return [brackets, indents, keywords, signatures], [identifiers, literals, expressions]
+
+
+def _mean_feature_coverage(current: list[set[str]], final: list[set[str]]) -> float:
+    values = [len(now & target) / len(target) for now, target in zip(current, final) if target]
+    return sum(values) / len(values) if values else 0.0
+
+
+def mbpp_checkpoint_scores(
+    trace: list[TraceStep], interval: int = 4
+) -> tuple[list[float], list[float]]:
+    """StructureProgress/ContentProgress every four forwards plus the final.
+
+    Coverage is measured against the final checkpoint's feature inventory,
+    giving the per-sample final-state normalization required by Appendix A.4.
+    """
+    if not trace:
+        return [], []
+    from .structeval_t import checkpoint_indices
+
+    final_structure, final_content = _python_feature_sets(trace[-1].decoded_text)
+    structure_scores: list[float] = []
+    content_scores: list[float] = []
+    for index in checkpoint_indices(len(trace), interval):
+        structure, content = _python_feature_sets(trace[index].decoded_text)
+        structure_scores.append(_mean_feature_coverage(structure, final_structure))
+        content_scores.append(_mean_feature_coverage(content, final_content))
+    return structure_scores, content_scores

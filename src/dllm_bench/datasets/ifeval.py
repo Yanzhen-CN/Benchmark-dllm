@@ -20,7 +20,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..interfaces import TraceStep
 from .base import Dataset, Sample, ScoreResult
+from .structeval_t import checkpoint_indices
 
 Checker = Callable[[str, dict[str, Any]], bool]
 
@@ -198,6 +200,30 @@ def evaluate_ifeval_progress(
         _word_count(text) / sample.target_length_words if sample.target_length_words else None
     )
     return constraint_progress, content_progress, length_ratio
+
+
+def ifeval_checkpoint_scores(
+    trace: list[TraceStep], sample: IFEvalSample, interval: int = 8
+) -> tuple[list[float], list[float]]:
+    """Section 4.2.2: score `trace`'s decoded_text at every 8th forward (plus
+    always the final forward), returning (constraint_progress_scores,
+    content_progress_scores) — the per-checkpoint curves
+    :mod:`dllm_bench.metrics.strategy_score` turns into one sample's
+    AUC/SFI. Shares `checkpoint_indices` with StructEval-T's
+    version of this pipeline (only the interval and which detector runs
+    differ: 4 vs 8, structure/content vs constraint/content).
+    """
+    if not trace:
+        return [], []
+    constraint_scores = []
+    content_scores = []
+    for i in checkpoint_indices(len(trace), interval):
+        constraint_progress, content_progress, _length_ratio = evaluate_ifeval_progress(
+            trace[i].decoded_text, sample
+        )
+        constraint_scores.append(constraint_progress)
+        content_scores.append(content_progress)
+    return constraint_scores, content_scores
 
 
 class IFEvalDataset(Dataset):

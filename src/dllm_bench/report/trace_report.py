@@ -1,12 +1,29 @@
-"""Section 4.6's per-representative-sample display — the single entry point
-every dataset renders through (unified drawing method across all 7
-datasets): token-grid GIF/PNG, position-vs-first-commit scatter, commit
-speed, Effective Tokens per Forward, Structure/Constraint-vs-Content curves,
-Accepted Ratio x Certainty, and the final task result.
+"""Section 4.1's per-representative-sample display — the single entry point
+every dataset renders through (one drawing method across all datasets).
+Design doc 4.1 is explicit that this display includes only
+things that are *inherently single-sample visualizations*:
+
+- Token Position x Forward heatmap (static; `token_grid_viz.plot_token_position_forward_heatmap`)
+- Accepted Ratio x Certainty curve (`plot_certainty_curve`, this module)
+- final task result
+
+Effective Tokens per Forward (4.2.1) and Structure/Constraint-vs-Content
+formation (4.2.2) are explicitly *dataset-level averages* in the design doc
+("4.2 里的各项指标都是数据集级平均，不在这里对单个样本重复展示") — computed
+once per sample as a building block, then aggregated across the whole
+dataset, never shown redundantly for one sample here. Their dataset-level
+aggregate versions live in `report/dataset_trace_report.py`.
+
+On top of the design doc's exact 3 items, this also renders the animated
+token-grid GIF (the moving-picture form of the same heatmap data) and two
+DGtest-style diagnostics (position-vs-first-commit, commit speed) — these
+are still inherently single-sample, just not literally named in 4.1's list;
+kept because they were an explicit earlier ask to mirror DGtest's own
+per-sample trace visualizer.
 
 :func:`render_sample_report` is what ``dllm-bench visualize`` calls once per
-sample. Sudoku gets one more artifact on top of the unified set — an animated
-9x9 grid walking through the solve — via a lazy import of
+sample. Sudoku gets one more artifact on top — an animated 9x9 grid walking
+through the solve — via a lazy import of
 :mod:`dllm_bench.report.sudoku_trace_viz` so that dataset-specific piece
 doesn't force every other dataset to depend on it.
 """
@@ -23,61 +40,12 @@ import matplotlib.pyplot as plt
 from ..datasets.base import Sample
 from ..interfaces import TraceStep
 from ..metrics.certainty import build_certainty_curve
-from ..metrics.strategy_score import normalized_progress_series
-from ..metrics.trace_parallelism import (
-    compute_final_stable_steps,
-    effective_tokens_per_forward,
-    normalized_forward_progress,
+from .token_grid_viz import (
+    plot_token_position_forward_heatmap,
+    render_token_grid_final_png,
+    render_token_grid_gif,
 )
-from .token_grid_viz import render_token_grid_final_png, render_token_grid_gif
 from .trace_distribution_viz import plot_commit_speed, plot_position_vs_first_commit
-
-
-def plot_effective_tokens_curve(trace: list[TraceStep], out_path: str) -> None:
-    if not trace:
-        return
-    token_id_sequences = [step.token_ids for step in trace]
-    final_stable_steps = compute_final_stable_steps(token_id_sequences)
-    num_steps = len(trace)
-    counts = effective_tokens_per_forward(final_stable_steps, num_steps)
-
-    progresses = [normalized_forward_progress(t, num_steps) for t in range(num_steps)]
-    values = [counts[t] for t in range(num_steps)]
-
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.plot(progresses, values, marker="o")
-    ax.set_xlabel("Normalized Forward Progress")
-    ax.set_ylabel("Effective Tokens per Forward")
-    ax.set_title("Forward Effective Parallelism")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
-
-
-def plot_strategy_curve(
-    form_scores: list[float],
-    content_scores: list[float],
-    out_path: str,
-    form_label: str = "Structure",
-    content_label: str = "Content",
-) -> None:
-    if not form_scores or not content_scores:
-        return
-    form_norm = normalized_progress_series(form_scores)
-    content_norm = normalized_progress_series(content_scores)
-    n = len(form_norm)
-    progresses = [i / (n - 1) if n > 1 else 0.0 for i in range(n)]
-
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.plot(progresses, form_norm, marker="o", label=form_label)
-    ax.plot(progresses, content_norm, marker="s", label=content_label)
-    ax.set_xlabel("Normalized Forward Progress")
-    ax.set_ylabel("Normalized Progress")
-    ax.set_title(f"{form_label} vs {content_label} formation")
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
 
 
 def plot_certainty_curve(trace: list[TraceStep], final_valid_length: int, out_path: str) -> None:
@@ -121,8 +89,6 @@ def render_sample_report(
     trace: list[TraceStep],
     final_valid_length: int,
     out_dir: str,
-    form_scores: list[float] | None = None,
-    content_scores: list[float] | None = None,
     final_output_text: str = "",
     final_score: float | None = None,
     dataset_name: str | None = None,
@@ -135,6 +101,10 @@ def render_sample_report(
     title = f"{dataset_name or ''} - {sample_id}".strip(" -")
 
     if trace:
+        heatmap_path = out_dir_path / f"{sample_id}_heatmap.png"
+        plot_token_position_forward_heatmap(trace, heatmap_path, title=title)
+        written["heatmap"] = str(heatmap_path)
+
         gif_path = out_dir_path / f"{sample_id}_trace.gif"
         render_token_grid_gif(trace, gif_path, title=title)
         written["token_grid_gif"] = str(gif_path)
@@ -150,15 +120,6 @@ def render_sample_report(
         speed_path = out_dir_path / f"{sample_id}_speed.png"
         plot_commit_speed(trace, speed_path, title=title)
         written["speed"] = str(speed_path)
-
-    parallelism_path = out_dir_path / f"{sample_id}_parallelism.png"
-    plot_effective_tokens_curve(trace, str(parallelism_path))
-    written["parallelism"] = str(parallelism_path)
-
-    if form_scores and content_scores:
-        strategy_path = out_dir_path / f"{sample_id}_strategy.png"
-        plot_strategy_curve(form_scores, content_scores, str(strategy_path))
-        written["strategy"] = str(strategy_path)
 
     certainty_path = out_dir_path / f"{sample_id}_certainty.png"
     plot_certainty_curve(trace, final_valid_length, str(certainty_path))

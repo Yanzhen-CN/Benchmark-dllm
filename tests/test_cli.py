@@ -80,6 +80,7 @@ def test_generate_score_visualize_report_pipeline(tmp_path):
     ])
     assert "gsm8k" in report_result.output
     assert "mock" in report_result.output
+    assert (output_root / "report" / "gsm8k" / "quality_tps.png").exists()
 
 
 def test_generate_sweeps_every_variant_by_default(tmp_path):

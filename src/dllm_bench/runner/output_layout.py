@@ -12,7 +12,7 @@
 
 Splitting by ``<model>_<config>`` first, ``<dataset>`` second is what lets
 each model run independently (skip W1 entirely, run iLLaDA without touching
-Dream's output), lets a dataset resume mid-way (each stage checks per-sample
+DreamReasoner's output), lets a dataset resume mid-way (each stage checks per-sample
 files before redoing work — see ``runner/generate_stage.py``/``score_stage.py``),
 and lets `model_output/` be generated on a GPU box and copied elsewhere for
 scoring/visualization without dragging the other two directories along.

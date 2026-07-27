@@ -1,4 +1,4 @@
-"""Section 3.4's chart list: Quality-Time/Energy/Compute, Score per Unit
+"""Section 3.4's chart list: Quality-TPS/EPS/CPS, Score per Unit
 Energy, Score per Compute, Best vs Fast, and the two scenario rankings.
 
 Every function takes the same row-dict shape :mod:`tables` produces and
@@ -23,7 +23,7 @@ def _label(row: dict[str, Any]) -> str:
 def plot_quality_vs_resource(
     rows: list[dict[str, Any]], resource_key: str, out_path: str, title: str | None = None
 ) -> None:
-    """Quality-Time / Quality-Energy / Quality-Compute scatter."""
+    """Quality-TPS / Quality-EPS / Quality-CPS scatter."""
     fig, ax = plt.subplots(figsize=(6, 4.5))
     for row in rows:
         x, y = row.get(resource_key), row.get("q")
@@ -59,7 +59,7 @@ def plot_score_per_unit(
 
 
 def plot_best_vs_fast(rows: list[dict[str, Any]], metric_key: str, out_path: str) -> None:
-    """Grouped bar comparing `metric_key` (usually q or Time/sample) between
+    """Grouped bar comparing `metric_key` (usually q or TPS) between
     each model's Best and Fast config, for models that have both."""
     by_model: dict[str, dict[str, float]] = {}
     for row in rows:
@@ -95,7 +95,7 @@ def plot_best_vs_fast(rows: list[dict[str, Any]], metric_key: str, out_path: str
 def plot_scenario_ranking(
     converted_rows: list[dict[str, Any]], scenario_key: str, out_path: str
 ) -> None:
-    """`scenario_key` is "Time-priority" or "Energy-priority" — one bar per
+    """`scenario_key` is "Speed-priority" or "Energy-priority" — one bar per
     model/config, sorted descending (section 3.3's two deployment-preference
     rankings, kept separate rather than combined)."""
     labeled = [

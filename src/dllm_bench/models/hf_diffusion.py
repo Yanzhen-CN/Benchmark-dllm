@@ -1,15 +1,21 @@
-"""Shared HF-style diffusion adapter base for iLLaDA and Dream (Appendix D.1/D.2).
+"""Shared HF-style diffusion adapter base for iLLaDA and DreamReasoner
+(Appendix D.1/D.2).
 
-Both models load the same way — ``AutoModel``/``AutoTokenizer`` with
-``trust_remote_code=True`` — but their actual denoising/unmasking loops are
-genuinely different (iLLaDA: block-wise semi-autoregressive with a
-precomputed per-step transfer schedule; Dream: a single ``diffusion_generate``
-call with a pluggable confidence algorithm), so each lives in its own module
-(``illada.py``/``dream.py``) subclassing :class:`HFDiffusionAdapter` here and
-implementing :meth:`_run_denoising`. This base class only owns what's
-genuinely shared: loading (via the process-wide weight cache, so Best/Fast
-share one loaded copy), resource-measurement integration, and merging
-per-request config overrides into a :class:`DiffusionStepConfig`.
+Both models load via `trust_remote_code=True` (iLLaDA: `AutoModel`/
+`AutoTokenizer`, the default `_ensure_loaded` here; DreamReasoner overrides
+`_ensure_loaded` for `AutoModelForCausalLM` instead — see
+`dreamreasoner.py`), and both are genuinely block-wise (unlike regular
+Dream-7B's single-pass `diffusion_generate`, no longer part of this
+benchmark's model roster — see design doc section 5). Their real per-block
+denoising loops still differ enough in implementation detail (iLLaDA
+recomputes full-sequence logits every step; DreamReasoner uses a real
+per-block prefix KV cache with its own `_select_transfer_index` remasking
+strategies) that each ports its own loop in its own module
+(``illada.py``/``dreamreasoner.py``) subclassing :class:`HFDiffusionAdapter`
+here and implementing :meth:`_run_denoising`. This base class only owns
+what's genuinely shared: loading (via the process-wide weight cache, so
+Best/Fast share one loaded copy), resource-measurement integration, and
+merging per-request config overrides into a :class:`DiffusionStepConfig`.
 """
 
 from __future__ import annotations
@@ -29,7 +35,8 @@ class DiffusionStepConfig:
     """Appendix D Best/Fast knobs. ``gen_length``/``steps``/``block_length``/
     ``steps_per_block`` are the fields shared conceptually across block/step
     diffusion models; ``extra`` carries whatever additional knobs one
-    specific model's real sampler needs (e.g. Dream's `alg`/`alg_temp`/
+    specific model's real sampler needs (e.g. DreamReasoner's
+    `remasking_strategy`/`confidence_threshold`/`eb_threshold`/`top_k`/
     `top_p`/`temperature`) without forcing every model into one rigid shape.
     """
 
@@ -69,9 +76,11 @@ class HFDiffusionAdapter(BaseModelAdapter):
         self._device = device
 
         def _load():
-            # Both iLLaDA and Dream ship custom `trust_remote_code` model
-            # classes rather than a class registered in plain transformers
-            # (confirmed against each project's own reference loading code).
+            # This default (AutoModel/AutoTokenizer) is iLLaDA's own loading
+            # path — a custom `trust_remote_code` model class, confirmed
+            # against the reference project's own loading code. DreamReasoner
+            # overrides `_ensure_loaded` entirely (AutoModelForCausalLM
+            # instead — see dreamreasoner.py), so this body never runs for it.
             tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
             model = AutoModel.from_pretrained(self._model_name, trust_remote_code=True)
             model.to(device)

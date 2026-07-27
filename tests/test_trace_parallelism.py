@@ -35,6 +35,10 @@ def test_compute_final_stable_steps_empty():
     assert compute_final_stable_steps([]) == []
 
 
+def test_compute_final_stable_steps_supports_growing_ar_sequences():
+    assert compute_final_stable_steps([[10], [10, 20], [10, 20, 30]]) == [0, 1, 2]
+
+
 def test_effective_tokens_per_forward_counts_by_step():
     counts = effective_tokens_per_forward([0, 0, 1, 2, 2, 2], num_steps=3)
     assert counts == {0: 2, 1: 1, 2: 3}

@@ -8,7 +8,7 @@
 # on first use into ./.hf_cache (see dllm_bench/hf_cache.py), not a local
 # path. `python prepare_model.py --model-config configs/models/qwen3_4b.yaml`
 # warms that cache ahead of time.
-model: qwen3-4b
+model: qwen3_4b
 configs:
   ar-baseline:
     adapter: dllm_bench.models.hf_ar.QwenARAdapter

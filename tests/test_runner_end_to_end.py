@@ -42,6 +42,7 @@ def test_mock_adapter_solves_demo_gsm8k_samples_end_to_end():
     assert summary.status_counts == {"success": 5}
     assert summary.n_samples == 5
     assert summary.time_per_sample is not None and summary.time_per_sample >= 0
+    assert summary.tps is not None and summary.tps > 0
     assert summary.timing_source == "measured"
     assert len(summary.records) == 5
     assert all(r.generation.status == RunStatus.SUCCESS for r in summary.records)
@@ -80,7 +81,7 @@ def test_run_summary_round_trips_through_persistence_and_report(tmp_path):
 
 
 def test_two_runs_feed_the_converted_results_table(tmp_path):
-    baseline_adapter = MockDiffusionAdapter(name="qwen3-4b", config_name="ar-baseline", response_fn=_correct_gsm8k_response, steps=2)
+    baseline_adapter = MockDiffusionAdapter(name="qwen3_4b", config_name="ar-baseline", response_fn=_correct_gsm8k_response, steps=2)
     fast_adapter = MockDiffusionAdapter(name="illada", config_name="fast", response_fn=_correct_gsm8k_response, steps=8)
     dataset = GSM8KDataset()
     samples = build_demo_samples("gsm8k", n=3)
@@ -93,9 +94,7 @@ def test_two_runs_feed_the_converted_results_table(tmp_path):
 
     row = compute_converted_row(fast_dict, baseline_dict)
     assert row["Model"] == "illada"
-    # both q's are 1.0 (both solved every sample correctly) so Q_time/Q_energy
-    # collapse to 1.0 regardless of the resource ratio - just check the shape.
-    assert row["r_time"] is not None
+    assert row["r_speed"] is not None
 
 
 def _dump(path, summary) -> str:
@@ -120,4 +119,4 @@ def test_render_sample_report_from_a_real_run_record(tmp_path):
         dataset_name=dataset.name,
         sample=record.sample,
     )
-    assert set(written) >= {"token_grid_gif", "parallelism", "certainty", "result"}
+    assert set(written) >= {"heatmap", "token_grid_gif", "certainty", "result"}

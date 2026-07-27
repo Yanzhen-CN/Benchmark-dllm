@@ -1,4 +1,4 @@
-"""Algorithm-level tests for the real DG adapter (models/dg.py): the
+"""Algorithm-level tests for the real DiffusionGemma adapter.
 `_assign_canvas_indices`/`_build_trace_from_captured_steps` trace-conversion
 logic, and the `_prepare_sampler` patch-and-restore mechanism, all against a
 fake model — no real weights/GPU needed.
@@ -13,7 +13,11 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from dllm_bench.interfaces import GenerationRequest, PositionState
-from dllm_bench.models.dg import DGAdapter, _assign_canvas_indices, _build_trace_from_captured_steps
+from dllm_bench.models.diffusiongemma import (
+    DiffusionGemmaAdapter,
+    _assign_canvas_indices,
+    _build_trace_from_captured_steps,
+)
 
 VOCAB_SIZE = 8
 
@@ -76,7 +80,7 @@ def test_build_trace_single_canvas_marks_non_accepted_as_visible():
 
 def test_build_trace_allows_revision_of_a_previously_accepted_position():
     """Position 0 is accepted with token 10 at step0, then genuinely
-    revised to a different token (20) at step1 — this is real DG behavior
+    revised to a different token (20) at step1 — this is real DiffusionGemma behavior
     (accepted_token_mask recomputed from scratch every step), not a bug."""
     captured = [
         _uniform_entropy_step(2, [10, 9], [True, False]),
@@ -91,7 +95,7 @@ def test_build_trace_allows_revision_of_a_previously_accepted_position():
 def test_build_trace_multi_canvas_offsets_positions_globally():
     # canvas 0 counts fully down (2, 1) before canvas 1's first step (2)
     # registers as a new canvas — a same-or-lower cur_step never does (the
-    # heuristic, ported from DGtest's own trace tooling, only fires on a
+    # heuristic, ported from the reference trace tooling, only fires on a
     # strict increase versus the immediately preceding row).
     captured = [
         _uniform_entropy_step(2, [1, 9], [True, False]),
@@ -179,16 +183,16 @@ class _FakeDGModel:
         return SimpleNamespace(sequences=final_sequence)
 
 
-def _make_dg_adapter(raise_after_first_step: bool = False) -> DGAdapter:
-    adapter = DGAdapter("unused-checkpoint")
+def _make_diffusiongemma_adapter(raise_after_first_step: bool = False) -> DiffusionGemmaAdapter:
+    adapter = DiffusionGemmaAdapter("unused-checkpoint")
     adapter._model = _FakeDGModel(raise_after_first_step=raise_after_first_step)
     adapter._processor = _FakeProcessor()
     adapter._device = "cpu"
     return adapter
 
 
-def test_dg_generate_core_builds_correct_trace_and_output():
-    adapter = _make_dg_adapter()
+def test_diffusiongemma_generate_core_builds_correct_trace_and_output():
+    adapter = _make_diffusiongemma_adapter()
     request = GenerationRequest(prompt="hi", max_new_tokens=4)
 
     result = adapter._generate_core(request)
@@ -200,15 +204,15 @@ def test_dg_generate_core_builds_correct_trace_and_output():
     assert result.trace[1].committed_positions == [0, 1, 2, 3]
 
 
-def test_dg_prepare_sampler_is_restored_after_successful_generate():
-    adapter = _make_dg_adapter()
+def test_diffusiongemma_prepare_sampler_is_restored_after_successful_generate():
+    adapter = _make_diffusiongemma_adapter()
     original = adapter._model._prepare_sampler
     adapter._generate_core(GenerationRequest(prompt="hi", max_new_tokens=4))
     assert adapter._model._prepare_sampler == original
 
 
-def test_dg_prepare_sampler_is_restored_even_if_generate_raises():
-    adapter = _make_dg_adapter(raise_after_first_step=True)
+def test_diffusiongemma_prepare_sampler_is_restored_even_if_generate_raises():
+    adapter = _make_diffusiongemma_adapter(raise_after_first_step=True)
     original = adapter._model._prepare_sampler
 
     with pytest.raises(RuntimeError, match="simulated failure"):
@@ -217,14 +221,14 @@ def test_dg_prepare_sampler_is_restored_even_if_generate_raises():
     assert adapter._model._prepare_sampler == original
 
 
-def test_dg_generate_core_failure_surfaces_as_failed_status_via_base_adapter():
+def test_diffusiongemma_generate_core_failure_surfaces_as_failed_status_via_base_adapter():
     """Through the public `.generate()` entry point (not `_generate_core`
     directly), a mid-generation exception must degrade to RunStatus.FAILED,
     not crash the whole benchmark run — and the sampler patch must still be
     restored (checked above) even on that path."""
     from dllm_bench.interfaces import RunStatus
 
-    adapter = _make_dg_adapter(raise_after_first_step=True)
+    adapter = _make_diffusiongemma_adapter(raise_after_first_step=True)
     result = adapter.generate(GenerationRequest(prompt="hi", max_new_tokens=4))
     assert result.status == RunStatus.FAILED
     assert "simulated failure" in result.error_message

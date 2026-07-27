@@ -3,7 +3,12 @@
 Every Part 4 metric (4.2 parallelism, 4.3 strategy score, 4.4 commit-order,
 4.5 certainty) reports the same shape of summary: Mean/Median, IQR, and a
 Bootstrap 95% CI, aggregated per ``Model x Config x Dataset``. This module
-implements that shape once.
+implements that shape once — including the "dataset-level average curve"
+shape (Appendix C / design doc 4.2.1 & 4.2.4): different samples have
+different forward counts, so a curve can't just be averaged index-by-index;
+instead every sample's (x, y) points are binned by a fixed x-grid over
+[0, 1] and each bin reports Median + Bootstrap 95% CI across whatever points
+(from however many samples) landed in it.
 """
 
 from __future__ import annotations
@@ -78,3 +83,43 @@ def summarize(
         ci_high=ci_high,
         n=len(values),
     )
+
+
+@dataclass
+class BinnedPoint:
+    bin_center: float
+    stats: SummaryStats
+
+
+def aggregate_curve_by_bins(
+    samples_xy: list[list[tuple[float, float]]],
+    n_bins: int = 20,
+    seed: int = 42,
+) -> list[BinnedPoint]:
+    """Bins the union of every sample's (x, y) points into `n_bins`
+    fixed-width bins over x in [0, 1] (Appendix C: "曲线按固定 progress bins
+    汇总"), and within each non-empty bin reports Median + Bootstrap 95% CI
+    across every (sample, point) that landed there — a sample can contribute
+    multiple points to one bin, or none, depending on its own forward count;
+    that's fine, this is a dataset-level average, not a per-sample one.
+
+    x values outside [0, 1] are clamped into the nearest edge bin. Empty
+    bins (no sample had a point there) are omitted, not zero-filled.
+    """
+    if n_bins <= 0:
+        raise ValueError("n_bins must be positive")
+
+    bin_values: list[list[float]] = [[] for _ in range(n_bins)]
+    for sample_points in samples_xy:
+        for x, y in sample_points:
+            clamped = min(1.0, max(0.0, x))
+            bin_index = min(int(clamped * n_bins), n_bins - 1)
+            bin_values[bin_index].append(y)
+
+    results: list[BinnedPoint] = []
+    for i, values in enumerate(bin_values):
+        if not values:
+            continue
+        bin_center = (i + 0.5) / n_bins
+        results.append(BinnedPoint(bin_center=bin_center, stats=summarize(values, seed=seed)))
+    return results

@@ -5,10 +5,14 @@ import pytest
 from dllm_bench.interfaces import GenerationRequest, PositionState, TraceStep
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.report.token_grid_viz import (
+    FIRST_ACCEPT_FILL,
     MASK_FILL,
     PANEL_BG,
+    VISIBLE_FILL,
+    cell_fill_color,
     compute_running_accept_counts,
     gradient_color_for_count,
+    plot_token_position_forward_heatmap,
     render_frame,
     render_token_grid_final_png,
     render_token_grid_gif,
@@ -134,3 +138,75 @@ def test_plot_functions_are_no_ops_on_empty_trace(tmp_path):
     plot_commit_speed([], tmp_path / "b.png")
     assert not (tmp_path / "a.png").exists()
     assert not (tmp_path / "b.png").exists()
+
+
+# ---------------------------------------------------------------------------
+# cell_fill_color / static heatmap (design doc 4.1's "Token Position x
+# Forward 热图")
+# ---------------------------------------------------------------------------
+
+def test_cell_fill_color_masked_is_mask_fill():
+    assert cell_fill_color(PositionState.MASKED, count=0, max_count=1, just_committed=False) == MASK_FILL
+
+
+def test_cell_fill_color_visible_is_visible_fill():
+    assert cell_fill_color(PositionState.VISIBLE, count=0, max_count=5, just_committed=False) == VISIBLE_FILL
+
+
+def test_cell_fill_color_just_committed_is_first_accept_fill():
+    color = cell_fill_color(PositionState.ACCEPTED, count=1, max_count=1, just_committed=True)
+    assert color == FIRST_ACCEPT_FILL
+
+
+def test_cell_fill_color_stable_not_just_committed_is_neutral():
+    color = cell_fill_color(PositionState.ACCEPTED, count=1, max_count=1, just_committed=False)
+    assert color == PANEL_BG
+
+
+def test_cell_fill_color_revised_uses_the_gradient():
+    color = cell_fill_color(PositionState.ACCEPTED, count=3, max_count=5, just_committed=False)
+    assert color == gradient_color_for_count(3, 5)
+
+
+def test_render_frame_actually_paints_cells_with_cell_fill_color(tmp_path):
+    """Pixel-level check (not just re-calling the same function): the
+    animated grid's rendered cell color must match what `cell_fill_color`
+    predicts, since `render_frame` is supposed to use it directly — this is
+    what keeps the GIF and the static heatmap from silently drifting apart.
+    """
+    trace = _make_trace(n_positions=6, steps=4)
+    running = compute_running_accept_counts(trace)
+    max_count = max((max(c.values(), default=0) for c in running), default=1) or 1
+    step_index = 1
+    step = trace[step_index]
+    committed = set(step.committed_positions)
+
+    image = render_frame(trace, step_index, running, max_count, title="t")
+    cols, _rows, cell_w, cell_h = token_grid_geometry(len(step.position_states))
+    grid_x, grid_y = 20, 72
+
+    for position in range(len(step.position_states)):
+        row, col = divmod(position, cols)
+        # bottom-right corner, well inside even the thicker 3px
+        # just-committed outline and clear of both the position-index label
+        # (top-left) and the centered token glyph.
+        cx = grid_x + col * cell_w + (cell_w - 6)
+        cy = grid_y + row * cell_h + (cell_h - 6)
+        expected = cell_fill_color(
+            step.position_states[position], running[step_index].get(position, 0), max_count, position in committed
+        )
+        assert image.getpixel((cx, cy)) == expected, f"position {position}"
+
+
+def test_plot_token_position_forward_heatmap_writes_file(tmp_path):
+    trace = _make_trace(n_positions=6, steps=4)
+    out_path = tmp_path / "heatmap.png"
+    plot_token_position_forward_heatmap(trace, out_path, title="t")
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_plot_token_position_forward_heatmap_is_a_no_op_on_empty_trace(tmp_path):
+    out_path = tmp_path / "heatmap.png"
+    plot_token_position_forward_heatmap([], out_path)
+    assert not out_path.exists()

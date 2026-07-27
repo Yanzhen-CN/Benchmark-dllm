@@ -3,8 +3,8 @@ unmasking.
 
 Ported from `GSAI-ML/iLLaDA-8B-Instruct`'s own reference sampler (verified
 against the iLLaDAtest reference implementation's `generate.py` — see
-``models/hf_diffusion.py``'s module docstring for what's shared with Dream
-vs. specific to this model). iLLaDA reuses LLaDA's inference code with
+``models/hf_diffusion.py``'s module docstring for what's shared with
+DreamReasoner vs. specific to this model). iLLaDA reuses LLaDA's inference code with
 **`mask_id=5`** instead of LLaDA's own default `126336` — the reference
 project's README states this explicitly ("By setting mask_id=5, iLLaDA can
 directly reuse the existing LLaDA inference code"); getting this constant

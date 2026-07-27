@@ -17,12 +17,12 @@ hf = [
     "torch>=2.1",
     "transformers>=4.40",
 ]
-# DiffusionGemma (models/dg.py) needs DiffusionGemmaForBlockDiffusion, which
+# DiffusionGemma needs DiffusionGemmaForBlockDiffusion, which
 # is only in transformers>=5.13.0 — a much newer floor than the general `hf`
-# extra above. Split out so Qwen3-4B/iLLaDA/Dream users aren't forced onto
+# extra above. Split out so Qwen3-4B/iLLaDA/DreamReasoner users aren't forced onto
 # a bleeding-edge transformers just to run the AR baseline or the other
 # diffusion models.
-dg = [
+diffusiongemma = [
     "torch>=2.1",
     "transformers>=5.13.0",
 ]

@@ -28,7 +28,7 @@ class QwenARAdapter(BaseModelAdapter):
         config_name: str = "ar-baseline",
         capture_trace: bool = True,
     ) -> None:
-        self.name = "qwen3-4b"
+        self.name = "qwen3_4b"
         self.config_name = config_name
         self.supports_trace = capture_trace
         self.natively_measures_resources = False

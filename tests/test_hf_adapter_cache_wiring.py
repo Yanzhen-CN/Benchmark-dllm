@@ -1,4 +1,4 @@
-"""Verifies hf_ar.py/illada.py/dg.py's `_ensure_loaded` actually route
+"""Verifies HF adapters route model loading through the shared cache.
 through `models.model_cache` — i.e. that constructing a second adapter for
 the same checkpoint (e.g. iLLaDA's `best` and `fast`) does not call
 `from_pretrained` a second time. Uses monkeypatched `transformers` entry
@@ -12,7 +12,7 @@ import pytest
 transformers = pytest.importorskip("transformers")
 
 from dllm_bench.models import model_cache
-from dllm_bench.models.dg import DGAdapter
+from dllm_bench.models.diffusiongemma import DiffusionGemmaAdapter
 from dllm_bench.models.hf_ar import QwenARAdapter
 from dllm_bench.models.hf_diffusion import DiffusionStepConfig
 from dllm_bench.models.illada import IlladaAdapter
@@ -105,15 +105,15 @@ def test_qwen_ar_adapter_uses_shared_cache(monkeypatch):
     assert first._model is second._model
 
 
-def test_dg_adapter_uses_shared_cache(monkeypatch):
+def test_diffusiongemma_adapter_uses_shared_cache(monkeypatch):
     from transformers import DiffusionGemmaForBlockDiffusion
 
     _, model_calls = _install_counting_fakes(
         monkeypatch, DiffusionGemmaForBlockDiffusion, tokenizer_class=transformers.AutoProcessor
     )
 
-    first = DGAdapter("shared-dg-checkpoint")
-    second = DGAdapter("shared-dg-checkpoint")
+    first = DiffusionGemmaAdapter("shared-diffusiongemma-checkpoint")
+    second = DiffusionGemmaAdapter("shared-diffusiongemma-checkpoint")
 
     first._ensure_loaded()
     second._ensure_loaded()

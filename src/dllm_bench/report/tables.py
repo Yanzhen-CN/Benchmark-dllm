@@ -11,6 +11,7 @@ from ..metrics.quality_resource import (
     energy_priority_score,
     resource_equivalent_quality,
     resource_ratio,
+    speed_ratio,
     time_priority_score,
 )
 
@@ -19,24 +20,25 @@ RAW_COLUMNS = [
     "Model",
     "Config",
     "q",
-    "Time/sample",
-    "Energy/sample",
-    "Compute/sample",
+    "TPS",
+    "EPS",
+    "CPS",
     "Peak VRAM",
     "Score/J",
     "Score/TFLOP",
     "Status",
+    "Timing source",
 ]
 
 CONVERTED_COLUMNS = [
     "Dataset",
     "Model",
     "Config",
-    "r_time",
+    "r_speed",
     "r_energy",
-    "Q_time",
+    "Q_speed",
     "Q_energy",
-    "Time-priority",
+    "Speed-priority",
     "Energy-priority",
 ]
 
@@ -53,13 +55,14 @@ def raw_results_row(summary: dict[str, Any]) -> dict[str, Any]:
         "Model": summary["model_name"],
         "Config": summary["config_name"],
         "q": summary["q"],
-        "Time/sample": summary["time_per_sample"],
-        "Energy/sample": summary["energy_per_sample"],
-        "Compute/sample": summary["compute_per_sample"],
+        "TPS": summary.get("tps"),
+        "EPS": summary.get("eps"),
+        "CPS": summary.get("cps"),
         "Peak VRAM": summary["peak_vram_gb"],
         "Score/J": summary["score_per_energy"],
         "Score/TFLOP": summary["score_per_compute"],
         "Status": status_label,
+        "Timing source": summary.get("timing_source", "unavailable"),
     }
 
 
@@ -73,31 +76,32 @@ def compute_converted_row(
         "Dataset": model_summary["dataset_name"],
         "Model": model_summary["model_name"],
         "Config": model_summary["config_name"],
-        "r_time": None,
+        "r_speed": None,
         "r_energy": None,
-        "Q_time": None,
+        "Q_speed": None,
         "Q_energy": None,
-        "Time-priority": None,
+        "Speed-priority": None,
         "Energy-priority": None,
     }
 
-    model_time = model_summary["time_per_sample"]
-    baseline_time = baseline_summary["time_per_sample"]
-    if model_time and baseline_time:
-        r_time = resource_ratio(baseline_time, model_time)
-        row["r_time"] = r_time
-        row["Q_time"] = resource_equivalent_quality(q, r_time)
+    model_tps = model_summary.get("tps")
+    baseline_tps = baseline_summary.get("tps")
+    q_ar = baseline_summary["q"]
+    if model_tps and baseline_tps:
+        r_speed = speed_ratio(model_tps, baseline_tps)
+        row["r_speed"] = r_speed
+        row["Q_speed"] = resource_equivalent_quality(q, r_speed, q_ar=q_ar)
 
-    model_energy = model_summary["energy_per_sample"]
-    baseline_energy = baseline_summary["energy_per_sample"]
-    if model_energy and baseline_energy:
-        r_energy = resource_ratio(baseline_energy, model_energy)
+    model_eps = model_summary.get("eps")
+    baseline_eps = baseline_summary.get("eps")
+    if model_eps and baseline_eps:
+        r_energy = resource_ratio(baseline_eps, model_eps)
         row["r_energy"] = r_energy
-        row["Q_energy"] = resource_equivalent_quality(q, r_energy)
+        row["Q_energy"] = resource_equivalent_quality(q, r_energy, q_ar=q_ar)
 
-    if row["Q_time"] is not None and row["Q_energy"] is not None:
-        row["Time-priority"] = time_priority_score(row["Q_time"], row["Q_energy"])
-        row["Energy-priority"] = energy_priority_score(row["Q_time"], row["Q_energy"])
+    if row["Q_speed"] is not None and row["Q_energy"] is not None:
+        row["Speed-priority"] = time_priority_score(row["Q_speed"], row["Q_energy"])
+        row["Energy-priority"] = energy_priority_score(row["Q_speed"], row["Q_energy"])
 
     return row
 

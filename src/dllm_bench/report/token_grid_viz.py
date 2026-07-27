@@ -15,7 +15,7 @@ own trace visualizer) for continuity with that prior art:
   multiple times, colored by cumulative accept count (log scale)
 - red outline: position committed *this* frame
 
-Unlike DG's visualizer (which reads multi-canvas CSVs off disk and compares
+Unlike the original DiffusionGemma visualizer (which reads multi-canvas CSVs off disk and compares
 several sampler configs side by side in one figure), this operates on a
 single in-memory trace for one sample/run — the orchestration across
 model/config/dataset combinations happens one level up, in
@@ -48,6 +48,12 @@ NOISE_TEXT = (145, 110, 70)
 FIRST_ACCEPT_FILL = (196, 239, 205)
 FIRST_ACCEPT_TEXT = (30, 120, 52)
 FINAL_TEXT = (25, 25, 25)
+# The animated grid conveys VISIBLE (uncommitted-but-showing-a-token, e.g.
+# DiffusionGemma's renoised positions) through NOISE_TEXT *text* color on a
+# white cell — but the static heatmap (plot_token_position_forward_heatmap)
+# has no text, only a single fill color per cell, so it needs its own
+# background tint for this state instead.
+VISIBLE_FILL = (232, 218, 196)
 
 _GRADIENT_STOPS = [
     (145, 225, 110),  # green (first re-accept)
@@ -166,6 +172,24 @@ def compute_running_accept_counts(trace: list[TraceStep]) -> list[dict[int, int]
     return running
 
 
+def cell_fill_color(
+    state: PositionState, count: int, max_count: int, just_committed: bool
+) -> tuple[int, int, int]:
+    """The single representative background color for one (position, step)
+    cell — shared by the animated grid's cell fill (`render_frame`) and the
+    static heatmap (`plot_token_position_forward_heatmap`), so the two never
+    drift into inconsistent color meanings."""
+    if state == PositionState.MASKED:
+        return MASK_FILL
+    if state == PositionState.VISIBLE:
+        return VISIBLE_FILL
+    if count <= 1 and just_committed:
+        return FIRST_ACCEPT_FILL
+    if count <= 1:
+        return PANEL_BG
+    return gradient_color_for_count(count, max_count)
+
+
 def _cell_token_text(step: TraceStep, position: int) -> str:
     if step.token_texts is not None and position < len(step.token_texts):
         return step.token_texts[position]
@@ -217,17 +241,18 @@ def render_frame(
 
         state = step.position_states[position]
         count = counts.get(position, 0)
+        fill = cell_fill_color(state, count, max_accept_count, position in committed)
 
         if state == PositionState.MASKED:
-            fill, text_fill = MASK_FILL, MUTED
+            text_fill = MUTED
         elif state == PositionState.VISIBLE:
-            fill, text_fill = PANEL_BG, NOISE_TEXT
+            text_fill = NOISE_TEXT
         elif count <= 1 and position in committed:
-            fill, text_fill = FIRST_ACCEPT_FILL, FIRST_ACCEPT_TEXT
+            text_fill = FIRST_ACCEPT_TEXT
         elif count <= 1:
-            fill, text_fill = PANEL_BG, FINAL_TEXT
+            text_fill = FINAL_TEXT
         else:
-            fill, text_fill = gradient_color_for_count(count, max_accept_count), TEXT
+            text_fill = TEXT
 
         outline = CURRENT_MARK if position in committed else CELL_BORDER
         outline_width = 3 if position in committed else 1
@@ -318,3 +343,48 @@ def render_token_grid_final_png(trace: list[TraceStep], out_path: str | Path, ti
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(out_path)
+
+
+def plot_token_position_forward_heatmap(
+    trace: list[TraceStep], out_path: str | Path, title: str = ""
+) -> None:
+    """Section 4.1's "Token Position x Forward 热图" — the literal static
+    heatmap (every forward step visible at once: position on x, forward step
+    on y), using the exact same per-cell colors as the animated grid
+    (`cell_fill_color`) so it reads as the same visual system, just in a
+    single flattened image instead of an animation.
+    """
+    if not trace:
+        return
+
+    import numpy as np
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    accept_counts_by_step = compute_running_accept_counts(trace)
+    max_accept_count = max((max(c.values(), default=0) for c in accept_counts_by_step), default=1) or 1
+    n_positions = len(trace[-1].position_states)
+    n_steps = len(trace)
+
+    rgb = np.zeros((n_steps, n_positions, 3), dtype=np.uint8)
+    for t, step in enumerate(trace):
+        committed = set(step.committed_positions)
+        counts = accept_counts_by_step[t]
+        for position in range(n_positions):
+            color = cell_fill_color(
+                step.position_states[position], counts.get(position, 0), max_accept_count, position in committed
+            )
+            rgb[t, position] = color
+
+    fig, ax = plt.subplots(figsize=(min(14, 3 + n_positions * 0.03), min(10, 2 + n_steps * 0.18)))
+    ax.imshow(rgb, aspect="auto", origin="upper", interpolation="nearest")
+    ax.set_xlabel("Token position")
+    ax.set_ylabel("Forward step")
+    ax.set_title(title or "Token Position x Forward")
+    fig.tight_layout()
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)

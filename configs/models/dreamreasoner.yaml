@@ -1,0 +1,56 @@
+# Appendix D.2 — one model, one file, both configs nested under `configs:`.
+# Best and Fast are tested together in one process by default (see cli.py /
+# README "atomic unit = model") — they share this same checkpoint, so it
+# only gets loaded once (models/model_cache.py).
+#
+# `model_name_or_path` is an HF Hub repo id, NOT a local filesystem path —
+# `from_pretrained` downloads it on first use into the HF cache (see
+# dllm_bench/hf_cache.py: defaults to ./.hf_cache under the current
+# directory rather than ~/.cache/huggingface). Run `python prepare_model.py
+# --model-config configs/models/dreamreasoner.yaml` to warm that cache ahead
+# of time.
+#
+# DreamReasoner-8B (`Dream-org/DreamReasoner-8B`) is a DIFFERENT,
+# independently trained model from regular Dream-7B
+# (`Dream-org/Dream-v0-Instruct-7B`, previously configured here as
+# `dream.yaml`/`models/dream.py` — removed, since the design doc's model
+# roster (section 5) no longer includes regular Dream at all): Qwen3-8B-Base
+# adapted via block-size curriculum learning, using its own
+# `block_diffusion_generate` method (block-wise, not single-pass). GitHub's
+# `DreamLM/DreamReasoner` repo ships only a README (no python) — the actual
+# generation code lives in the HF checkpoint's own `trust_remote_code` files
+# (`generation_utils.py`/`modeling_dream.py`), fetched and verified directly
+# (see models/dreamreasoner.py's module docstring for exactly what was
+# confirmed this way).
+#
+# block_length=32 confirmed from the checkpoint's own config.json
+# (`block_size: 32`) and the GitHub README's quick-start example.
+# steps_per_block Best=32/Fast=16 mirrors iLLaDA's own Best/Fast split
+# exactly (same block_length=32) — Appendix D.2 explicitly falls back to
+# this same step budget shape since DreamReasoner's README/model card gives
+# no steps_per_block guidance beyond the library's own per-block default
+# (`denoising_steps = block_length` = 32 whenever unset, i.e. Best keeps that
+# default explicit, and Fast halves it) — same relationship as
+# illada.yaml's Best/Fast (32/16).
+model: dreamreasoner
+configs:
+  best:
+    adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
+    init_kwargs:
+      model_name_or_path: Dream-org/DreamReasoner-8B
+    step_config:
+      gen_length: null  # falls back to request.max_new_tokens (see hf_diffusion.py)
+      block_length: 32
+      steps_per_block: 32
+      extra:
+        temperature: 0.0
+  fast:
+    adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
+    init_kwargs:
+      model_name_or_path: Dream-org/DreamReasoner-8B
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 16
+      extra:
+        temperature: 0.0

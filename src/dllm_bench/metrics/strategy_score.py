@@ -2,10 +2,9 @@
 
     NormalizedProgress_m(t) = min(Score_m(t) / max(Score_m(T), eps), 1)
     AUC_m = trapezoid integral of NormalizedProgress_m over normalized progress p in [0, 1]
-    StrategyScore = clip(50 * (1 + AUC_form - AUC_content), 0, 100)
+    SFI = AUC_structure - AUC_content
 
-``AUC_form`` is the Structure-progress AUC for StructEval-T or the
-Constraint-progress AUC for IFEval (design doc 4.3, last paragraph).
+``AUC_structure`` is the Structure-progress AUC for StructEval-T or MBPP.
 A sample only enters the strategy score if both final progress values reach
 0.5 (Appendix A.4); otherwise its curves are kept but the score is N/A,
 represented here as ``None``.
@@ -52,7 +51,7 @@ def strategy_score(
     final_form_progress: float | None = None,
     final_content_progress: float | None = None,
 ) -> float | None:
-    """Returns the 0-100 strategy score, or ``None`` ("N/A") if the sample is
+    """Returns SFI in [-1, 1], or ``None`` ("N/A") if the sample is
     ineligible (final form/content progress below 0.5, Appendix A.4).
 
     ``final_form_progress``/``final_content_progress`` default to the raw
@@ -68,8 +67,7 @@ def strategy_score(
 
     auc_form = auc_trapezoid(form_norm)
     auc_content = auc_trapezoid(content_norm)
-    raw = 50.0 * (1 + auc_form - auc_content)
-    return min(100.0, max(0.0, raw))
+    return max(-1.0, min(1.0, auc_form - auc_content))
 
 
 def summarize_strategy_scores(scores: list[float | None], seed: int = 42) -> tuple[SummaryStats, float]:

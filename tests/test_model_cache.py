@@ -74,7 +74,7 @@ def test_clear_forces_a_fresh_load():
 
 class _FakeLoadingAdapter(BaseModelAdapter):
     """Minimal BaseModelAdapter subclass with an `_ensure_loaded` to verify
-    `warm()` dispatches to it (mirrors hf_ar.py/hf_diffusion.py/dg.py's shape
+    `warm()` dispatches to it (mirrors the real HF adapters' shape
     without needing torch/transformers)."""
 
     def __init__(self, model_name_or_path: str, device: str = "cpu"):

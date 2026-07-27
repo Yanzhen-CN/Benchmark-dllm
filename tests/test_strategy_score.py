@@ -32,29 +32,29 @@ def test_is_eligible_threshold():
     assert is_eligible(0.49, 0.9) is False
 
 
-def test_strategy_score_structure_first_is_close_to_100():
+def test_strategy_score_structure_first_is_positive():
     # structure/form finishes almost immediately (front-loaded), content ramps
-    # up only at the end -> structure-first strategy -> score near 100.
+    # up only at the end -> structure-first strategy -> positive SFI.
     form_scores = [1.0, 1.0, 1.0, 1.0]
     content_scores = [0.0, 0.0, 0.0, 1.0]
     score = strategy_score(form_scores, content_scores)
     assert score is not None
-    assert score > 80
+    assert score > 0.8
 
 
-def test_strategy_score_content_first_is_close_to_zero():
+def test_strategy_score_content_first_is_negative():
     form_scores = [0.0, 0.0, 0.0, 1.0]
     content_scores = [1.0, 1.0, 1.0, 1.0]
     score = strategy_score(form_scores, content_scores)
     assert score is not None
-    assert score < 20
+    assert score < -0.8
 
 
-def test_strategy_score_synchronized_is_near_fifty():
+def test_strategy_score_synchronized_is_near_zero():
     form_scores = [0.0, 0.5, 1.0]
     content_scores = [0.0, 0.5, 1.0]
     score = strategy_score(form_scores, content_scores)
-    assert score == pytest.approx(50.0)
+    assert score == pytest.approx(0.0)
 
 
 def test_strategy_score_is_none_when_ineligible():
@@ -63,19 +63,19 @@ def test_strategy_score_is_none_when_ineligible():
     assert strategy_score(form_scores, content_scores) is None
 
 
-def test_strategy_score_clips_to_valid_range():
+def test_strategy_score_stays_in_signed_unit_range():
     # extreme case: form always saturated (AUC=1), content stays at 0 until the
     # very last point (AUC close to 0) -> raw could exceed 100 without clipping.
     form_scores = [1.0] * 10
     content_scores = [0.0] * 9 + [1.0]
     score = strategy_score(form_scores, content_scores)
     assert score is not None
-    assert 0.0 <= score <= 100.0
+    assert -1.0 <= score <= 1.0
 
 
 def test_summarize_strategy_scores_computes_eligible_ratio():
-    scores = [10.0, 20.0, None, 30.0, None]
+    scores = [-0.5, 0.0, None, 0.5, None]
     summary, ratio = summarize_strategy_scores(scores)
     assert ratio == pytest.approx(3 / 5)
     assert summary.n == 3
-    assert summary.mean == pytest.approx(20.0)
+    assert summary.mean == pytest.approx(0.0)

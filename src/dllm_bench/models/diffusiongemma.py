@@ -1,15 +1,15 @@
 """DiffusionGemma (Appendix D.4): official checkpoint, loaded straight from
 ``transformers`` — no vendoring, no ``trust_remote_code``.
 
-Verified against the DGtest reference project's actual model-calling code
+Verified against the DiffusionGemma reference project's actual model-calling code
 (``run.py``, and the vendored-but-unmodified ``generation_diffusion_gemma.py``
 it imports from): ``DiffusionGemmaForBlockDiffusion`` and ``EntropyBoundSampler``
 are real upstream classes, merged into ``transformers`` (confirmed present as
 of ``transformers>=5.13.0`` — a much newer floor than this project's default
-``hf`` extra, see ``pyproject.toml``). DGtest's own ``vendor/transformers``
+``hf`` extra, see ``pyproject.toml``). The reference project's ``vendor/transformers``
 checkout is a genuine, unmodified clone of the public repo for everything
-this adapter touches; the *only* thing DGtest patches on disk is its own
-self-conditioning-alpha research sweep (a DGtest-specific instrumentation
+this adapter touches; the only project-specific patch is its
+self-conditioning-alpha research sweep (reference-only instrumentation
 layered on top, not part of DiffusionGemma's real interface) — deliberately
 NOT ported here, since Appendix D.4 only calls for "shipped sampler and
 recommended parameters".
@@ -34,18 +34,18 @@ from ..interfaces import GenerationRequest, GenerationResult, PositionState, Run
 from .base import BaseModelAdapter
 from .model_cache import get_or_load
 
-DEFAULT_DG_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
+DEFAULT_DIFFUSIONGEMMA_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
 
 
-class DGAdapter(BaseModelAdapter):
+class DiffusionGemmaAdapter(BaseModelAdapter):
     def __init__(
         self,
-        model_name_or_path: str = DEFAULT_DG_CHECKPOINT,
+        model_name_or_path: str = DEFAULT_DIFFUSIONGEMMA_CHECKPOINT,
         device: str | None = None,
         config_name: str = "official",
         steps: int | None = None,
     ) -> None:
-        self.name = "dg"
+        self.name = "diffusiongemma"
         self.config_name = config_name
         self.supports_trace = True
         self.natively_measures_resources = False
@@ -113,7 +113,7 @@ class DGAdapter(BaseModelAdapter):
         self._model._prepare_sampler = wrapped_prepare_sampler
         try:
             # NOTE: this encode call is the standard AutoProcessor text
-            # pattern, inferred rather than directly quoted from DGtest's
+            # pattern, inferred rather than directly quoted from the reference
             # run.py (which builds its batch differently, from a
             # pre-tokenized sample file) — confirm against the real
             # processor before formal runs.
@@ -150,7 +150,7 @@ class DGAdapter(BaseModelAdapter):
 def _assign_canvas_indices(captured_steps: list[dict]) -> list[int]:
     """`cur_step` counts *down* within one canvas/block; a step whose
     `cur_step` is higher than the previous row's signals a new canvas started
-    (same heuristic DGtest's own trace tooling uses)."""
+    (same heuristic the reference trace tooling uses)."""
     indices = []
     canvas_index = -1
     previous_step = None

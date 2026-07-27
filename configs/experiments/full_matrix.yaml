@@ -1,33 +1,31 @@
 # Reference list of the section-5 model x dataset matrix (9 formal configs x
-# 7 datasets + DG as a large-model reference, not part of same-scale
-# conclusions). This documents the intended full run — it is not yet
-# consumed automatically by the CLI, which currently runs one
-# model-config/variant x dataset-config pair per `dllm-bench generate/score/
-# visualize` invocation (see README "已知空白/下一步"). Treat this file as
-# the checklist for a future batch-runner script, not as something the code
-# already executes.
+# 6 datasets + DiffusionGemma as a large-model reference, not part of same-scale
+# conclusions). This is consumed by `dllm-bench matrix`. Dataset entries may
+# also be mappings with
+# `config`, `samples_file`, and task-specific `max_new_tokens` fields.
 #
 # Each model config file may declare multiple named variants under
 # `configs:` (see e.g. configs/models/illada.yaml) — `variants: [best, fast]`
 # below lists which ones count as a "formal configuration" for this matrix.
 
+base_dir: ../..
+
 models:
-  - config: configs/models/qwen3_4b.yaml
+  - config: configs/models/qwen3_4b.yaml  # AR reference model
     variants: [ar-baseline]
-  - config: configs/models/illada.yaml
+  - config: configs/models/illada.yaml    # illada-8B
     variants: [best, fast]
-  - config: configs/models/dream.yaml
+  - config: configs/models/dreamreasoner.yaml # dream reasoner-8B
     variants: [best, fast]
-  - config: configs/models/w1.yaml
-    variants: [standard, jump, gidd]
-  - config: configs/models/dg.yaml
+  - config: configs/models/w1.yaml  # w1-instruct-4B
+    variants: [standard, jump, gidd]  # sampler difference
+  - config: configs/models/diffusiongemma.yaml
     variants: [official] # large-model reference only, section 5
 
 datasets:
   - configs/datasets/gsm8k.yaml
   - configs/datasets/mbpp.yaml
   - configs/datasets/structeval_t.yaml
-  - configs/datasets/ifeval.yaml
   - configs/datasets/sudoku.yaml
   - configs/datasets/ruler.yaml
   - configs/datasets/hellobench.yaml
