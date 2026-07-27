@@ -13,7 +13,7 @@ from dllm_bench.interfaces import GenerationRequest
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.runner.demo_samples import build_demo_samples
 from dllm_bench.runner.generate_stage import run_generation
-from dllm_bench.runner.persistence import load_generation_result
+from dllm_bench.runner.persistence import load_generation_result, save_generation_result
 from dllm_bench.runner.score_stage import run_scoring
 
 
@@ -111,7 +111,6 @@ def test_resume_fills_missing_compute_without_regenerating(tmp_path):
     first_path = out_dir / f"{samples[0].sample_id}.json"
     first = load_generation_result(first_path)
     first.compute_tflops = None
-    from dllm_bench.runner.persistence import save_generation_result
     save_generation_result(first, first_path)
 
     adapter.generate = lambda request: (_ for _ in ()).throw(
@@ -135,6 +134,56 @@ def test_resume_fills_missing_compute_without_regenerating(tmp_path):
     assert summary.skipped == 2
     assert replayed == [samples[0].sample_id]
     assert load_generation_result(first_path).compute_tflops == 3.0
+
+
+def test_compute_can_be_added_to_a_no_compute_run_without_regeneration(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    samples = build_demo_samples("gsm8k", n=2)
+    out_dir = tmp_path / "model_output"
+    run_generation(
+        adapter,
+        "gsm8k",
+        samples,
+        max_new_tokens=16,
+        out_dir=out_dir,
+        measure_compute=False,
+        require_all_metrics=False,
+    )
+    # The real formal entry point already requires these directly measured
+    # fields. Populate them here because the mock adapter has no NVML backend.
+    for sample in samples:
+        sample_path = out_dir / f"{sample.sample_id}.json"
+        generation = load_generation_result(sample_path)
+        generation.energy_joules = 1.0
+        generation.peak_vram_gb = 2.0
+        save_generation_result(generation, sample_path)
+
+    adapter.generate = lambda request: (_ for _ in ()).throw(
+        AssertionError("compute supplementation regenerated a formal sample")
+    )
+    replayed = []
+    adapter.profile_compute = lambda request: (
+        replayed.append(request.sample_id)
+        or SimpleNamespace(available=True, tflops=4.0)
+    )
+    summary = run_generation(
+        adapter,
+        "gsm8k",
+        samples,
+        max_new_tokens=16,
+        out_dir=out_dir,
+        measure_compute=True,
+        require_all_metrics=True,
+    )
+
+    assert summary.generated == 0
+    assert summary.skipped == 2
+    assert replayed == [sample.sample_id for sample in samples]
+    assert all(
+        load_generation_result(out_dir / f"{sample.sample_id}.json").compute_tflops
+        == 4.0
+        for sample in samples
+    )
 
 
 def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):

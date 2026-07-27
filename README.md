@@ -345,6 +345,12 @@ and fill only missing compute without rerunning the model output. Formal runs
 also enable `--require-all-metrics`; it requires compute only when
 `--measure-compute` was explicitly selected. Use `--allow-missing-metrics`
 only for an explicitly non-formal smoke run.
+
+Compute can also be supplemented later in the same output tree. Run the same
+model, matrix, sample selection, and `--output-root` with `--measure-compute`;
+resume skips every persisted generation and profiles only successful sample
+JSON files whose `compute_tflops` is still missing. Existing compute values are
+left untouched.
 Before the first measured sample
 of each model/config/dataset, an 8-token untimed warmup initializes kernels;
 tokenization, model loading, warmup, progress output, and persistence stay

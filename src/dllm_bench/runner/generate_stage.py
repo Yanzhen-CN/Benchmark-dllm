@@ -84,15 +84,11 @@ def run_generation(
     if resume and meta_path.exists():
         existing_meta = json.loads(meta_path.read_text(encoding="utf-8"))
         existing_run = existing_meta.get("run_metadata", {})
-        if (
-            existing_run.get("measurement_protocol") != MEASUREMENT_PROTOCOL
-            or bool(existing_run.get("measure_compute")) != measure_compute
-            or bool(existing_run.get("require_all_metrics")) != require_all_metrics
-        ):
+        if existing_run.get("measurement_protocol") != MEASUREMENT_PROTOCOL:
             raise RuntimeError(
                 f"existing outputs under {out_dir} use an incompatible measurement "
-                "protocol or compute setting; rerun with --no-resume (overwrites this "
-                "dataset) or choose a fresh --output-root"
+                "protocol; rerun with --no-resume (overwrites this dataset) or "
+                "choose a fresh --output-root"
             )
     if not (resume and meta_path.exists()):
         save_meta(
