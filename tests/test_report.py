@@ -26,6 +26,7 @@ def _summary(model, config, q, tps=1.0, eps=None):
         "config_name": config,
         "q": q,
         "tps": tps,
+        "sps": 0.5,
         "eps": eps,
         "cps": None,
         "time_per_sample": 1.0,
@@ -44,6 +45,7 @@ def test_raw_results_row_shape():
     assert row["Dataset"] == "gsm8k"
     assert row["Model"] == "mock"
     assert row["q"] == 0.8
+    assert row["SPS"] == pytest.approx(0.5)
     assert row["Status"] == "success"
 
 

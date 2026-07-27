@@ -102,6 +102,7 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert "gsm8k" in report_result.output
     assert "mock" in report_result.output
     assert (output_root / "report" / "gsm8k" / "quality_tps.png").exists()
+    assert (output_root / "report" / "gsm8k" / "quality_sps.png").exists()
 
 
 def test_generate_uses_sample_progress_bar_on_interactive_terminal(

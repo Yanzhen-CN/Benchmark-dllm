@@ -43,6 +43,8 @@ def test_mock_adapter_solves_demo_gsm8k_samples_end_to_end():
     assert summary.n_samples == 5
     assert summary.time_per_sample is not None and summary.time_per_sample >= 0
     assert summary.tps is not None and summary.tps > 0
+    assert summary.sps is not None and summary.sps > 0
+    assert summary.sps == pytest.approx(1.0 / summary.time_per_sample)
     assert summary.timing_source == "measured"
     assert len(summary.records) == 5
     assert all(r.generation.status == RunStatus.SUCCESS for r in summary.records)
@@ -72,6 +74,7 @@ def test_run_summary_round_trips_through_persistence_and_report(tmp_path):
     assert loaded["dataset_name"] == "gsm8k"
     assert loaded["model_name"] == "mock"
     assert loaded["q"] == pytest.approx(1.0)
+    assert loaded["sps"] == pytest.approx(summary.sps)
     assert "records" not in loaded  # summary.json is aggregate-only by design
 
     row = raw_results_row(loaded)

@@ -388,6 +388,13 @@ so process/strategy analysis can use the complete run without scheduling a
 separate 20–30 sample subset. W1 remains the exception until its API exposes a
 validated per-step trace payload.
 
+The aggregate speed summary records both TPS (tokens/s) and SPS (samples/s).
+SPS is computed as `completed timed samples / total measured generation time`,
+equivalently `1 / mean seconds per sample`; it is a ratio of totals, not the
+mean of per-sample inverse latencies. This also exposes useful per-sample
+totals without another run: `TPS / SPS` is tokens/sample, `EPS / SPS` is
+joules/sample, `CPS / SPS` is TFLOPs/sample, and `1 / SPS` is seconds/sample.
+
 Output lands under `output/` (override with `--output-root`), split by
 stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-best` and
 `iLLaDA-fast` never collide, and you can `rsync`/copy just `model_output/`

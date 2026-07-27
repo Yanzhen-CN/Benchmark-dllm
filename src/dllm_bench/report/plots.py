@@ -1,4 +1,4 @@
-"""Section 3.4's chart list: Quality-TPS/EPS/CPS, Score per Unit
+"""Section 3.4's chart list: Quality-TPS/SPS/EPS/CPS, Score per Unit
 Energy, Score per Compute, Best vs Fast, and the two scenario rankings.
 
 Every function takes the same row-dict shape :mod:`tables` produces and
@@ -23,7 +23,7 @@ def _label(row: dict[str, Any]) -> str:
 def plot_quality_vs_resource(
     rows: list[dict[str, Any]], resource_key: str, out_path: str, title: str | None = None
 ) -> None:
-    """Quality-TPS / Quality-EPS / Quality-CPS scatter."""
+    """Quality-TPS / Quality-SPS / Quality-EPS / Quality-CPS scatter."""
     fig, ax = plt.subplots(figsize=(6, 4.5))
     for row in rows:
         x, y = row.get(resource_key), row.get("q")

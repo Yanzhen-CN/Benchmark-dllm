@@ -33,6 +33,7 @@ class RunSummary:
     dataset_name: str
     q: float
     tps: float | None
+    sps: float | None
     eps: float | None
     cps: float | None
     time_per_sample: float | None
@@ -136,6 +137,7 @@ def summarize_records(
     # rates.  Energy/compute rates are only available if every timed sample in
     # the measurement window has the corresponding counter.
     tps = total_tokens / total_time if total_time > 0 else None
+    sps = len(timed) / total_time if total_time > 0 else None
     eps = (
         sum(r.generation.energy_joules for r in timed) / total_time
         if timed and all(r.generation.energy_joules is not None for r in timed)
@@ -165,6 +167,7 @@ def summarize_records(
         dataset_name=dataset.name,
         q=q,
         tps=tps,
+        sps=sps,
         eps=eps,
         cps=cps,
         time_per_sample=time_per_sample,

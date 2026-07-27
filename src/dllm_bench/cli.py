@@ -464,7 +464,12 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
             dataset_converted = [row for row in converted if row["Dataset"] == name]
             out_dir = report_root / name
             out_dir.mkdir(parents=True, exist_ok=True)
-            for key, filename in (("TPS", "quality_tps.png"), ("EPS", "quality_eps.png"), ("CPS", "quality_cps.png")):
+            for key, filename in (
+                ("TPS", "quality_tps.png"),
+                ("SPS", "quality_sps.png"),
+                ("EPS", "quality_eps.png"),
+                ("CPS", "quality_cps.png"),
+            ):
                 plot_quality_vs_resource(dataset_rows, key, str(out_dir / filename))
             plot_score_per_unit(dataset_rows, "Score/J", str(out_dir / "score_per_energy.png"))
             plot_score_per_unit(dataset_rows, "Score/TFLOP", str(out_dir / "score_per_compute.png"))
