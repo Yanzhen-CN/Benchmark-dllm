@@ -25,7 +25,7 @@ from .base import Dataset, Sample, ScoreResult
 from .remote import ensure_download
 
 STRUCTEVAL_REVISION = "788a40c0bf41aa7b2cbc6a480015c842353a2492"
-STRUCTEVAL_T_SHA256 = "015db23cad946d045f334c6dc23a02462406a6a5849b32adfbb7f680c0acc649"
+STRUCTEVAL_T_SHA256 = "a87f46dcafba1e5bde8a85c9f99f106089ca397cb345cd07a8fea1fe03b4ffab"
 STRUCTEVAL_T_URL = (
     "https://raw.githubusercontent.com/TIGER-AI-Lab/StructEval/"
     f"{STRUCTEVAL_REVISION}/dataset/nonrenderable.json"

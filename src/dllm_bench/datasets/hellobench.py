@@ -25,11 +25,11 @@ HELLOBENCH_REVISION = "d403282968b0a61a4963a73c631d3fc1318f17d7"
 HELLOBENCH_SOURCES = {
     2000: (
         "heuristic_text_generation_2k.jsonl",
-        "40fadb446bee434f6e1c5800946c80b6a3c8c7f162abeb9df83f09f6f967985e",
+        "0dfcf78d32e6d3762720883b53a4c8078036a7634853d2c21e50d25b73c5d6ed",
     ),
     4000: (
         "heuristic_text_generation_4k.jsonl",
-        "0b9ad86ccf276dbc38ec434b4d11f25b545bd253cd73b7973c06eb1b4ab9c24d",
+        "60432969da1695ecbb72879ffe7a686e1ec7b93039311c09e2a2d5aa4e0f1d24",
     ),
 }
 
