@@ -63,6 +63,36 @@ def test_dreamreasoner_matches_checkpoint_transformers_version():
     assert _model_script.PROFILES["dreamreasoner"].transformers_version == "5.7.0"
 
 
+def test_cuda_torch_local_version_matches_public_pin(monkeypatch):
+    installed = {"torch": "2.6.0+cu124", "transformers": "5.14.1"}
+    monkeypatch.setattr(
+        _model_script,
+        "_installed_distribution_version",
+        lambda python, distribution: installed[distribution],
+    )
+
+    mismatches = _model_script._profile_version_mismatches(
+        _model_script.PROFILES["qwen3_4b"], Path("python")
+    )
+
+    assert mismatches == {}
+
+
+def test_different_torch_public_version_is_still_stale(monkeypatch):
+    installed = {"torch": "2.5.1+cu124", "transformers": "5.14.1"}
+    monkeypatch.setattr(
+        _model_script,
+        "_installed_distribution_version",
+        lambda python, distribution: installed[distribution],
+    )
+
+    mismatches = _model_script._profile_version_mismatches(
+        _model_script.PROFILES["qwen3_4b"], Path("python")
+    )
+
+    assert mismatches == {"torch": ("2.5.1+cu124", "2.6.0")}
+
+
 def test_existing_model_venv_repairs_stale_profile_pins(monkeypatch, tmp_path):
     model_venv = tmp_path / "dreamreasoner-venv"
     python = _model_script.venv_python(model_venv)

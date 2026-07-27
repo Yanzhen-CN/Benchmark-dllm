@@ -221,8 +221,25 @@ def _profile_version_mismatches(
     return {
         name: (installed, required)
         for name, required in expected.items()
-        if (installed := _installed_distribution_version(python, name)) != required
+        if not _installed_version_matches(
+            name,
+            installed := _installed_distribution_version(python, name),
+            required,
+        )
     }
+
+
+def _installed_version_matches(
+    distribution: str, installed: str | None, required: str
+) -> bool:
+    if installed is None:
+        return False
+    # CUDA wheels report a PEP 440 local suffix such as ``2.6.0+cu124`` even
+    # though the pinned public Torch version and pip requirement are ``2.6.0``.
+    # The CUDA index is validated separately, so this is not a stale package.
+    if distribution == "torch":
+        installed = installed.partition("+")[0]
+    return installed == required
 
 
 def repair_profile_dependencies(
