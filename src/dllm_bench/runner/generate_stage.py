@@ -15,7 +15,7 @@ from typing import Callable
 
 from ..datasets.base import Sample
 from ..interfaces import GenerationRequest, GenerationResult, ModelAdapter
-from .persistence import save_generation_result, save_meta
+from .persistence import load_generation_result, save_generation_result, save_meta
 from .sampling import DEFAULT_SEED, collect_run_metadata
 
 
@@ -31,7 +31,34 @@ GenerationProgress = Callable[
     [str, int, int, Sample, GenerationResult | None], None
 ]
 
-MEASUREMENT_PROTOCOL = "gpu-synced-v3-trace-excluded"
+MEASUREMENT_PROTOCOL = "gpu-synced-v4-trace-excluded-compute-deferred"
+
+
+def _validate_required_metrics(
+    adapter: ModelAdapter,
+    generation: GenerationResult,
+    *,
+    require_compute: bool,
+) -> None:
+    if generation.status.value != "success":
+        return
+    missing: list[str] = []
+    if generation.timing is None or generation.timing.wall_clock_seconds <= 0:
+        missing.append("timing")
+    if not adapter.natively_measures_resources:
+        if generation.energy_joules is None:
+            missing.append("energy_joules")
+        if generation.peak_vram_gb is None:
+            missing.append("peak_vram_gb")
+        if require_compute and generation.compute_tflops is None:
+            missing.append("compute_tflops")
+    if adapter.supports_trace and not generation.trace:
+        missing.append("trace")
+    if missing:
+        raise RuntimeError(
+            f"sample {generation.request.sample_id} is missing required formal metrics: "
+            f"{', '.join(missing)}"
+        )
 
 
 def run_generation(
@@ -87,10 +114,20 @@ def run_generation(
         )
 
     generated = skipped = 0
+    compute_queue: list[
+        tuple[int, Sample, Path, GenerationResult]
+    ] = []
     for index, sample in enumerate(samples, start=1):
         sample_path = out_dir / f"{sample.sample_id}.json"
         if resume and sample_path.exists():
             skipped += 1
+            existing = load_generation_result(sample_path)
+            if (
+                measure_compute
+                and existing.status.value == "success"
+                and existing.compute_tflops is None
+            ):
+                compute_queue.append((index, sample, sample_path, existing))
             continue
 
         sample_max_new_tokens = int(sample.meta.get("max_new_tokens", max_new_tokens))
@@ -109,35 +146,32 @@ def run_generation(
             progress("start", index, len(samples), sample, None)
         generation = adapter.generate(request)
 
-        if measure_compute and hasattr(adapter, "profile_compute"):
-            if progress is not None:
-                progress("compute", index, len(samples), sample, generation)
-            compute_handle = adapter.profile_compute(request)
-            generation.compute_tflops = compute_handle.tflops if compute_handle.available else None
-
-        if require_all_metrics and generation.status.value == "success":
-            missing: list[str] = []
-            if generation.timing is None or generation.timing.wall_clock_seconds <= 0:
-                missing.append("timing")
-            if not adapter.natively_measures_resources:
-                if generation.energy_joules is None:
-                    missing.append("energy_joules")
-                if generation.peak_vram_gb is None:
-                    missing.append("peak_vram_gb")
-                if measure_compute and generation.compute_tflops is None:
-                    missing.append("compute_tflops")
-            if adapter.supports_trace and not generation.trace:
-                missing.append("trace")
-            if missing:
-                raise RuntimeError(
-                    f"sample {sample.sample_id} is missing required formal metrics: "
-                    f"{', '.join(missing)}"
-                )
+        if require_all_metrics:
+            _validate_required_metrics(adapter, generation, require_compute=False)
 
         save_generation_result(generation, sample_path)
+        if measure_compute and generation.status.value == "success":
+            compute_queue.append((index, sample, sample_path, generation))
         generated += 1
         if progress is not None:
             progress("finish", index, len(samples), sample, generation)
+
+    # Compute profiling is intentionally a second phase. Interleaving a full
+    # replay between timed samples changes GPU thermal/cache state and can bias
+    # subsequent latency and energy. Persist formal generation first so a
+    # profiler failure is resumable without generating the sample again.
+    for index, sample, sample_path, generation in compute_queue:
+        if progress is not None:
+            progress("compute", index, len(samples), sample, generation)
+        profile_compute = getattr(adapter, "profile_compute", None)
+        if callable(profile_compute):
+            compute_handle = profile_compute(generation.request)
+            generation.compute_tflops = (
+                compute_handle.tflops if compute_handle.available else None
+            )
+        if require_all_metrics:
+            _validate_required_metrics(adapter, generation, require_compute=True)
+        save_generation_result(generation, sample_path)
 
     return GenerateStageSummary(
         out_dir=str(out_dir), generated=generated, skipped=skipped, total=len(samples)

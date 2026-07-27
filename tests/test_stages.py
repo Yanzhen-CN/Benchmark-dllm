@@ -4,6 +4,7 @@ generate-on-one-machine / score-on-another split."""
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,6 +57,84 @@ def test_run_generation_reports_per_sample_start_and_finish(tmp_path):
         ("start", 2, 2, samples[1].sample_id, False),
         ("finish", 2, 2, samples[1].sample_id, True),
     ]
+
+
+def test_compute_replays_only_after_all_formal_generations(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    samples = build_demo_samples("gsm8k", n=3)
+    events = []
+    real_generate = adapter.generate
+
+    def generate(request):
+        events.append(("generate", request.sample_id))
+        return real_generate(request)
+
+    def profile_compute(request):
+        events.append(("compute", request.sample_id))
+        return SimpleNamespace(available=True, tflops=1.25)
+
+    adapter.generate = generate
+    adapter.profile_compute = profile_compute
+    out_dir = tmp_path / "model_output"
+    run_generation(
+        adapter,
+        "gsm8k",
+        samples,
+        max_new_tokens=16,
+        out_dir=out_dir,
+        measure_compute=True,
+    )
+
+    ids = [sample.sample_id for sample in samples]
+    assert events == [*(('generate', sample_id) for sample_id in ids),
+                      *(('compute', sample_id) for sample_id in ids)]
+    assert all(
+        load_generation_result(out_dir / f"{sample_id}.json").compute_tflops == 1.25
+        for sample_id in ids
+    )
+
+
+def test_resume_fills_missing_compute_without_regenerating(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    samples = build_demo_samples("gsm8k", n=2)
+    adapter.profile_compute = lambda request: SimpleNamespace(available=True, tflops=2.0)
+    out_dir = tmp_path / "model_output"
+    run_generation(
+        adapter,
+        "gsm8k",
+        samples,
+        max_new_tokens=16,
+        out_dir=out_dir,
+        measure_compute=True,
+    )
+
+    first_path = out_dir / f"{samples[0].sample_id}.json"
+    first = load_generation_result(first_path)
+    first.compute_tflops = None
+    from dllm_bench.runner.persistence import save_generation_result
+    save_generation_result(first, first_path)
+
+    adapter.generate = lambda request: (_ for _ in ()).throw(
+        AssertionError("resume regenerated a completed formal sample")
+    )
+    replayed = []
+    adapter.profile_compute = lambda request: (
+        replayed.append(request.sample_id)
+        or SimpleNamespace(available=True, tflops=3.0)
+    )
+    summary = run_generation(
+        adapter,
+        "gsm8k",
+        samples,
+        max_new_tokens=16,
+        out_dir=out_dir,
+        measure_compute=True,
+    )
+
+    assert summary.generated == 0
+    assert summary.skipped == 2
+    assert replayed == [samples[0].sample_id]
+    assert load_generation_result(first_path).compute_tflops == 3.0
 
 
 def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):

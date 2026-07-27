@@ -337,10 +337,14 @@ checkpoint.
 Formal `run_model.py` runs record timing, NVML energy, peak PyTorch VRAM,
 trace, and compute by default. Compute uses the design-approved separate FLOP
 profiling replay, so it increases total job duration but never contaminates
-the stored generation wall-clock/energy window. Formal runs also enable
-`--require-all-metrics`: a sample is not persisted if a required metric is
-unavailable, so an NVML or compute setup problem fails immediately instead of
-silently producing an incomplete result. Use `--no-measure-compute` together
+the stored generation wall-clock/energy window. All formal generations for a
+dataset are completed first; compute replays run only afterward, so they are
+not interleaved between timed samples. Formal generation is persisted before
+its replay, allowing a failed profiler to resume and fill only missing compute
+without rerunning the model output. Formal runs also enable
+`--require-all-metrics`: missing generation metrics fail before persistence,
+while missing compute fails the run after retaining that resumable generation.
+Use `--no-measure-compute` together
 with `--allow-missing-metrics` only for an explicitly non-formal smoke run.
 Before the first measured sample
 of each model/config/dataset, an 8-token untimed warmup initializes kernels;
