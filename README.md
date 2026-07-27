@@ -404,8 +404,11 @@ samples carry per-sample generation caps of 3072 and 6144 tokens respectively,
 so they do not inherit the matrix-wide 256-token fallback.
 
 Resource measurements reuse the formal task samples. Generation history is
-captured and persisted for every sample whenever the model adapter exposes it,
-so process/strategy analysis can use the complete run without scheduling a
+captured and persisted for every sample whenever the model adapter exposes it.
+`--n-representative` is applied only by the visualization stage to choose
+which persisted traces receive per-sample plots; it never limits generation,
+trace persistence, or dataset-level trace aggregation. Process/strategy
+analysis can therefore use the complete run without scheduling a
 separate 20–30 sample subset. W1 remains the exception until its API exposes a
 validated per-step trace payload.
 

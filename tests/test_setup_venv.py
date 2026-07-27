@@ -34,6 +34,25 @@ def test_model_run_uses_the_model_venv_python(monkeypatch):
     assert commands[0][1:4] == ["-m", "dllm_bench.cli", "matrix"]
 
 
+def test_generate_stage_does_not_receive_visualization_sample_limit(monkeypatch):
+    monkeypatch.setenv("STAGE", "generate")
+    monkeypatch.setenv("N_REPRESENTATIVE", "3")
+
+    arguments = _model_script.benchmark_arguments(_model_script.PROFILES["illada"])
+
+    assert "--n-representative" not in arguments
+
+
+def test_visualize_stage_receives_visualization_sample_limit(monkeypatch):
+    monkeypatch.setenv("STAGE", "visualize")
+    monkeypatch.setenv("N_REPRESENTATIVE", "7")
+
+    arguments = _model_script.benchmark_arguments(_model_script.PROFILES["illada"])
+
+    index = arguments.index("--n-representative")
+    assert arguments[index + 1] == "7"
+
+
 def test_model_venvs_share_one_parent_directory(monkeypatch):
     monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
     profile = _model_script.PROFILES["illada"]

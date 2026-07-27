@@ -311,18 +311,22 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
     if profile.model_id == "w1" and not os.environ.get("W1_API_BASE_URL"):
         raise SystemExit("W1_API_BASE_URL must be set before running W1")
 
+    stage = os.environ.get("STAGE", "all")
     arguments = [
         "-m", "dllm_bench.cli", "matrix",
         "--experiment-config", os.environ.get("EXPERIMENT_CONFIG", "configs/experiments/full_matrix.yaml"),
         "--model", profile.model_id,
-        "--stage", os.environ.get("STAGE", "all"),
+        "--stage", stage,
         "--demo" if data_source == "demo" else "--no-demo",
         "--output-root", os.environ.get("OUTPUT_ROOT", "output"),
         "--measure-compute" if os.environ.get("MEASURE_COMPUTE", "0") == "1" else "--no-measure-compute",
         "--require-all-metrics" if os.environ.get("REQUIRE_ALL_METRICS", "0") == "1" else "--allow-missing-metrics",
         "--resume" if os.environ.get("RESUME", "1") == "1" else "--no-resume",
-        "--n-representative", os.environ.get("N_REPRESENTATIVE", "3"),
     ]
+    if stage in {"visualize", "all"}:
+        arguments.extend(
+            ["--n-representative", os.environ.get("N_REPRESENTATIVE", "3")]
+        )
     if os.environ.get("N_SAMPLES"):
         arguments.extend(["--n-samples", os.environ["N_SAMPLES"]])
     return arguments

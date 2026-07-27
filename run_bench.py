@@ -136,8 +136,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "MEASURE_COMPUTE": "1" if args.measure_compute else "0",
         "REQUIRE_ALL_METRICS": "1" if args.require_all_metrics else "0",
         "RESUME": "1" if args.resume else "0",
-        "N_REPRESENTATIVE": str(args.n_representative),
     }
+    if args.stage in {"visualize", "all"}:
+        env_updates["N_REPRESENTATIVE"] = str(args.n_representative)
     if args.n_samples is not None:
         env_updates["N_SAMPLES"] = str(args.n_samples)
     dispatch_model_scripts(
