@@ -11,10 +11,15 @@ just needs to point `init_kwargs.model_name_or_path` at the real HF repo ID
 (see each `configs/models/*.yaml`'s comments); nothing needs a local
 checkpoint path.
 
-By default this warms *every* variant declared in the model config (Best and
-Fast share one checkpoint, so this only downloads/loads it once — see
-``models/model_cache.py``); pass ``--variant``/``--variants`` to narrow it.
+With no arguments, this dispatches every model in the full matrix through its
+own isolated environment. By default direct ``--model-config`` mode warms
+*every* variant declared in that model config (Best and Fast share one
+checkpoint, so this only downloads/loads it once — see ``models/model_cache.py``).
+Pass ``-m`` to select matrix models or ``--variant``/``--variants`` in direct
+mode to narrow variants.
 
+    python prepare_model.py
+    python prepare_model.py -m illada -m qwen3_4b
     python prepare_model.py --model-config configs/models/illada.yaml
     python prepare_model.py --model-config configs/models/illada.yaml --variant best
 """
@@ -22,43 +27,82 @@ Fast share one checkpoint, so this only downloads/loads it once — see
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
-from dllm_bench.hf_cache import configure_default_cache_dir
+PROJECT_ROOT = Path(__file__).resolve().parent
 
-cache_dir = configure_default_cache_dir()
 
-from dllm_bench.registry import build_model_adapter, list_model_variants
+def _prepare_one(model_config: str, variant: str | None, variants_arg: str | None) -> None:
+    from dllm_bench.hf_cache import configure_default_cache_dir
+    from dllm_bench.registry import build_model_adapter, list_model_variants
+
+    cache_dir = configure_default_cache_dir()
+
+    if variant and variants_arg:
+        raise SystemExit("pass either --variant or --variants, not both")
+    if variant:
+        variants = [variant]
+    elif variants_arg:
+        variants = [value.strip() for value in variants_arg.split(",") if value.strip()]
+    else:
+        variants = list_model_variants(model_config)
+
+    print(f"HF cache directory: {cache_dir}")
+    print(f"Warming variants {variants} of {model_config} ...")
+    for resolved_variant in variants:
+        adapter = build_model_adapter(model_config, variant=resolved_variant)
+        if not hasattr(adapter, "warm"):
+            print(
+                f"[{resolved_variant}] {adapter.name}: "
+                "no local weights to warm (API-backed) — skipping"
+            )
+            continue
+        print(f"[{resolved_variant}] {adapter.name}: loading ...")
+        adapter.warm()
+        print(f"[{resolved_variant}] {adapter.name}: ready")
+    print("Done.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--model-config", required=True, help="Path to configs/models/*.yaml")
+    parser.add_argument("--model-config", help="Direct mode: path to one configs/models/*.yaml")
     parser.add_argument("--variant", default=None, help="Warm just this one named config")
     parser.add_argument("--variants", default=None, help="Comma-separated named configs to warm (default: every variant in the file)")
+    parser.add_argument("-m", "--model", action="append", default=[], help="Matrix mode: model name; repeat or comma-separate (default: all)")
+    parser.add_argument("--matrix", default=str(PROJECT_ROOT / "configs" / "experiments" / "full_matrix.yaml"))
+    parser.add_argument("--venv-scripts-dir", dest="scripts_dir", default=str(PROJECT_ROOT / "venv_scripts"))
+    parser.add_argument("--dry-run", action="store_true", help="Print per-model prepare commands without running them")
     args = parser.parse_args()
 
-    if args.variant and args.variants:
-        raise SystemExit("pass either --variant or --variants, not both")
-    if args.variant:
-        variants = [args.variant]
-    elif args.variants:
-        variants = [v.strip() for v in args.variants.split(",") if v.strip()]
-    else:
-        variants = list_model_variants(args.model_config)
+    if args.model_config:
+        if args.model:
+            raise SystemExit("pass either --model-config or -m/--model, not both")
+        _prepare_one(args.model_config, args.variant, args.variants)
+        return
 
-    print(f"HF cache directory: {cache_dir}")
-    print(f"Warming variants {variants} of {args.model_config} ...")
+    if args.variant or args.variants:
+        raise SystemExit("--variant/--variants require --model-config")
 
-    for variant in variants:
-        adapter = build_model_adapter(args.model_config, variant=variant)
-        if not hasattr(adapter, "warm"):
-            print(f"[{variant}] {adapter.name}: no local weights to warm (API-backed) — skipping")
-            continue
-        print(f"[{variant}] {adapter.name}: loading ...")
-        adapter.warm()
-        print(f"[{variant}] {adapter.name}: ready")
+    from run_bench import (
+        dispatch_model_scripts,
+        matrix_model_names,
+        normalize_model_names,
+    )
 
-    print("Done.")
+    matrix_path = Path(args.matrix).resolve()
+    available = matrix_model_names(matrix_path)
+    try:
+        selected = normalize_model_names(args.model, available)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(f"Matrix: {matrix_path}")
+    print(f"Models: {', '.join(selected)}")
+    dispatch_model_scripts(
+        selected,
+        action="prepare",
+        scripts_dir=args.scripts_dir,
+        dry_run=args.dry_run,
+    )
 
 
 if __name__ == "__main__":

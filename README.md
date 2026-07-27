@@ -363,6 +363,13 @@ An explicit `HF_HOME`/`HF_HUB_CACHE`/`TRANSFORMERS_CACHE` still wins.
 To download/load a model ahead of time instead of lazily mid-benchmark:
 
 ```bash
+# all models in the matrix, each through its own isolated environment
+python prepare_model.py
+
+# selected matrix models
+python prepare_model.py -m illada -m qwen3_4b
+
+# direct single-config mode inside the current compatible environment
 python prepare_model.py --model-config configs/models/illada.yaml
 # warms every variant declared in the file — for illada.yaml that's
 # `best`+`fast`, but since they share one checkpoint (models/model_cache.py)

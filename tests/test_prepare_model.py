@@ -72,3 +72,18 @@ def test_prepare_model_rejects_variant_and_variants_together(tmp_path):
         cwd=tmp_path,
     )
     assert result.returncode != 0
+
+
+def test_prepare_model_defaults_to_all_matrix_models_via_isolated_scripts(tmp_path):
+    result = _run(["--dry-run"], cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    for model in ("qwen3_4b", "illada", "dreamreasoner", "w1", "diffusiongemma"):
+        assert f"{model}.py prepare" in result.stdout
+
+
+def test_prepare_model_matrix_mode_can_select_models(tmp_path):
+    result = _run(["-m", "illada,qwen3_4b", "--dry-run"], cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "illada.py prepare" in result.stdout
+    assert "qwen3_4b.py prepare" in result.stdout
+    assert "diffusiongemma.py prepare" not in result.stdout
