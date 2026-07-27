@@ -3,6 +3,7 @@ mock adapter, using Click's test runner (no subprocess needed)."""
 
 from __future__ import annotations
 
+import io
 import json
 import random
 from pathlib import Path
@@ -101,6 +102,36 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert "gsm8k" in report_result.output
     assert "mock" in report_result.output
     assert (output_root / "report" / "gsm8k" / "quality_tps.png").exists()
+
+
+def test_generate_uses_sample_progress_bar_on_interactive_terminal(
+    tmp_path, monkeypatch
+):
+    class InteractiveStream(io.StringIO):
+        def isatty(self):
+            return True
+
+    terminal = InteractiveStream()
+    monkeypatch.setattr(
+        cli_module.click,
+        "get_text_stream",
+        lambda name: terminal if name == "stdout" else io.StringIO(),
+    )
+    runner = CliRunner()
+
+    _run(runner, [
+        "generate",
+        "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
+        "--variant", "default",
+        "--dataset-config", str(CONFIGS_DIR / "datasets" / "gsm8k.yaml"),
+        "--demo", "--n-samples", "2", "--max-new-tokens", "16",
+        "--output-root", str(tmp_path / "output"),
+    ])
+
+    rendered = terminal.getvalue()
+    assert "[default] gsm8k" in rendered
+    assert "2/2" in rendered
+    assert "gsm8k-demo-1" in rendered
 
 
 def test_generate_sweeps_every_variant_by_default(tmp_path):

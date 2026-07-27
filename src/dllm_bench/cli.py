@@ -207,6 +207,14 @@ def generate(
             not (out_dir / f"{sample.sample_id}.json").exists()
             for sample in samples
         )
+        pending_count = (
+            len(samples)
+            if not resume
+            else sum(
+                not (out_dir / f"{sample.sample_id}.json").exists()
+                for sample in samples
+            )
+        )
         warm = getattr(adapter, "warm", None)
         if needs_generation and callable(warm):
             click.echo(f"[{v}] loading model into runtime device (outside sample timing) ...")
@@ -215,7 +223,7 @@ def generate(
         elif not needs_generation:
             click.echo(f"[{v}] all sample outputs already exist; model load skipped")
 
-        def report_progress(event, index, total, sample, generation):
+        def log_progress(event, index, total, sample, generation):
             prefix = f"[{v}] [{index}/{total}] {sample.sample_id}"
             if event == "start":
                 click.echo(f"{prefix}: generating ...")
@@ -228,11 +236,43 @@ def generate(
             status = generation.status.value if generation is not None else "unknown"
             click.echo(f"{prefix}: {status} ({elapsed:.2f}s)")
 
-        summary = run_generation(
-            adapter, dataset.name, samples, max_new_tokens,
-            out_dir=out_dir, measure_compute=measure_compute, seed=resolved_seed,
-            resume=resume, progress=report_progress,
-        )
+        output_stream = click.get_text_stream("stdout")
+        if pending_count and output_stream.isatty():
+            with click.progressbar(
+                length=pending_count,
+                label=f"[{v}] {dataset.name}",
+                show_pos=True,
+                show_percent=True,
+                item_show_func=lambda item: str(item or ""),
+                file=output_stream,
+            ) as sample_bar:
+                def bar_progress(event, index, total, sample, generation):
+                    if event == "start":
+                        sample_bar.update(0, current_item=f"{sample.sample_id} generating")
+                        sample_bar.render_progress()
+                        return
+                    elapsed = (
+                        generation.timing.wall_clock_seconds
+                        if generation is not None and generation.timing is not None
+                        else 0.0
+                    )
+                    status = generation.status.value if generation is not None else "unknown"
+                    sample_bar.update(
+                        1,
+                        current_item=f"{sample.sample_id} {status} {elapsed:.2f}s",
+                    )
+
+                summary = run_generation(
+                    adapter, dataset.name, samples, max_new_tokens,
+                    out_dir=out_dir, measure_compute=measure_compute,
+                    seed=resolved_seed, resume=resume, progress=bar_progress,
+                )
+        else:
+            summary = run_generation(
+                adapter, dataset.name, samples, max_new_tokens,
+                out_dir=out_dir, measure_compute=measure_compute,
+                seed=resolved_seed, resume=resume, progress=log_progress,
+            )
         click.echo(f"[{v}] generated={summary.generated} skipped={summary.skipped} total={summary.total} -> {out_dir}")
 
 
