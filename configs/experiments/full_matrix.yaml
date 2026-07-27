@@ -33,3 +33,9 @@ datasets:
     max_new_tokens: 6144  # fallback; 2K samples override this to 3072
 
 seed: 42
+
+# Resource metrics reuse these same formal generations. Every adapter that can
+# expose decoding history records a full per-sample trace; no extra 20–30 sample
+# strategy run is scheduled.
+resource_measurement: reuse_formal_samples
+trace_scope: all_samples

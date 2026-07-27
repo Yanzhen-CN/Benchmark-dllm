@@ -340,6 +340,34 @@ prompt-token count (for example 8128) or the named context-window point (8192);
 Formal HelloBench records provide `reference.target_length_words` as either
 2000 or 4000. Dataset-aware sampling is deterministic under `--seed`.
 
+The formal evaluation plan is diagnostic rather than a full-leaderboard run:
+
+| Part | Samples per model configuration |
+|---|---:|
+| GSM8K | 100 |
+| MBPP-Sanitized | 100 |
+| StructEval-T | 100 |
+| Sudoku | 100 (50 Easy + 50 Hard) |
+| RULER | 10 per context-window x position cell |
+| HelloBench | 10 at 2K words + 10 at 4K words |
+
+RULER runs the common 8192-token context-window point and the model's own
+maximum point. If those are identical, the common samples are reused rather
+than duplicated. Each context-window point contains 30 samples: 10 at each of
+front/middle/back, balanced so that NIAH, multi-hop, and aggregation also have
+10 samples each. RULER keeps 64 tokens inside the total model window for its
+short answer; the input target is therefore `context_window - 64`.
+
+HelloBench is the separate long-output axis. Its short-prompt 2K- and 4K-word
+samples carry per-sample generation caps of 3072 and 6144 tokens respectively,
+so they do not inherit the matrix-wide 256-token fallback.
+
+Resource measurements reuse the formal task samples. Generation history is
+captured and persisted for every sample whenever the model adapter exposes it,
+so process/strategy analysis can use the complete run without scheduling a
+separate 20–30 sample subset. W1 remains the exception until its API exposes a
+validated per-step trace payload.
+
 Output lands under `output/` (override with `--output-root`), split by
 stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-best` and
 `iLLaDA-fast` never collide, and you can `rsync`/copy just `model_output/`
