@@ -87,3 +87,23 @@ def test_prepare_model_matrix_mode_can_select_models(tmp_path):
     assert "illada.py prepare" in result.stdout
     assert "qwen3_4b.py prepare" in result.stdout
     assert "diffusiongemma.py prepare" not in result.stdout
+
+
+def test_prepare_model_direct_mode_dispatches_when_started_outside_venv(tmp_path):
+    env = {
+        key: value for key, value in os.environ.items()
+        if key not in ("DLLM_VENV", "VIRTUAL_ENV")
+    }
+    code = (
+        "import runpy, sys; "
+        "sys.prefix = sys.base_prefix; "
+        f"sys.argv = [{str(SCRIPT)!r}, '--model-config', "
+        f"{str(CONFIGS_DIR / 'models' / 'illada.yaml')!r}, '--variant', 'fast', '--dry-run']; "
+        f"runpy.run_path({str(SCRIPT)!r}, run_name='__main__')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=tmp_path, env=env,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "illada.py prepare" in result.stdout

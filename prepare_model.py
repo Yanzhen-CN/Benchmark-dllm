@@ -27,9 +27,17 @@ mode to narrow variants.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _running_in_venv() -> bool:
+    return bool(os.environ.get("DLLM_VENV")) or sys.prefix != sys.base_prefix
 
 
 def _prepare_one(model_config: str, variant: str | None, variants_arg: str | None) -> None:
@@ -74,13 +82,16 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Print per-model prepare commands without running them")
     args = parser.parse_args()
 
-    if args.model_config:
+    if args.variant and args.variants:
+        raise SystemExit("pass either --variant or --variants, not both")
+
+    if args.model_config and _running_in_venv() and not args.dry_run:
         if args.model:
             raise SystemExit("pass either --model-config or -m/--model, not both")
         _prepare_one(args.model_config, args.variant, args.variants)
         return
 
-    if args.variant or args.variants:
+    if not args.model_config and (args.variant or args.variants):
         raise SystemExit("--variant/--variants require --model-config")
 
     from run_bench import (
@@ -88,6 +99,24 @@ def main() -> None:
         matrix_model_names,
         normalize_model_names,
     )
+
+    if args.model_config:
+        if args.model:
+            raise SystemExit("pass either --model-config or -m/--model, not both")
+        model_name = Path(args.model_config).stem
+        environment: dict[str, str] = {}
+        if args.variant:
+            environment["PREPARE_MODEL_VARIANT"] = args.variant
+        if args.variants:
+            environment["PREPARE_MODEL_VARIANTS"] = args.variants
+        dispatch_model_scripts(
+            [model_name],
+            action="prepare",
+            scripts_dir=args.scripts_dir,
+            env_updates=environment,
+            dry_run=args.dry_run,
+        )
+        return
 
     matrix_path = Path(args.matrix).resolve()
     available = matrix_model_names(matrix_path)

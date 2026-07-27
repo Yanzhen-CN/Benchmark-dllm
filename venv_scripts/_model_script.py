@@ -205,7 +205,12 @@ def main(model_id: str, argv: Sequence[str] | None = None) -> int:
     if args.action == "check":
         check_environment(profile, python)
     elif args.action == "prepare":
-        run([python, "prepare_model.py", "--model-config", profile.model_config], env=model_environment(profile))
+        command = [python, "prepare_model.py", "--model-config", profile.model_config]
+        if os.environ.get("PREPARE_MODEL_VARIANT"):
+            command.extend(["--variant", os.environ["PREPARE_MODEL_VARIANT"]])
+        if os.environ.get("PREPARE_MODEL_VARIANTS"):
+            command.extend(["--variants", os.environ["PREPARE_MODEL_VARIANTS"]])
+        run(command, env=model_environment(profile))
     else:
         run([python, *benchmark_arguments(profile)], env=model_environment(profile))
     return 0
