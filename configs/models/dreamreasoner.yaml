@@ -32,6 +32,8 @@
 # (`denoising_steps = block_length` = 32 whenever unset, i.e. Best keeps that
 # default explicit, and Fast halves it) — same relationship as
 # illada.yaml's Best/Fast (32/16).
+# The checkpoint declares transformers 5.7.0 and its remote DreamConfig calls
+# PretrainedConfig.validate_rope(), which the former 4.46.2 venv lacks.
 model: dreamreasoner
 max_context_tokens: 32768
 configs:

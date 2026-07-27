@@ -37,7 +37,7 @@ PROFILES: Mapping[str, ModelProfile] = {
     ),
     "dreamreasoner": ModelProfile(
         "dreamreasoner", "dreamreasoner", "configs/models/dreamreasoner.yaml",
-        "dev,hf,gpu", "2.5.1", "4.46.2", ("cu118", "cu121", "cu124"),
+        "dev,hf,gpu", "2.5.1", "5.7.0", ("cu118", "cu121", "cu124"),
     ),
     "diffusiongemma": ModelProfile(
         "diffusiongemma", "diffusiongemma", "configs/models/diffusiongemma.yaml",
@@ -180,7 +180,104 @@ def repair_project_installation(profile: ModelProfile, python: Path) -> None:
 
 def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
     python = venv_python(venv_dir(profile))
-    return python if python.is_file() else setup_environment(profile, cuda_index)
+    if not python.is_file():
+        return setup_environment(profile, cuda_index)
+
+    mismatches = _profile_version_mismatches(profile, python)
+    if mismatches:
+        repair_profile_dependencies(profile, python, cuda_index, mismatches)
+    return python
+
+
+def _installed_distribution_version(python: Path, distribution: str) -> str | None:
+    result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "from importlib.metadata import version; "
+                f"print(version({distribution!r}))"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _profile_version_mismatches(
+    profile: ModelProfile, python: Path
+) -> dict[str, tuple[str | None, str]]:
+    expected = {
+        name: version
+        for name, version in (
+            ("torch", profile.torch_version),
+            ("transformers", profile.transformers_version),
+        )
+        if version is not None
+    }
+    return {
+        name: (installed, required)
+        for name, required in expected.items()
+        if (installed := _installed_distribution_version(python, name)) != required
+    }
+
+
+def repair_profile_dependencies(
+    profile: ModelProfile,
+    python: Path,
+    cuda_index: str,
+    mismatches: Mapping[str, tuple[str | None, str]],
+) -> None:
+    """Update only stale pinned runtime packages in an existing model venv."""
+    details = ", ".join(
+        f"{name} {installed or 'missing'} -> {required}"
+        for name, (installed, required) in mismatches.items()
+    )
+    print(f"Updating stale {profile.model_id} environment pins: {details}", flush=True)
+    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / ".data"))
+    cache_dir = Path(os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache"))
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    install_env = os.environ.copy()
+    install_env["PIP_CACHE_DIR"] = str(cache_dir)
+
+    if "torch" in mismatches:
+        if cuda_index not in profile.torch_cuda_indexes:
+            supported = ", ".join(profile.torch_cuda_indexes)
+            raise SystemExit(
+                f"torch {profile.torch_version} for {profile.model_id} has no "
+                f"{cuda_index} wheel; supported indexes: {supported}"
+            )
+        run(
+            [python, "-m", "pip", "install", "--upgrade", f"torch=={profile.torch_version}",
+             "--index-url", f"https://download.pytorch.org/whl/{cuda_index}"],
+            env=install_env,
+        )
+    if "transformers" in mismatches:
+        run(
+            [python, "-m", "pip", "install", "--upgrade",
+             f"transformers=={profile.transformers_version}", "accelerate==1.14.0",
+             "safetensors>=0.8.0", "sentencepiece"],
+            env=install_env,
+        )
+    if "gpu" in profile.extras.split(","):
+        # Old environments may still contain the deprecated `pynvml`
+        # distribution. The maintained `nvidia-ml-py` package exports the
+        # same import module and is what the gpu extra now requires.
+        subprocess.run(
+            [str(python), "-m", "pip", "uninstall", "-y", "pynvml"],
+            cwd=REPO_ROOT,
+            env=install_env,
+            check=False,
+        )
+        run(
+            [python, "-m", "pip", "install", "--upgrade", "nvidia-ml-py>=12.0"],
+            env=install_env,
+        )
+    run([python, "-m", "pip", "check"], env=install_env)
+    run([python, "-c", _IMPORT_CHECK], env=install_env)
 
 
 def model_environment(profile: ModelProfile) -> dict[str, str]:

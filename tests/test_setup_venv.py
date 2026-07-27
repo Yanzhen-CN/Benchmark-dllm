@@ -40,6 +40,56 @@ def test_model_venvs_share_one_parent_directory(monkeypatch):
     assert _model_script.venv_dir(profile) == _model_script.REPO_ROOT / ".venvs" / "illada"
 
 
+def test_dreamreasoner_matches_checkpoint_transformers_version():
+    assert _model_script.PROFILES["dreamreasoner"].transformers_version == "5.7.0"
+
+
+def test_existing_model_venv_repairs_stale_profile_pins(monkeypatch, tmp_path):
+    model_venv = tmp_path / "dreamreasoner-venv"
+    python = _model_script.venv_python(model_venv)
+    python.parent.mkdir(parents=True)
+    python.touch()
+    profile = _model_script.PROFILES["dreamreasoner"]
+    repaired = []
+    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setattr(
+        _model_script,
+        "_profile_version_mismatches",
+        lambda selected, executable: {"transformers": ("4.46.2", "5.7.0")},
+    )
+    monkeypatch.setattr(
+        _model_script,
+        "repair_profile_dependencies",
+        lambda selected, executable, cuda, mismatches: repaired.append(
+            (selected, executable, cuda, mismatches)
+        ),
+    )
+
+    assert _model_script.ensure_environment(profile, "cu124") == python
+    assert repaired == [
+        (profile, python, "cu124", {"transformers": ("4.46.2", "5.7.0")})
+    ]
+
+
+def test_existing_model_venv_keeps_matching_profile_pins(monkeypatch, tmp_path):
+    model_venv = tmp_path / "dreamreasoner-venv"
+    python = _model_script.venv_python(model_venv)
+    python.parent.mkdir(parents=True)
+    python.touch()
+    profile = _model_script.PROFILES["dreamreasoner"]
+    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setattr(
+        _model_script, "_profile_version_mismatches", lambda selected, executable: {}
+    )
+    monkeypatch.setattr(
+        _model_script,
+        "repair_profile_dependencies",
+        lambda *args: (_ for _ in ()).throw(AssertionError("matching venv changed")),
+    )
+
+    assert _model_script.ensure_environment(profile, "cu124") == python
+
+
 def test_model_run_repair_avoids_reinstalling_dependencies(
     monkeypatch, tmp_path
 ):

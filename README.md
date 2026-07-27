@@ -327,6 +327,13 @@ instantiate model adapters or load weights. `run_bench.py` remains as a
 backward-compatible same-machine all-stage entry point, but is not the
 recommended server/local workflow.
 
+Before a model run, the dispatcher verifies the model venv's pinned Torch and
+Transformers versions. If a pin changed, it updates only the stale runtime
+package in the existing venv. In particular, DreamReasoner uses
+`transformers==5.7.0`, matching the checkpoint metadata and remote model code;
+the old 4.46.2 pin lacks `PretrainedConfig.validate_rope()` and cannot load the
+checkpoint.
+
 Formal `run_model.py` runs record timing, NVML energy, peak PyTorch VRAM,
 trace, and compute by default. Compute uses the design-approved separate FLOP
 profiling replay, so it increases total job duration but never contaminates
