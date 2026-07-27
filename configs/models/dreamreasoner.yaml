@@ -7,8 +7,8 @@
 # `from_pretrained` downloads it on first use into the HF cache (see
 # dllm_bench/hf_cache.py: defaults to ./.data/huggingface under the repository
 # root rather than ~/.cache/huggingface). Run `python prepare_model.py
-# --model-config configs/models/dreamreasoner.yaml` to warm that cache ahead
-# of time.
+# --model-config configs/models/dreamreasoner.yaml` to download that snapshot
+# ahead of time without loading it into RAM/GPU.
 #
 # DreamReasoner-8B (`Dream-org/DreamReasoner-8B`) is a DIFFERENT,
 # independently trained model from regular Dream-7B

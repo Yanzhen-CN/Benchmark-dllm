@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import prepare_model
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "prepare_model.py"
 CONFIGS_DIR = REPO_ROOT / "configs"
@@ -30,12 +32,12 @@ def _run(args, cwd):
     )
 
 
-def test_prepare_model_warms_every_mock_variant_by_default(tmp_path):
+def test_prepare_model_visits_every_mock_variant_by_default(tmp_path):
     result = _run(["--model-config", str(CONFIGS_DIR / "models" / "mock.yaml")], cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert "['default', 'fast']" in result.stdout
-    assert "[default] mock: ready" in result.stdout
-    assert "[fast] mock: ready" in result.stdout
+    assert "[default] mock: no Hugging Face checkpoint" in result.stdout
+    assert "[fast] mock: no Hugging Face checkpoint" in result.stdout
 
 
 def test_prepare_model_respects_single_variant(tmp_path):
@@ -51,8 +53,8 @@ def test_prepare_model_respects_single_variant(tmp_path):
 def test_prepare_model_skips_api_backed_adapters(tmp_path):
     result = _run(["--model-config", str(CONFIGS_DIR / "models" / "w1.yaml")], cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert "no local weights to warm" in result.stdout
-    assert result.stdout.count("no local weights to warm") == 3  # standard/jump/gidd
+    assert "no Hugging Face checkpoint to download" in result.stdout
+    assert result.stdout.count("no Hugging Face checkpoint to download") == 3
 
 
 def test_prepare_model_uses_repository_data_dir_by_default(tmp_path):
@@ -61,6 +63,28 @@ def test_prepare_model_uses_repository_data_dir_by_default(tmp_path):
     expected = CONFIGS_DIR.parent / ".data" / "huggingface"
     assert str(expected) in result.stdout
     assert expected.exists()
+
+
+def test_prepare_model_downloads_shared_checkpoint_once_without_building_adapter(
+    monkeypatch, capsys
+):
+    calls = []
+    monkeypatch.setattr(
+        prepare_model,
+        "_download_snapshot",
+        lambda repo_id, revision, cache_dir: calls.append(
+            (repo_id, revision, cache_dir)
+        ) or "/cached/illada",
+    )
+
+    prepare_model._prepare_one(
+        str(CONFIGS_DIR / "models" / "illada.yaml"), None, None
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == "GSAI-ML/iLLaDA-8B-Instruct"
+    assert calls[0][1] is None
+    assert "[best,fast] cached: /cached/illada" in capsys.readouterr().out
 
 
 def test_prepare_model_rejects_variant_and_variants_together(tmp_path):

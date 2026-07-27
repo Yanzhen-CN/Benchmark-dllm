@@ -14,8 +14,8 @@
 #
 # `model_name_or_path` is an HF Hub repo id — `from_pretrained` downloads it
 # on first use into ./.data/huggingface (see dllm_bench/hf_cache.py), not a local
-# path. `python prepare_model.py --model-config configs/models/diffusiongemma.yaml` warms
-# that cache ahead of time (this is a large checkpoint, worth pre-warming).
+# path. `python prepare_model.py --model-config configs/models/diffusiongemma.yaml`
+# downloads that snapshot ahead of time without loading it into RAM/GPU.
 #
 # `steps` (max_denoising_steps) has no design-doc-specified value for DiffusionGemma
 # (Appendix D.4 just says "shipped sampler and recommended parameters", and
