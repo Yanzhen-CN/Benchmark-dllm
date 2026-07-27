@@ -33,6 +33,25 @@ def _reference(dataset_name: str, record: dict[str, Any]) -> Any:
     if dataset_name == "structeval_t":
         from .structeval_t import StructEvalSchema
         return raw if isinstance(raw, StructEvalSchema) else StructEvalSchema(**raw)
+    if dataset_name == "ifeval":
+        from .ifeval import IFEvalSample, InstructionSpec
+
+        if isinstance(raw, IFEvalSample):
+            return raw
+        if not isinstance(raw, dict):
+            raise ValueError("IFEval records require an object in reference")
+
+        def specs(key: str) -> list[InstructionSpec]:
+            return [
+                item if isinstance(item, InstructionSpec) else InstructionSpec(**item)
+                for item in raw.get(key, [])
+            ]
+
+        return IFEvalSample(
+            form_constraints=specs("form_constraints"),
+            content_requirements=specs("content_requirements"),
+            target_length_words=raw.get("target_length_words"),
+        )
     if dataset_name == "sudoku":
         from .sudoku import SudokuReference
         return raw if isinstance(raw, SudokuReference) else SudokuReference(**raw)

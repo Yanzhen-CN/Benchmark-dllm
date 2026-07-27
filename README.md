@@ -8,7 +8,7 @@ commit-order, certainty).
 
 ## Status
 
-The framework (unified model interface, all Part 3/4 metric math, all six formal
+The framework (unified model interface, all Part 3/4 metric math, all seven formal
 dataset scorers, resource measurement plumbing, the 3-stage pipeline, and
 report/visualization generation) is fully implemented and unit-tested (255
 tests, see [Testing](#testing)). A pure-Python mock model backend
@@ -69,7 +69,7 @@ src/dllm_bench/
                      # entry point), token_grid_viz.py + trace_distribution_viz.py
                      # (trace visuals), sudoku_trace_viz.py (Sudoku's extra GIF)
   cli.py            # `dllm-bench generate/score/visualize/report/matrix`
-tests/              # one file per module area, 257 passing + 8 optional skips
+tests/              # one file per module area; see Testing for the current suite
 ```
 
 ## Main entry point

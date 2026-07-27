@@ -246,11 +246,18 @@ def visualize(
     dataset = build_dataset(dataset_config)
     samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
 
+    all_samples = samples
     if sample_ids:
         wanted = {s.strip() for s in sample_ids.split(",") if s.strip()}
-        samples = [s for s in samples if s.sample_id in wanted]
+        representative_ids = {
+            sample.sample_id for sample in all_samples if sample.sample_id in wanted
+        }
     elif n_representative is not None:
-        samples = samples[:n_representative]
+        representative_ids = {
+            sample.sample_id for sample in all_samples[:n_representative]
+        }
+    else:
+        representative_ids = {sample.sample_id for sample in all_samples}
 
     for v in variant_list:
         adapter = build_model_adapter(model_config, variant=v)
@@ -263,13 +270,16 @@ def visualize(
 
         rendered = 0
         trace_records = []
-        for sample in samples:
+        for sample in all_samples:
             gen_path = model_out / f"{sample.sample_id}.json"
             if not gen_path.exists():
                 click.echo(f"[{v}] skipping {sample.sample_id}: not generated yet")
                 continue
             generation = load_generation_result(gen_path)
             trace_records.append((sample, generation))
+
+            if sample.sample_id not in representative_ids:
+                continue
 
             score_path = score_out / f"{sample.sample_id}.json"
             score_result = load_score_result(score_path) if score_path.exists() else None
