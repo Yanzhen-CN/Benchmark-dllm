@@ -5,8 +5,8 @@
 #
 # `model_name_or_path` is an HF Hub repo id, NOT a local filesystem path —
 # `from_pretrained` downloads it on first use into the HF cache (see
-# dllm_bench/hf_cache.py: defaults to ./.hf_cache under the current
-# directory rather than ~/.cache/huggingface, so it lands on whatever
+# dllm_bench/hf_cache.py: defaults to ./.data/huggingface under the repository
+# root rather than ~/.cache/huggingface, so it lands on whatever
 # disk/volume the project itself is on). Run `python prepare_model.py
 # --model-config configs/models/illada.yaml` to warm that cache ahead of
 # time instead of downloading lazily mid-benchmark.
@@ -17,6 +17,7 @@
 # sampling. Loaded via AutoModel/AutoTokenizer with trust_remote_code=True
 # (models/hf_diffusion.py) — confirmed needed, not a plain PreTrainedModel.
 model: illada
+max_context_tokens: 8192
 configs:
   best:
     # block_length=32, steps_per_block=32 (1 token/step), corresponds to

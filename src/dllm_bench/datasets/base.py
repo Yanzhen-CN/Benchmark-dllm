@@ -67,3 +67,11 @@ class Dataset(ABC):
         for key in aux_keys:
             summary[key] = sum(r.aux[key] for r in results) / n
         return summary
+
+    def aggregate_records(
+        self, samples: list[Sample], results: list[ScoreResult]
+    ) -> dict[str, float]:
+        """Aggregate with sample metadata available for stratified datasets."""
+        if len(samples) != len(results):
+            raise ValueError("samples and results must have the same length")
+        return self.aggregate(results)

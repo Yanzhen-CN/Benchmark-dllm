@@ -63,9 +63,14 @@ def run_experiment(
 
     records: list[SampleRecord] = []
     for sample in samples:
+        sample_max_new_tokens = int(sample.meta.get("max_new_tokens", max_new_tokens))
+        if sample_max_new_tokens <= 0:
+            raise ValueError(
+                f"sample {sample.sample_id} has invalid max_new_tokens={sample_max_new_tokens}"
+            )
         request = GenerationRequest(
             prompt=sample.prompt,
-            max_new_tokens=max_new_tokens,
+            max_new_tokens=sample_max_new_tokens,
             config=dict(extra_config or {}),
             sample_id=sample.sample_id,
             seed=seed,
@@ -106,7 +111,7 @@ def summarize_records(
     (persisted in `model_output/.../_meta.json`), not be recomputed here.
     """
     score_results = [r.score for r in records]
-    agg = dataset.aggregate(score_results)
+    agg = dataset.aggregate_records([r.sample for r in records], score_results)
     q = agg[f"{dataset.name}_score"]
     aux = {k: v for k, v in agg.items() if k != f"{dataset.name}_score"}
 

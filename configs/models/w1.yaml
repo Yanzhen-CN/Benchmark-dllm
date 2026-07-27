@@ -14,6 +14,7 @@
 # per Sample is unavailable (no local energy-counter access to a third-party
 # API).
 model: w1
+max_context_tokens: "${W1_MAX_CONTEXT_TOKENS}"
 configs:
   standard:
     adapter: dllm_bench.models.w1_api.W1ApiAdapter

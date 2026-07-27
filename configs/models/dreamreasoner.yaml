@@ -5,8 +5,8 @@
 #
 # `model_name_or_path` is an HF Hub repo id, NOT a local filesystem path —
 # `from_pretrained` downloads it on first use into the HF cache (see
-# dllm_bench/hf_cache.py: defaults to ./.hf_cache under the current
-# directory rather than ~/.cache/huggingface). Run `python prepare_model.py
+# dllm_bench/hf_cache.py: defaults to ./.data/huggingface under the repository
+# root rather than ~/.cache/huggingface). Run `python prepare_model.py
 # --model-config configs/models/dreamreasoner.yaml` to warm that cache ahead
 # of time.
 #
@@ -33,6 +33,7 @@
 # default explicit, and Fast halves it) — same relationship as
 # illada.yaml's Best/Fast (32/16).
 model: dreamreasoner
+max_context_tokens: 32768
 configs:
   best:
     adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter

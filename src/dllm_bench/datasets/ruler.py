@@ -1,8 +1,8 @@
 """RULER: Accuracy, plus Context Retention, Position Robustness, Completion,
 Truncation (section 1 / 2.1).
 
-Context Retention reuses :func:`dllm_bench.metrics.long_context.context_retention`
-across a model's 0.5x/1.0x max-context runs; Completion/Truncation are derived
+Context Retention compares the model-max context-window point with the common
+8192-token point; Completion/Truncation are derived
 from each run's :class:`~dllm_bench.interfaces.RunStatus` at the orchestrator
 level (a run that hit ``RunStatus.TRUNCATED`` did not finish naturally), not
 computed here. This module owns per-sample accuracy and the Position
@@ -55,6 +55,51 @@ class RulerDataset(Dataset):
             valid=True,
             complete=bool(output_text.strip()),
         )
+
+    def aggregate_records(
+        self, samples: list[Sample], results: list[ScoreResult]
+    ) -> dict[str, float]:
+        summary = super().aggregate_records(samples, results)
+        grouped: dict[tuple[int, str, str], list[float]] = {}
+        for sample, result in zip(samples, results):
+            window = int(sample.meta.get("context_window_tokens", sample.reference.context_length))
+            key = (window, sample.reference.task_type, sample.reference.position)
+            grouped.setdefault(key, []).append(result.primary_score)
+
+        windows = sorted({key[0] for key in grouped})
+        for window in windows:
+            window_scores = [
+                score for (group_window, _, _), scores in grouped.items()
+                if group_window == window for score in scores
+            ]
+            summary[f"accuracy_context_{window}"] = sum(window_scores) / len(window_scores)
+            for task in sorted({key[1] for key in grouped if key[0] == window}):
+                task_scores = [
+                    score for (group_window, group_task, _), scores in grouped.items()
+                    if group_window == window and group_task == task for score in scores
+                ]
+                summary[f"accuracy_{task}_context_{window}"] = sum(task_scores) / len(task_scores)
+            for position in sorted({key[2] for key in grouped if key[0] == window}):
+                position_scores = [
+                    score for (group_window, _, group_position), scores in grouped.items()
+                    if group_window == window and group_position == position for score in scores
+                ]
+                summary[f"accuracy_{position}_context_{window}"] = (
+                    sum(position_scores) / len(position_scores)
+                )
+            position_scores = {
+                position: summary[f"accuracy_{position}_context_{window}"]
+                for position in sorted({key[2] for key in grouped if key[0] == window})
+            }
+            summary[f"position_robustness_context_{window}"] = position_robustness(
+                position_scores
+            )
+
+        if len(windows) == 2:
+            common_score = summary[f"accuracy_context_{windows[0]}"]
+            max_score = summary[f"accuracy_context_{windows[1]}"]
+            summary["context_retention"] = max_score / common_score if common_score > 0 else 0.0
+        return summary
 
 
 def position_robustness(scores_by_position: dict[str, float]) -> float:

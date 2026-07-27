@@ -1,13 +1,17 @@
-# Section 2.1. Lengths: the largest length every model can jointly run, plus
-# each model's own 0.5x/1.0x max legal context. Positions: front/middle/back.
-# Section 6 sampling: 20 samples per (length x position).
+# Diagnostic long-input evaluation. Each model runs the common 8192-token
+# context-window point and its own maximum context-window point. The prompt
+# occupies window - 64 tokens so that the short answer remains inside the
+# decoder-only model's legal total sequence length.
 dataset: ruler
 dataset_class: dllm_bench.datasets.ruler.RulerDataset
 primary_metric: accuracy
 aux_metrics: [partial_match_rate]
 task_types: [niah, multi_hop, aggregation]
 positions: [front, middle, back]
-samples_per_length_x_position: 20
+samples_per_task_per_context_window: 10
+common_context_window_tokens: 8192
+include_model_max_context_window: true
+max_output_tokens: 64
 seed: 42
 # NOTE: build_niah_sample() in dllm_bench/datasets/ruler.py is a synthetic
 # placeholder generator — swap in the official RULER task templates before

@@ -144,6 +144,7 @@ def _hellobench_samples(n: int) -> list[Sample]:
                 sample_id=f"hellobench-demo-{i}",
                 prompt=f"Write a short story about topic #{i}.",
                 reference=HelloBenchReference(target_length_words=50),
+                meta={"max_new_tokens": 128},
             )
         )
     return samples

@@ -16,6 +16,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .base import Dataset, Sample, ScoreResult
+from ..data_paths import ensure_data_layout
 
 _GOLD_MARKER_RE = re.compile(r"####\s*(-?[\d,]+(?:\.\d+)?)")
 _NUMBER_RE = re.compile(r"-?\$?[\d,]+(?:\.\d+)?%?")
@@ -69,7 +70,11 @@ class GSM8KDataset(Dataset):
         cache_dir: str | Path | None = None,
     ) -> None:
         self._samples = list(samples) if samples is not None else None
-        data_root = Path(cache_dir or os.environ.get("DLLM_DATA_CACHE", ".dataset_cache"))
+        data_root = Path(
+            cache_dir
+            or os.environ.get("DLLM_DATA_CACHE", "")
+            or ensure_data_layout()["datasets"]
+        )
         self._cache_path = data_root / "gsm8k" / GSM8K_REVISION / "test.jsonl"
 
     def load_samples(self, n: int | None = None) -> list[Sample]:

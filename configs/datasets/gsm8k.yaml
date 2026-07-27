@@ -5,5 +5,5 @@ dataset: gsm8k
 dataset_class: dllm_bench.datasets.gsm8k.GSM8KDataset
 primary_metric: accuracy
 aux_metrics: [valid_rate, complete_rate]
-sample_size: 150
+sample_size: 100
 seed: 42

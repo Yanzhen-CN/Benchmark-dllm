@@ -12,6 +12,7 @@ from dllm_bench.interfaces import GenerationRequest
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.runner.demo_samples import build_demo_samples
 from dllm_bench.runner.generate_stage import run_generation
+from dllm_bench.runner.persistence import load_generation_result
 from dllm_bench.runner.score_stage import run_scoring
 
 
@@ -31,6 +32,21 @@ def test_run_generation_writes_one_file_per_sample(tmp_path):
     assert summary.skipped == 0
     for sample in samples:
         assert (out_dir / f"{sample.sample_id}.json").exists()
+
+
+def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
+    samples = build_demo_samples("gsm8k", n=2)
+    samples[0].meta["max_new_tokens"] = 7
+    samples[1].meta["max_new_tokens"] = 13
+    out_dir = tmp_path / "model_output"
+
+    run_generation(adapter, "gsm8k", samples, max_new_tokens=256, out_dir=out_dir)
+
+    first = load_generation_result(out_dir / f"{samples[0].sample_id}.json")
+    second = load_generation_result(out_dir / f"{samples[1].sample_id}.json")
+    assert first.request.max_new_tokens == 7
+    assert second.request.max_new_tokens == 13
     assert (out_dir / "_meta.json").exists()
 
 

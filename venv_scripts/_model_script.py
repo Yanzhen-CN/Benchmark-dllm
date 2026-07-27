@@ -82,7 +82,8 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
 
     directory = venv_dir(profile)
     base_python = os.environ.get("PYTHON_BIN", sys.executable)
-    cache_dir = Path(os.environ.get("DLLM_PIP_CACHE_DIR", REPO_ROOT / ".pip_cache"))
+    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / ".data"))
+    cache_dir = Path(os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache"))
     cache_dir.mkdir(parents=True, exist_ok=True)
     install_env = os.environ.copy()
     install_env["PIP_CACHE_DIR"] = str(cache_dir)

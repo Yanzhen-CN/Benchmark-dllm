@@ -55,12 +55,12 @@ def test_prepare_model_skips_api_backed_adapters(tmp_path):
     assert result.stdout.count("no local weights to warm") == 3  # standard/jump/gidd
 
 
-def test_prepare_model_uses_project_relative_cache_dir_by_default(tmp_path):
+def test_prepare_model_uses_repository_data_dir_by_default(tmp_path):
     result = _run(["--model-config", str(CONFIGS_DIR / "models" / "mock.yaml")], cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    assert str(tmp_path) in result.stdout
-    assert ".hf_cache" in result.stdout
-    assert (tmp_path / ".hf_cache").exists()
+    expected = CONFIGS_DIR.parent / ".data" / "huggingface"
+    assert str(expected) in result.stdout
+    assert expected.exists()
 
 
 def test_prepare_model_rejects_variant_and_variants_together(tmp_path):

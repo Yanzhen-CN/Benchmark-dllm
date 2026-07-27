@@ -5,6 +5,7 @@
 # share via models/model_cache.py, but the CLI/output-path mechanics are the
 # same as a real multi-variant model like illada.yaml).
 model: mock
+max_context_tokens: 8192
 configs:
   default:
     adapter: dllm_bench.models.mock.MockDiffusionAdapter

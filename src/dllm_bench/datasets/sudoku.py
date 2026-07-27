@@ -164,6 +164,18 @@ class SudokuDataset(Dataset):
             complete=completion_rate(grid) == 1.0,
         )
 
+    def aggregate_records(
+        self, samples: list[Sample], results: list[ScoreResult]
+    ) -> dict[str, float]:
+        summary = super().aggregate_records(samples, results)
+        for difficulty, group in group_by_difficulty(samples, results).items():
+            if group:
+                summary[f"accuracy_{difficulty}"] = (
+                    sum(result.primary_score for result in group) / len(group)
+                )
+                summary[f"n_{difficulty}"] = float(len(group))
+        return summary
+
 
 def group_by_difficulty(
     samples: list[Sample], results: list[ScoreResult]

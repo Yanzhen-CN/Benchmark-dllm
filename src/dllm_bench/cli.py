@@ -45,7 +45,13 @@ from pathlib import Path
 import click
 
 from .hf_cache import configure_default_cache_dir
-from .registry import build_dataset, build_model_adapter, dataset_run_defaults, list_model_variants
+from .registry import (
+    build_dataset,
+    build_model_adapter,
+    dataset_run_defaults,
+    list_model_variants,
+    load_yaml,
+)
 from .report.tables import (
     compute_converted_row,
     raw_results_row,
@@ -67,6 +73,7 @@ from .runner.output_layout import model_output_dir, score_output_dir, visualizat
 from .runner.persistence import load_generation_result, load_run_summary_dict, load_score_result
 from .runner.score_stage import run_scoring
 from .runner.matrix import load_matrix_jobs
+from .runner.evaluation_sampling import select_configured_samples
 
 
 @click.group()
@@ -101,7 +108,15 @@ def _resolve_variants(model_config: str, variant: str | None, variants: str | No
     return list_model_variants(model_config)  # atomic unit = model: sweep everything it declares
 
 
-def _resolve_samples(dataset_config: str, dataset, demo: bool, samples_file: str | None, n_samples: int | None, seed: int | None) -> tuple[list, int]:
+def _resolve_samples(
+    dataset_config: str,
+    model_config: str,
+    dataset,
+    demo: bool,
+    samples_file: str | None,
+    n_samples: int | None,
+    seed: int | None,
+) -> tuple[list, int]:
     defaults = dataset_run_defaults(dataset_config)
     resolved_n = n_samples if n_samples is not None else (defaults["sample_size"] or 5)
     resolved_seed = seed if seed is not None else defaults["seed"]
@@ -109,9 +124,19 @@ def _resolve_samples(dataset_config: str, dataset, demo: bool, samples_file: str
     if resolved_n <= 0:
         raise click.UsageError("--n-samples must be greater than zero")
     if samples_file:
-        samples = load_samples_file(samples_file, dataset.name, n=resolved_n)
-        if not samples:
+        available = load_samples_file(samples_file, dataset.name)
+        if not available:
             raise click.UsageError(f"samples file is empty: {samples_file}")
+        try:
+            samples = select_configured_samples(
+                available,
+                load_yaml(dataset_config),
+                load_yaml(model_config),
+                n_samples=n_samples,
+                seed=resolved_seed,
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
         return samples, resolved_seed
     if demo:
         samples = build_demo_samples(dataset.name, n=resolved_n)
@@ -157,7 +182,7 @@ def generate(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, resolved_seed = _resolve_samples(dataset_config, dataset, demo, samples_file, n_samples, seed)
+    samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
 
     click.echo(f"Sweeping variants {variant_list} of {model_config} on {dataset.name} ({len(samples)} samples)")
     for v in variant_list:
@@ -187,7 +212,7 @@ def score(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, _ = _resolve_samples(dataset_config, dataset, demo, samples_file, n_samples, seed)
+    samples, _ = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
 
     for v in variant_list:
         adapter = build_model_adapter(model_config, variant=v)
@@ -219,7 +244,7 @@ def visualize(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, resolved_seed = _resolve_samples(dataset_config, dataset, demo, samples_file, n_samples, seed)
+    samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
 
     if sample_ids:
         wanted = {s.strip() for s in sample_ids.split(",") if s.strip()}

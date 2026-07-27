@@ -9,7 +9,7 @@ def test_defaults_to_project_relative_cache_dir(tmp_path, monkeypatch):
 
     result = configure_default_cache_dir(base_dir=tmp_path)
 
-    assert result == tmp_path / ".hf_cache"
+    assert result == tmp_path / ".data" / "huggingface"
     assert result.exists()
     assert __import__("os").environ["HF_HOME"] == str(result)
 
@@ -23,7 +23,7 @@ def test_respects_existing_hf_home(tmp_path, monkeypatch):
     result = configure_default_cache_dir(base_dir=tmp_path / "unused")
 
     assert result == existing
-    assert not (tmp_path / "unused" / ".hf_cache").exists()
+    assert not (tmp_path / "unused" / ".data" / "huggingface").exists()
 
 
 def test_respects_existing_hf_hub_cache_even_without_hf_home(tmp_path, monkeypatch):
@@ -37,11 +37,11 @@ def test_respects_existing_hf_hub_cache_even_without_hf_home(tmp_path, monkeypat
     assert result == existing
 
 
-def test_default_base_dir_is_cwd(tmp_path, monkeypatch):
+def test_default_base_dir_uses_configured_data_root(tmp_path, monkeypatch):
     for var in ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / "cloud-data"))
 
     result = configure_default_cache_dir()
 
-    assert result == tmp_path / ".hf_cache"
+    assert result == tmp_path / "cloud-data" / "huggingface"

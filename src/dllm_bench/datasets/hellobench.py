@@ -80,3 +80,26 @@ class HelloBenchDataset(Dataset):
             valid=True,
             complete=length_ok,
         )
+
+    def aggregate_records(
+        self, samples: list[Sample], results: list[ScoreResult]
+    ) -> dict[str, float]:
+        summary = super().aggregate_records(samples, results)
+        targets = sorted({sample.reference.target_length_words for sample in samples})
+        for target in targets:
+            group = [
+                result for sample, result in zip(samples, results)
+                if sample.reference.target_length_words == target
+            ]
+            summary[f"helloeval_{target}_words"] = sum(r.primary_score for r in group) / len(group)
+            summary[f"length_compliance_{target}_words"] = (
+                sum(r.aux.get("length_compliance_rate", 0.0) for r in group) / len(group)
+            )
+            summary[f"seq_rep_4_{target}_words"] = (
+                sum(r.aux.get("seq_rep_4", 0.0) for r in group) / len(group)
+            )
+        if 2000 in targets and 4000 in targets:
+            score_2k = summary["helloeval_2000_words"]
+            score_4k = summary["helloeval_4000_words"]
+            summary["long_output_quality_retention"] = score_4k / score_2k if score_2k > 0 else 0.0
+        return summary

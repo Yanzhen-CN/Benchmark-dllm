@@ -9,7 +9,8 @@ loaded via ``from_pretrained(repo_id)`` (no local-path checkpoints needed;
 see ``configs/models/*.yaml``'s comments), so where that download lands is
 the only thing to control.
 
-:func:`configure_default_cache_dir` sets ``HF_HOME`` to ``<cwd>/.hf_cache``
+:func:`configure_default_cache_dir` sets ``HF_HOME`` to
+``<repository>/.data/huggingface``
 unless the caller has already set ``HF_HOME``/``HF_HUB_CACHE``/
 ``TRANSFORMERS_CACHE`` themselves (any of those always wins). Must run
 before ``transformers``/``huggingface_hub`` are imported anywhere — both
@@ -22,7 +23,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DEFAULT_CACHE_DIRNAME = ".hf_cache"
 _OVERRIDE_ENV_VARS = ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")
 
 
@@ -34,7 +34,12 @@ def configure_default_cache_dir(base_dir: str | Path | None = None) -> Path:
         if existing:
             return Path(existing)
 
-    cache_dir = Path(base_dir or Path.cwd()) / DEFAULT_CACHE_DIRNAME
+    if base_dir is None:
+        from .data_paths import ensure_data_layout
+
+        cache_dir = ensure_data_layout()["huggingface"]
+    else:
+        cache_dir = Path(base_dir) / ".data" / "huggingface"
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(cache_dir)
     return cache_dir

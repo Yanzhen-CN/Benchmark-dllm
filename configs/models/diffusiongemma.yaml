@@ -13,7 +13,7 @@
 # other model.
 #
 # `model_name_or_path` is an HF Hub repo id — `from_pretrained` downloads it
-# on first use into ./.hf_cache (see dllm_bench/hf_cache.py), not a local
+# on first use into ./.data/huggingface (see dllm_bench/hf_cache.py), not a local
 # path. `python prepare_model.py --model-config configs/models/diffusiongemma.yaml` warms
 # that cache ahead of time (this is a large checkpoint, worth pre-warming).
 #
@@ -24,6 +24,7 @@
 # unset here so it falls back to gen_length (1 denoising step per generated
 # token) unless overridden per experiment.
 model: diffusiongemma
+max_context_tokens: 262144
 configs:
   official:
     adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter

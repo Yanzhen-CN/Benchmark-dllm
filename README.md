@@ -165,13 +165,29 @@ python venv_scripts/dreamreasoner.py setup --cuda-index cu121
 For formal data declared through `samples_file` in the experiment matrix:
 
 ```bash
-DATA_SOURCE=real N_SAMPLES=150 \
-  OUTPUT_ROOT=output/formal python venv_scripts/qwen3_4b.py run
+DATA_SOURCE=real OUTPUT_ROOT=output/formal \
+  python venv_scripts/qwen3_4b.py run
 ```
 
-Model weights, official datasets, and package wheels are shared through
-`.hf_cache/`, `.dataset_cache/`, and `.pip_cache/`. W1 additionally requires
-`W1_API_BASE_URL` and, when applicable, `W1_API_KEY`.
+The default diagnostic suite uses 100 samples for each regular-capability
+dataset. Sudoku is stratified 50 easy / 50 hard. RULER selects 10 samples for
+each of NIAH, multi-hop tracing, and aggregation at both the common 8192-token
+context-window point and the selected model's own maximum window. The 64-token
+answer allowance is included in that window, so the corresponding prompt
+targets are 8128 and `model_max - 64` tokens. If both windows are 8192 (as for
+iLLaDA), the same common point is run once: 30 samples rather than a duplicated
+60. Positions are balanced 4/3/3 within every task/window group.
+
+HelloBench independently measures long output from short prompts: 10 samples
+target 2K words with `max_new_tokens=3072`, and 10 target 4K words with
+`max_new_tokens=6144`. These are attached per sample by the runner, so the
+matrix-wide fallback cannot accidentally reduce both groups to 256 tokens.
+
+Model weights, official/generated datasets, and package wheels are all kept
+under the repository-root `.data/` directory (`huggingface/`, `datasets/`,
+and `pip-cache/`). This makes the cache follow the project onto a mounted
+cloud volume. Set `DLLM_DATA_ROOT=/mounted/path/.data` to override it. W1
+additionally requires `W1_API_BASE_URL` and, when applicable, `W1_API_KEY`.
 
 ## Testing
 
@@ -255,6 +271,13 @@ sample list from `--demo`/`--no-demo`, `--n-samples`, and `--seed`; pass matchin
 values to every stage. The official GSM8K loader uses stable source indices as
 sample IDs and a pinned source revision.
 
+Formal RULER records must provide `task_type`, `position`, `required_answers`,
+and `context_length` in `reference`. `context_length` may be either the target
+prompt-token count (for example 8128) or the named context-window point (8192);
+`meta.context_window_tokens` or `meta.input_tokens` can state it explicitly.
+Formal HelloBench records provide `reference.target_length_words` as either
+2000 or 4000. Dataset-aware sampling is deterministic under `--seed`.
+
 Output lands under `output/` (override with `--output-root`), split by
 stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-best` and
 `iLLaDA-fast` never collide, and you can `rsync`/copy just `model_output/`
@@ -296,11 +319,10 @@ same as any other HF model.
 By default, that download would land under `~/.cache/huggingface`. On a
 cloud GPU box the large/persistent storage is usually a network volume
 mounted at the project directory, while the home directory sits on small
-local/ephemeral disk — so `hf_cache.py`'s `configure_default_cache_dir()`
-points `HF_HOME` at `./.hf_cache` (relative to wherever you launch from)
-instead, unless you've already set `HF_HOME`/`HF_HUB_CACHE`/
-`TRANSFORMERS_CACHE` yourself (any of those always wins). `cli.py` and
-`prepare_model.py` both call this before any model gets touched.
+local/ephemeral disk — so `hf_cache.py` points `HF_HOME` at the repository's
+`.data/huggingface` directory regardless of the launch working directory.
+An explicit `HF_HOME`/`HF_HUB_CACHE`/`TRANSFORMERS_CACHE` still wins.
+`cli.py` and `prepare_model.py` apply this before any model is touched.
 
 To download/load a model ahead of time instead of lazily mid-benchmark:
 

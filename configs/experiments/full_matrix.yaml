@@ -27,7 +27,9 @@ datasets:
   - configs/datasets/mbpp.yaml
   - configs/datasets/structeval_t.yaml
   - configs/datasets/sudoku.yaml
-  - configs/datasets/ruler.yaml
-  - configs/datasets/hellobench.yaml
+  - config: configs/datasets/ruler.yaml
+    max_new_tokens: 64  # fallback; formal samples also carry this per sample
+  - config: configs/datasets/hellobench.yaml
+    max_new_tokens: 6144  # fallback; 2K samples override this to 3072
 
 seed: 42

@@ -82,7 +82,7 @@ def test_mbpp_dataset_kwargs_reach_the_constructor():
 
 def test_dataset_run_defaults_reads_sample_size_and_seed():
     defaults = dataset_run_defaults(CONFIGS_DIR / "datasets" / "gsm8k.yaml")
-    assert defaults["sample_size"] == 150
+    assert defaults["sample_size"] == 100
     assert defaults["seed"] == 42
 
 
