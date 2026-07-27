@@ -117,6 +117,8 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
 _IMPORT_CHECK = """\
 import importlib.util
 print('Environment import check')
+import dllm_bench
+print('dllm_bench: OK')
 if importlib.util.find_spec('torch'):
     import torch
     print('torch:', torch.__version__)
@@ -133,9 +135,43 @@ if importlib.util.find_spec('requests'):
 """
 
 
+def _project_importable(python: Path) -> bool:
+    result = subprocess.run(
+        [str(python), "-c", "import dllm_bench"],
+        cwd=REPO_ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
     python = venv_python(venv_dir(profile))
-    return python if python.is_file() else setup_environment(profile, cuda_index)
+    if not python.is_file():
+        return setup_environment(profile, cuda_index)
+    if not _project_importable(python):
+        # A venv may survive an interrupted/older setup with its heavyweight
+        # model dependencies intact but without this repository installed.
+        # Repair only the editable project link; --no-deps deliberately avoids
+        # replacing the profile's pinned Torch/Transformers/CUDA packages.
+        print(
+            f"Repairing missing dllm_bench installation in: {venv_dir(profile)}",
+            flush=True,
+        )
+        install_env = os.environ.copy()
+        data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / ".data"))
+        cache_dir = Path(
+            os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache")
+        )
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        install_env["PIP_CACHE_DIR"] = str(cache_dir)
+        run(
+            [python, "-m", "pip", "install", "--no-deps", "-e", "."],
+            env=install_env,
+        )
+        run([python, "-c", "import dllm_bench; print('dllm_bench: OK')"])
+    return python
 
 
 def model_environment(profile: ModelProfile) -> dict[str, str]:

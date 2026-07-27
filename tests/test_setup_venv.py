@@ -35,3 +35,31 @@ def test_model_venvs_share_one_parent_directory(monkeypatch):
     monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
     profile = _model_script.PROFILES["illada"]
     assert _model_script.venv_dir(profile) == _model_script.REPO_ROOT / ".venvs" / "illada"
+
+
+def test_existing_model_venv_repairs_missing_project_without_reinstalling_dependencies(
+    monkeypatch, tmp_path
+):
+    model_venv = tmp_path / "qwen-venv"
+    python = _model_script.venv_python(model_venv)
+    python.parent.mkdir(parents=True)
+    python.touch()
+    commands = []
+    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setattr(_model_script, "_project_importable", lambda executable: False)
+    monkeypatch.setattr(
+        _model_script,
+        "run",
+        lambda command, **kwargs: commands.append(command),
+    )
+
+    resolved = _model_script.ensure_environment(
+        _model_script.PROFILES["qwen3_4b"], "cu124"
+    )
+
+    assert resolved == python
+    assert commands[0] == [
+        python, "-m", "pip", "install", "--no-deps", "-e", "."
+    ]
+    assert "import dllm_bench" in commands[1][2]
+    assert not any("torch" in str(part) for command in commands for part in command)
