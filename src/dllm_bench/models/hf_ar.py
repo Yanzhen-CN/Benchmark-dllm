@@ -81,15 +81,19 @@ class QwenARAdapter(BaseModelAdapter):
 
         trace: list[TraceStep] = []
         if self._capture_trace:
+            generated_token_ids = generated_ids.tolist()
+            generated_token_texts = [
+                self._tokenizer.decode([token_id], skip_special_tokens=True)
+                for token_id in generated_token_ids
+            ]
+            final_length = len(generated_token_ids)
             token_ids_accum: list[int] = []
             token_texts_accum: list[str] = []
             for step_index, (token_id, step_logits) in enumerate(
-                zip(generated_ids.tolist(), output.scores)
+                zip(generated_token_ids, output.scores)
             ):
                 token_ids_accum.append(token_id)
-                token_texts_accum.append(
-                    self._tokenizer.decode([token_id], skip_special_tokens=True)
-                )
+                token_texts_accum.append(generated_token_texts[step_index])
                 position = len(token_ids_accum) - 1
                 probs = torch.softmax(step_logits[0], dim=-1)
                 top1_conf = probs.max().item()
@@ -98,15 +102,24 @@ class QwenARAdapter(BaseModelAdapter):
                 trace.append(
                     TraceStep(
                         forward_index=step_index,
-                        token_ids=list(token_ids_accum),
-                        position_states=[PositionState.ACCEPTED] * len(token_ids_accum),
+                        token_ids=(
+                            list(token_ids_accum)
+                            + [-1] * (final_length - len(token_ids_accum))
+                        ),
+                        position_states=(
+                            [PositionState.ACCEPTED] * len(token_ids_accum)
+                            + [PositionState.MASKED] * (final_length - len(token_ids_accum))
+                        ),
                         committed_positions=[position],
                         decoded_text=self._tokenizer.decode(
                             token_ids_accum, skip_special_tokens=True
                         ),
                         entropy_by_position={position: normalized_entropy},
                         top1_confidence_by_position={position: top1_conf},
-                        token_texts=list(token_texts_accum),
+                        token_texts=(
+                            list(token_texts_accum)
+                            + [""] * (final_length - len(token_texts_accum))
+                        ),
                     )
                 )
 

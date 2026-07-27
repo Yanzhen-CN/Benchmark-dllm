@@ -202,9 +202,10 @@ def render_frame(
     accept_counts_by_step: list[dict[int, int]],
     max_accept_count: int,
     title: str,
+    n_positions: int | None = None,
 ) -> Image.Image:
     step = trace[step_index]
-    n = len(step.position_states)
+    n = n_positions or max(len(item.position_states) for item in trace)
     cols, rows, cell_w, cell_h = token_grid_geometry(n)
 
     prev_committed = set(trace[step_index - 1].committed_positions) if step_index > 0 else set()
@@ -239,7 +240,14 @@ def render_frame(
         cx0, cy0 = grid_x + col * cell_w, grid_y + row * cell_h
         cx1, cy1 = cx0 + cell_w - 2, cy0 + cell_h - 2
 
-        state = step.position_states[position]
+        # Older AR traces grew by one position per forward instead of
+        # recording their full final canvas. Treat not-yet-emitted positions
+        # as masked so those persisted traces remain visualizable.
+        state = (
+            step.position_states[position]
+            if position < len(step.position_states)
+            else PositionState.MASKED
+        )
         count = counts.get(position, 0)
         fill = cell_fill_color(state, count, max_accept_count, position in committed)
 
@@ -306,12 +314,16 @@ def render_token_grid_gif(
         return
     accept_counts_by_step = compute_running_accept_counts(trace)
     max_accept_count = max((max(c.values(), default=0) for c in accept_counts_by_step), default=1) or 1
+    n_positions = max(len(step.position_states) for step in trace)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     def frame(index: int) -> Image.Image:
-        return render_frame(trace, index, accept_counts_by_step, max_accept_count, title)
+        return render_frame(
+            trace, index, accept_counts_by_step, max_accept_count, title,
+            n_positions=n_positions,
+        )
 
     duration = max(40, int(round(1000 / max(0.1, fps))))
     durations = [duration] * len(trace)
@@ -339,7 +351,11 @@ def render_token_grid_final_png(trace: list[TraceStep], out_path: str | Path, ti
         return
     accept_counts_by_step = compute_running_accept_counts(trace)
     max_accept_count = max((max(c.values(), default=0) for c in accept_counts_by_step), default=1) or 1
-    image = render_frame(trace, len(trace) - 1, accept_counts_by_step, max_accept_count, title)
+    n_positions = max(len(step.position_states) for step in trace)
+    image = render_frame(
+        trace, len(trace) - 1, accept_counts_by_step, max_accept_count, title,
+        n_positions=n_positions,
+    )
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(out_path)
@@ -365,7 +381,7 @@ def plot_token_position_forward_heatmap(
 
     accept_counts_by_step = compute_running_accept_counts(trace)
     max_accept_count = max((max(c.values(), default=0) for c in accept_counts_by_step), default=1) or 1
-    n_positions = len(trace[-1].position_states)
+    n_positions = max(len(step.position_states) for step in trace)
     n_steps = len(trace)
 
     rgb = np.zeros((n_steps, n_positions, 3), dtype=np.uint8)
@@ -373,8 +389,13 @@ def plot_token_position_forward_heatmap(
         committed = set(step.committed_positions)
         counts = accept_counts_by_step[t]
         for position in range(n_positions):
+            state = (
+                step.position_states[position]
+                if position < len(step.position_states)
+                else PositionState.MASKED
+            )
             color = cell_fill_color(
-                step.position_states[position], counts.get(position, 0), max_accept_count, position in committed
+                state, counts.get(position, 0), max_accept_count, position in committed
             )
             rgb[t, position] = color
 

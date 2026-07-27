@@ -210,3 +210,53 @@ def test_plot_token_position_forward_heatmap_is_a_no_op_on_empty_trace(tmp_path)
     out_path = tmp_path / "heatmap.png"
     plot_token_position_forward_heatmap([], out_path)
     assert not out_path.exists()
+
+
+def test_visualizers_support_legacy_growing_ar_trace(tmp_path):
+    from PIL import Image
+
+    trace = [
+        TraceStep(
+            forward_index=0,
+            token_ids=[10],
+            position_states=[PositionState.ACCEPTED],
+            committed_positions=[0],
+            decoded_text="a",
+            token_texts=["a"],
+        ),
+        TraceStep(
+            forward_index=1,
+            token_ids=[10, 11],
+            position_states=[PositionState.ACCEPTED, PositionState.ACCEPTED],
+            committed_positions=[1],
+            decoded_text="ab",
+            token_texts=["a", "b"],
+        ),
+        TraceStep(
+            forward_index=2,
+            token_ids=[10, 11, 12],
+            position_states=[
+                PositionState.ACCEPTED,
+                PositionState.ACCEPTED,
+                PositionState.ACCEPTED,
+            ],
+            committed_positions=[2],
+            decoded_text="abc",
+            token_texts=["a", "b", "c"],
+        ),
+    ]
+
+    heatmap_path = tmp_path / "ar-heatmap.png"
+    gif_path = tmp_path / "ar-trace.gif"
+    plot_token_position_forward_heatmap(trace, heatmap_path)
+    render_token_grid_gif(trace, gif_path)
+
+    assert heatmap_path.exists()
+    assert heatmap_path.stat().st_size > 0
+    with Image.open(gif_path) as image:
+        assert image.n_frames == len(trace)
+        frame_sizes = []
+        for frame_index in range(image.n_frames):
+            image.seek(frame_index)
+            frame_sizes.append(image.size)
+        assert len(set(frame_sizes)) == 1
