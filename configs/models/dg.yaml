@@ -1,18 +1,32 @@
 # Appendix D.4 — large-model reference, not part of same-scale conclusions
-# (section 5). Public checkpoint, directly loadable via `transformers`
-# (`trust_remote_code=True` for the `diffusion_gemma` model_type), no
-# additional adapter shim needed. Trace capture via an observational forward
-# hook on the sampler's `accept_canvas` (see dllm_bench/models/dg.py) —
-# following *How DiffusionGemma Actually Commits Tokens*. Only one config,
-# kept under the same `configs:` schema as every other model.
+# (section 5). Public checkpoint, loaded via the real upstream
+# `DiffusionGemmaForBlockDiffusion` class + `AutoProcessor` — verified
+# against the DGtest reference project's own model-loading code
+# (transformers>=5.13.0 required: this class isn't in older releases, a
+# newer floor than this project's default `hf` extra — install with e.g.
+# `pip install "transformers>=5.13.0"` for DG specifically). No
+# `trust_remote_code` needed; it's a real registered model type, not remote
+# code. Trace capture wraps `accept_canvas` via an instance-level override of
+# `model._prepare_sampler` (see dllm_bench/models/dg.py) — following *How
+# DiffusionGemma Actually Commits Tokens*, corrected against the real method
+# signature. Only one config, kept under the same `configs:` schema as every
+# other model.
 #
 # `model_name_or_path` is an HF Hub repo id — `from_pretrained` downloads it
 # on first use into ./.hf_cache (see dllm_bench/hf_cache.py), not a local
 # path. `python prepare_model.py --model-config configs/models/dg.yaml` warms
 # that cache ahead of time (this is a large checkpoint, worth pre-warming).
+#
+# `steps` (max_denoising_steps) has no design-doc-specified value for DG
+# (Appendix D.4 just says "shipped sampler and recommended parameters", and
+# DG is excluded from the Best/Fast steps=1024/512 framework since it's a
+# large-model reference, not a same-scale comparison — section 5). Left
+# unset here so it falls back to gen_length (1 denoising step per generated
+# token) unless overridden per experiment.
 model: dg
 configs:
   official:
     adapter: dllm_bench.models.dg.DGAdapter
     init_kwargs:
       model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: null

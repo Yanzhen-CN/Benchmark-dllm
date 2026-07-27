@@ -1,4 +1,4 @@
-"""Verifies hf_ar.py/hf_diffusion.py/dg.py's `_ensure_loaded` actually route
+"""Verifies hf_ar.py/illada.py/dg.py's `_ensure_loaded` actually route
 through `models.model_cache` — i.e. that constructing a second adapter for
 the same checkpoint (e.g. iLLaDA's `best` and `fast`) does not call
 `from_pretrained` a second time. Uses monkeypatched `transformers` entry
@@ -14,7 +14,8 @@ transformers = pytest.importorskip("transformers")
 from dllm_bench.models import model_cache
 from dllm_bench.models.dg import DGAdapter
 from dllm_bench.models.hf_ar import QwenARAdapter
-from dllm_bench.models.hf_diffusion import DiffusionStepConfig, IlladaAdapter
+from dllm_bench.models.hf_diffusion import DiffusionStepConfig
+from dllm_bench.models.illada import IlladaAdapter
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +33,7 @@ class _FakeHFModel:
         return self
 
 
-def _install_counting_fakes(monkeypatch, *auto_classes):
+def _install_counting_fakes(monkeypatch, *auto_classes, tokenizer_class=None):
     tokenizer_calls = {"n": 0}
     model_calls = {"n": 0}
 
@@ -44,7 +45,9 @@ def _install_counting_fakes(monkeypatch, *auto_classes):
         model_calls["n"] += 1
         return _FakeHFModel()
 
-    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", fake_tokenizer_from_pretrained)
+    monkeypatch.setattr(
+        tokenizer_class or transformers.AutoTokenizer, "from_pretrained", fake_tokenizer_from_pretrained
+    )
     for cls in auto_classes:
         monkeypatch.setattr(cls, "from_pretrained", fake_model_from_pretrained)
     return tokenizer_calls, model_calls
@@ -103,7 +106,11 @@ def test_qwen_ar_adapter_uses_shared_cache(monkeypatch):
 
 
 def test_dg_adapter_uses_shared_cache(monkeypatch):
-    _, model_calls = _install_counting_fakes(monkeypatch, transformers.AutoModelForCausalLM)
+    from transformers import DiffusionGemmaForBlockDiffusion
+
+    _, model_calls = _install_counting_fakes(
+        monkeypatch, DiffusionGemmaForBlockDiffusion, tokenizer_class=transformers.AutoProcessor
+    )
 
     first = DGAdapter("shared-dg-checkpoint")
     second = DGAdapter("shared-dg-checkpoint")
@@ -113,6 +120,7 @@ def test_dg_adapter_uses_shared_cache(monkeypatch):
 
     assert model_calls["n"] == 1
     assert first._model is second._model
+    assert first._processor is second._processor
 
 
 def test_illada_warm_uses_the_same_cache_path(monkeypatch):

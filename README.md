@@ -6,31 +6,37 @@ an AR baseline (Qwen3-4B), implementing the design in
 resource cost, and generation-process analysis (trace, parallelism,
 commit-order, certainty).
 
-## Status: framework-first
+## Status
 
-This is a **framework-first** build: everything that can be verified without
-a GPU, real model checkpoints, or network access — the unified model
-interface, all Part 3/4 metric math, all 7 dataset scorers, resource
-measurement plumbing, the 3-stage pipeline, and report/visualization
-generation — is implemented and unit-tested (211 tests, see
-[Testing](#testing)). A pure-Python mock model backend (`models/mock.py`)
-exercises the entire pipeline end-to-end without any of those dependencies.
+The framework (unified model interface, all Part 3/4 metric math, all 7
+dataset scorers, resource measurement plumbing, the 3-stage pipeline, and
+report/visualization generation) is fully implemented and unit-tested (243
+tests, see [Testing](#testing)). A pure-Python mock model backend
+(`models/mock.py`) exercises the entire pipeline end-to-end without a GPU.
 
-What is **not** wired up yet, and why:
+On top of that, every **local** model's real sampling loop is implemented —
+not just interface stubs:
+
+| Model | Status | Verified against |
+| --- | --- | --- |
+| iLLaDA | **Real, ported sampler** (`models/illada.py`) | `iLLaDAtest`'s reference `generate.py` — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
+| DiffusionGemma | **Real** (`models/dg.py`) | `DGtest`'s `run.py` + the real upstream `transformers` source (`DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` — confirmed merged into `transformers>=5.13.0`, no vendoring needed). Trace capture wraps the real `accept_canvas` method via an instance-level `_prepare_sampler` override. Tests in `tests/test_dg_sampling.py`. |
+| Dream | Best-effort, **not locally verified** (`models/dream.py`) | No reference implementation was available for this one (unlike the two above) — implemented from Dream-7B's publicly documented HF interface (`diffusion_generate`, `output_history`, `alg`). Confirm parameter names/`mask_token_id` against the real model before formal runs. Wiring tests in `tests/test_dream_sampling.py` check data flow, not the (unverifiable-from-here) algorithm itself. |
+
+What's still open, and why:
 
 | Piece | Status | Why |
 | --- | --- | --- |
-| iLLaDA / Dream sampler loop | `NotImplementedError` in `models/hf_diffusion.py` | Design doc Appendix D.1/D.2 flags the checkpoint name and HF-integration status as needing verification before this can be written for real. |
 | W1 | Configuration only (`configs/models/w1.yaml`) | Project decision: W1 will be integrated against a custom/internal API later — no adapter code changes planned until then, just keep the config shape ready. |
-| DG `accept_canvas` hook | Best-effort placeholder in `models/dg.py` | Exact hook argument names aren't pinned down here; adjust `_on_accept` once run against the real checkpoint. |
 | HelloEval score | Heuristic fallback in `datasets/hellobench.py` | The real metric is an LLM-judge rubric. Pass `judge_fn` to `HelloBenchDataset` to use a real judge. |
 | RULER / StructEval-T / IFEval task banks | Synthetic/representative samples | No official task-bank files wired in; `ruler.build_niah_sample` and `runner/demo_samples.py` are placeholders. |
-| Real dataset loading (GSM8K, MBPP, ...) | Not implemented | `Dataset.load_samples` takes whatever `Sample` list you hand it; nothing downloads real data yet. `--demo` samples are hand-authored smoke-test fixtures, regenerated deterministically by every stage (no Sample persistence yet — see below). |
+| Real dataset loading (GSM8K, MBPP, ...) | Not implemented | `Dataset.load_samples` takes whatever `Sample` list you hand it; nothing downloads real data yet (this needs the server/network access the design doc's "服务器下载数据" step implies, not something this environment can do). `--demo` samples are hand-authored smoke-test fixtures, regenerated deterministically by every stage (no Sample persistence yet — see below). |
 | Batch experiment runner | Not implemented | Each CLI command runs one model-config/variant x dataset-config pair. `configs/experiments/full_matrix.yaml` documents the intended full matrix as a checklist for a future batch script. |
+| Running the real models end-to-end | Not done in this environment | No GPU / multi-GB checkpoint downloads here — the sampling loops themselves are ported/verified against reference code and algorithm-tested with fake logits (see table above), but nobody has run them against the actual weights yet. First real run should sanity-check output quality before trusting the pipeline's numbers. |
 
 None of these block the framework from being extended — each is isolated
 behind the same `ModelAdapter`/`Dataset` interface, with a TODO at the exact
-point that needs a real checkpoint/API/judge to finish.
+point that needs a real checkpoint/API/judge/GPU to finish.
 
 ## Layout
 
@@ -47,7 +53,10 @@ src/dllm_bench/
   hf_cache.py       # project-relative HF cache directory (see below)
   models/           # base.py (resource-measurement wrapper), model_cache.py (shared
                      # loaded-weights cache), hf_ar.py (Qwen3-4B),
-                     # hf_diffusion.py (iLLaDA/Dream base), dg.py, w1_api.py, mock.py
+                     # hf_diffusion.py (iLLaDA/Dream shared base + DiffusionStepConfig),
+                     # illada.py, dream.py (each model's real sampler — see Status),
+                     # trace_utils.py (shared snapshot-diffing trace helper),
+                     # dg.py, w1_api.py, mock.py
   datasets/         # base.py + gsm8k/mbpp/structeval_t/ifeval/sudoku/ruler/hellobench
   resource/         # timing.py/energy.py/compute.py/vram.py (Appendix B protocol)
   metrics/          # quality_resource.py/long_context.py (Part 3),
@@ -60,7 +69,7 @@ src/dllm_bench/
                      # entry point), token_grid_viz.py + trace_distribution_viz.py
                      # (trace visuals), sudoku_trace_viz.py (Sudoku's extra GIF)
   cli.py            # `dllm-bench generate/score/visualize/report`
-tests/              # one file per module area, 211 tests total
+tests/              # one file per module area, 243 tests total
 ```
 
 ## Install
@@ -88,6 +97,14 @@ every shipped `configs/models/*.yaml` variant and `configs/datasets/*.yaml`.
 `tests/test_cli.py` and `tests/test_stages.py` run the full
 generate → score → visualize → report pipeline (including resume behavior)
 through the mock adapter.
+
+The three real sampler implementations are also algorithm-tested against
+fake logits/models (`tests/test_illada_sampling.py`, `test_dg_sampling.py`,
+`test_dream_sampling.py`, `test_trace_utils.py`) — these check the actual
+selection/trace-construction logic (e.g. iLLaDA's top-k-by-confidence commit
+order, DG's `_prepare_sampler` patch-and-restore including under exceptions),
+not just that the classes import and wire together. They still can't replace
+running against real weights on a GPU (see the Status table).
 
 ## The three-stage pipeline
 
@@ -155,6 +172,11 @@ dllm-bench generate --model-config configs/models/qwen3_4b.yaml \
                      --dataset-config configs/datasets/gsm8k.yaml \
                      --demo --n-samples 5 --max-new-tokens 64
 ```
+
+iLLaDA and DiffusionGemma work the same way (`configs/models/illada.yaml`,
+`configs/models/dg.yaml` — DG additionally needs `pip install -e ".[dg]"`
+for its `transformers>=5.13.0` floor). Nobody has run either against real
+weights yet in this environment (no GPU here) — see the Status table above.
 
 ## Model checkpoints and caching
 
@@ -258,7 +280,13 @@ dataset's YAML never silently changes what the unit tests assert.
    If it loads HF weights, route `_ensure_loaded` through
    `models/model_cache.get_or_load(model_name_or_path, device, loader)` (see
    `hf_ar.py`/`hf_diffusion.py`/`dg.py`) so multiple variants pointing at the
-   same checkpoint share one in-memory copy instead of reloading.
+   same checkpoint share one in-memory copy instead of reloading. If your
+   model only exposes raw per-step canvas snapshots (not an explicit
+   "what changed this step" signal), `models/trace_utils.py`'s
+   `trace_steps_from_snapshots` builds `TraceStep`s from that generically —
+   see `dream.py` for the pattern; if it exposes something richer (iLLaDA's
+   per-step selected-positions, DG's `accepted_token_mask`), build
+   `TraceStep`s more precisely from that instead (see `illada.py`/`dg.py`).
 2. Add `configs/models/<name>.yaml` with a `configs:` block naming each
    variant you want, pointing `adapter:` at the dotted class path and
    `init_kwargs:`/`step_config:` at its constructor args. If it's HF-backed,
