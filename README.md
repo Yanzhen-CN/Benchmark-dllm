@@ -327,6 +327,11 @@ instantiate model adapters or load weights. `run_bench.py` remains as a
 backward-compatible same-machine all-stage entry point, but is not the
 recommended server/local workflow.
 
+Output run IDs append a variant only when it distinguishes configurations:
+Qwen writes under `model_output/qwen3_4b/`, while multi-configuration models
+use names such as `illada_best` and `illada_fast`. Local readers still accept
+the legacy `qwen3_4b_ar-baseline` directory.
+
 Pass `--variant best` to run just one, or `--variants best,fast` to name an
 explicit subset. `score`/`visualize` deterministically reconstruct the same
 sample list from `--demo`/`--no-demo`, `--n-samples`, and `--seed`; pass matching

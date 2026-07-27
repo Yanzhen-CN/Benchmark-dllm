@@ -1,7 +1,7 @@
 """The output directory convention every stage writes into and reads from:
 
     output/
-      model_output/<model>_<config>/<dataset>/
+      model_output/<run-id>/<dataset>/
         _meta.json          # model/config/dataset name + run_metadata (section 6)
         <sample_id>.json    # full GenerationResult, including trace
       score_output/<model>_<config>/<dataset>/
@@ -10,7 +10,9 @@
       visualization_output/<model>_<config>/<dataset>/
         <sample_id>_*.png / .gif
 
-Splitting by ``<model>_<config>`` first, ``<dataset>`` second is what lets
+The run ID is normally ``<model>_<config>``. Qwen's sole ``ar-baseline``
+configuration uses just ``qwen3_4b`` because the suffix is redundant.
+Splitting by run ID first, ``<dataset>`` second is what lets
 each model run independently (skip W1 entirely, run iLLaDA without touching
 DreamReasoner's output), lets a dataset resume mid-way (each stage checks per-sample
 files before redoing work — see ``runner/generate_stage.py``/``score_stage.py``),
@@ -27,8 +29,20 @@ SCORE_OUTPUT = "score_output"
 VISUALIZATION_OUTPUT = "visualization_output"
 
 
+_UNSUFFIXED_CONFIGS = {("qwen3_4b", "ar-baseline")}
+
+
 def run_id(model_name: str, config_name: str) -> str:
+    if (model_name, config_name) in _UNSUFFIXED_CONFIGS:
+        return model_name
     return f"{model_name}_{config_name}"
+
+
+def legacy_run_id(model_name: str, config_name: str) -> str | None:
+    """Return the old run ID when the canonical naming dropped a suffix."""
+    canonical = run_id(model_name, config_name)
+    legacy = f"{model_name}_{config_name}"
+    return legacy if legacy != canonical else None
 
 
 def _stage_dir(output_root: str | Path, stage: str, model_name: str, config_name: str, dataset_name: str) -> Path:
@@ -39,8 +53,39 @@ def model_output_dir(output_root: str | Path, model_name: str, config_name: str,
     return _stage_dir(output_root, MODEL_OUTPUT, model_name, config_name, dataset_name)
 
 
+def _resolve_existing_stage_dir(
+    output_root: str | Path,
+    stage: str,
+    model_name: str,
+    config_name: str,
+    dataset_name: str,
+) -> Path:
+    canonical = _stage_dir(output_root, stage, model_name, config_name, dataset_name)
+    if canonical.exists():
+        return canonical
+    legacy = legacy_run_id(model_name, config_name)
+    if legacy is not None:
+        legacy_path = Path(output_root) / stage / legacy / dataset_name
+        if legacy_path.exists():
+            return legacy_path
+    return canonical
+
+
+def resolve_model_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
+    """Read canonical output, falling back to the pre-rename Qwen directory."""
+    return _resolve_existing_stage_dir(
+        output_root, MODEL_OUTPUT, model_name, config_name, dataset_name
+    )
+
+
 def score_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
     return _stage_dir(output_root, SCORE_OUTPUT, model_name, config_name, dataset_name)
+
+
+def resolve_score_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
+    return _resolve_existing_stage_dir(
+        output_root, SCORE_OUTPUT, model_name, config_name, dataset_name
+    )
 
 
 def visualization_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:

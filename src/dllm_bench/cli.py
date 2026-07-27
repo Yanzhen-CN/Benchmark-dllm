@@ -68,7 +68,13 @@ from .report.plots import (
 from .report.trace_report import render_sample_report
 from .runner.demo_samples import build_demo_samples
 from .runner.generate_stage import run_generation
-from .runner.output_layout import model_output_dir, score_output_dir, visualization_output_dir
+from .runner.output_layout import (
+    model_output_dir,
+    resolve_model_output_dir,
+    resolve_score_output_dir,
+    score_output_dir,
+    visualization_output_dir,
+)
 from .runner.persistence import load_generation_result, load_run_summary_dict, load_score_result
 from .runner.score_stage import run_scoring
 from .runner.matrix import load_matrix_jobs
@@ -297,7 +303,7 @@ def score(
     configured_model = model_name(model_config)
 
     for v in variant_list:
-        model_out = model_output_dir(output_root, configured_model, v, dataset.name)
+        model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
         score_out = score_output_dir(output_root, configured_model, v, dataset.name)
         result = run_scoring(dataset, samples, model_out, score_out, resume=resume)
 
@@ -342,8 +348,8 @@ def visualize(
         representative_ids = {sample.sample_id for sample in all_samples}
 
     for v in variant_list:
-        model_out = model_output_dir(output_root, configured_model, v, dataset.name)
-        score_out = score_output_dir(output_root, configured_model, v, dataset.name)
+        model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
+        score_out = resolve_score_output_dir(output_root, configured_model, v, dataset.name)
         viz_out = visualization_output_dir(output_root, configured_model, v, dataset.name)
 
         if not (model_out / "_meta.json").exists():
