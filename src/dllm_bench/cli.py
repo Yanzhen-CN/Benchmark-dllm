@@ -30,16 +30,16 @@ matters when a file declares more variants than you want this run).
 
     dllm-bench report --output-root output --dataset-config configs/datasets/gsm8k.yaml
 
-``--demo`` is the only sample source wired up right now (see
-``runner/demo_samples.py``) — real dataset-file loading is out of scope for
-this framework-first pass. `score`/`visualize` regenerate the same sample
-list from `--demo`/`--n-samples`/`--seed` rather than reading it back from
-disk (see README's "已知空白" — persisting arbitrary Sample references isn't
-implemented yet), so pass the same flags to every stage for one run.
+``--demo`` selects the tiny built-in samples in ``runner/demo_samples.py``;
+``--no-demo`` uses a dataset's real loader where implemented (currently the
+official GSM8K test split). `score`/`visualize` deterministically reconstruct
+the same sample list from ``--n-samples``/``--seed``, so pass matching values
+to every stage of one run.
 """
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 import click
@@ -69,7 +69,7 @@ def _common_options(f):
     f = click.option("--variant", default=None, help="Run just this one named config (e.g. best)")(f)
     f = click.option("--variants", default=None, help="Comma-separated named configs to run together (default: every variant in --model-config)")(f)
     f = click.option("--dataset-config", required=True, type=click.Path(exists=True), help="Path to configs/datasets/*.yaml")(f)
-    f = click.option("--demo/--no-demo", default=True, show_default=True, help="Use built-in demo samples (only supported source today)")(f)
+    f = click.option("--demo/--no-demo", default=True, show_default=True, help="Use built-in demo samples; --no-demo loads the real dataset where supported")(f)
     f = click.option("--n-samples", default=None, type=int, help="Defaults to the dataset config's `sample_size`")(f)
     f = click.option("--seed", default=None, type=int, help="Defaults to the dataset config's `seed` (42)")(f)
     f = click.option("--output-root", default="output", show_default=True, type=click.Path(), help="Root of model_output/score_output/visualization_output")(f)
@@ -86,13 +86,33 @@ def _resolve_variants(model_config: str, variant: str | None, variants: str | No
     return list_model_variants(model_config)  # atomic unit = model: sweep everything it declares
 
 
-def _resolve_samples(dataset_config: str, dataset_name: str, demo: bool, n_samples: int | None, seed: int | None) -> tuple[list, int]:
-    if not demo:
-        raise click.UsageError("only --demo sample loading is implemented so far")
+def _resolve_samples(dataset_config: str, dataset, demo: bool, n_samples: int | None, seed: int | None) -> tuple[list, int]:
     defaults = dataset_run_defaults(dataset_config)
     resolved_n = n_samples if n_samples is not None else (defaults["sample_size"] or 5)
     resolved_seed = seed if seed is not None else defaults["seed"]
-    samples = build_demo_samples(dataset_name, n=resolved_n)
+
+    if resolved_n <= 0:
+        raise click.UsageError("--n-samples must be greater than zero")
+    if demo:
+        samples = build_demo_samples(dataset.name, n=resolved_n)
+        return samples, resolved_seed
+
+    try:
+        available = dataset.load_samples()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(f"failed to load real {dataset.name} samples: {exc}") from exc
+    if not available:
+        raise click.UsageError(
+            f"real sample loading is not implemented for dataset {dataset.name!r}; use --demo"
+        )
+    if resolved_n > len(available):
+        raise click.UsageError(
+            f"requested {resolved_n} real {dataset.name} samples, but only {len(available)} are available"
+        )
+
+    samples = list(available)
+    random.Random(resolved_seed).shuffle(samples)
+    samples = samples[:resolved_n]
     return samples, resolved_seed
 
 
@@ -116,7 +136,7 @@ def generate(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, resolved_seed = _resolve_samples(dataset_config, dataset.name, demo, n_samples, seed)
+    samples, resolved_seed = _resolve_samples(dataset_config, dataset, demo, n_samples, seed)
 
     click.echo(f"Sweeping variants {variant_list} of {model_config} on {dataset.name} ({len(samples)} samples)")
     for v in variant_list:
@@ -145,7 +165,7 @@ def score(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, _ = _resolve_samples(dataset_config, dataset.name, demo, n_samples, seed)
+    samples, _ = _resolve_samples(dataset_config, dataset, demo, n_samples, seed)
 
     for v in variant_list:
         adapter = build_model_adapter(model_config, variant=v)
@@ -176,7 +196,7 @@ def visualize(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, _ = _resolve_samples(dataset_config, dataset.name, demo, n_samples, seed)
+    samples, _ = _resolve_samples(dataset_config, dataset, demo, n_samples, seed)
 
     if sample_ids:
         wanted = {s.strip() for s in sample_ids.split(",") if s.strip()}

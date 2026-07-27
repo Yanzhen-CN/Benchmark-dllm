@@ -15,6 +15,7 @@ torch = pytest.importorskip("torch")
 
 from dllm_bench.models.dream import DreamAdapter
 from dllm_bench.models.hf_diffusion import DiffusionStepConfig
+from dllm_bench.interfaces import GenerationRequest
 
 MASK = 99
 
@@ -87,6 +88,24 @@ def test_dream_builds_trace_from_history_via_shared_snapshot_diff():
     assert trace[0].committed_positions == []  # both still masked
     assert trace[1].committed_positions == [0, 1]  # both resolved
     assert output_text == "<10><11>"
+
+
+@pytest.mark.parametrize(("configured_steps", "expected_steps"), [(1024, 32), (512, 16)])
+def test_dream_request_token_cap_scales_formal_step_schedule(configured_steps, expected_steps):
+    adapter = DreamAdapter(
+        "unused-checkpoint",
+        DiffusionStepConfig(gen_length=1024, steps=configured_steps, extra={"alg": "entropy"}),
+        config_name="test",
+    )
+    adapter._model = _FakeDreamModel()
+    adapter._tokenizer = _FakeTokenizer()
+    adapter._device = "cpu"
+
+    adapter._generate_core(GenerationRequest(prompt="prompt", max_new_tokens=32))
+
+    kwargs = adapter._model.last_call_kwargs
+    assert kwargs["max_new_tokens"] == 32
+    assert kwargs["steps"] == expected_steps
 
 
 def test_dream_uses_tokenizer_mask_token_id_when_present():

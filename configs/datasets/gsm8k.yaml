@@ -1,5 +1,7 @@
 # Section 1 (常规能力) + Section 6 sampling (100-200 samples/dataset).
 dataset: gsm8k
+# --no-demo downloads the official OpenAI test split at a pinned revision,
+# verifies its checksum, and uses the seed below for deterministic sampling.
 dataset_class: dllm_bench.datasets.gsm8k.GSM8KDataset
 primary_metric: accuracy
 aux_metrics: [valid_rate, complete_rate]

@@ -30,7 +30,7 @@ What's still open, and why:
 | W1 | Configuration only (`configs/models/w1.yaml`) | Project decision: W1 will be integrated against a custom/internal API later — no adapter code changes planned until then, just keep the config shape ready. |
 | HelloEval score | Heuristic fallback in `datasets/hellobench.py` | The real metric is an LLM-judge rubric. Pass `judge_fn` to `HelloBenchDataset` to use a real judge. |
 | RULER / StructEval-T / IFEval task banks | Synthetic/representative samples | No official task-bank files wired in; `ruler.build_niah_sample` and `runner/demo_samples.py` are placeholders. |
-| Real dataset loading (GSM8K, MBPP, ...) | Not implemented | `Dataset.load_samples` takes whatever `Sample` list you hand it; nothing downloads real data yet (this needs the server/network access the design doc's "服务器下载数据" step implies, not something this environment can do). `--demo` samples are hand-authored smoke-test fixtures, regenerated deterministically by every stage (no Sample persistence yet — see below). |
+| Real dataset loading | GSM8K implemented | `--no-demo` downloads the official OpenAI GSM8K test split at a pinned revision, verifies its SHA-256, and deterministically samples it. Real MBPP/StructEval-T/IFEval/Sudoku/RULER/HelloBench loaders remain pending. |
 | Batch experiment runner | Not implemented | Each CLI command runs one model-config/variant x dataset-config pair. `configs/experiments/full_matrix.yaml` documents the intended full matrix as a checklist for a future batch script. |
 | Running the real models end-to-end | Not done in this environment | No GPU / multi-GB checkpoint downloads here — the sampling loops themselves are ported/verified against reference code and algorithm-tested with fake logits (see table above), but nobody has run them against the actual weights yet. First real run should sanity-check output quality before trusting the pipeline's numbers. |
 
@@ -83,59 +83,64 @@ This just runs `pip install -e .[...]` against whatever Python you invoke it
 with — no virtualenv is created for you; activate one yourself first if you
 want isolation. A manual `pip install -e ".[dev,hf,gpu]"` works identically.
 
-### RunPod model-specific environments
+### Model scripts
 
-Use one command to create (on first use) and activate the environment matching
-the selected model. It must be sourced so the activation remains in the current
-shell:
+Every model has one public script with the same four actions:
 
-```bash
-source scripts/use_model_env.sh qwen3_4b
-```
+| Action | Purpose |
+| --- | --- |
+| `setup` | Create or update the model-specific virtualenv |
+| `check` | Validate dependencies and construct every configured adapter |
+| `prepare` | Download and load the checkpoint without generating samples |
+| `run` | Run generation, scoring, and the result table |
 
-Available model environments:
+Available entry points and environments:
 
-```bash
-source scripts/use_model_env.sh qwen3_4b  # .venv-qwen3-ar
-source scripts/use_model_env.sh illada    # .venv-illada
-source scripts/use_model_env.sh dream     # .venv-dream
-source scripts/use_model_env.sh dg        # .venv-dg
-source scripts/use_model_env.sh w1        # .venv-w1
-source scripts/use_model_env.sh mock      # .venv-mock
-```
+| Model | Script | Environment |
+| --- | --- | --- |
+| Qwen3-4B AR | `scripts/qwen3_4b.sh` | `.venv-qwen3-ar` |
+| iLLaDA | `scripts/illada.sh` | `.venv-illada` |
+| Dream | `scripts/dream.sh` | `.venv-dream` |
+| DiffusionGemma | `scripts/diffusiongemma.sh` | `.venv-diffusiongemma` |
+| W1 | `scripts/w1.sh` | `.venv-w1` |
+| Mock | `scripts/mock.sh` | `.venv-mock` |
 
-Each local-model env has its own tested or checkpoint-declared Torch/Transformers
-pins. W1 has a lightweight API-only env. To prepare every env without activating
-one, run `bash scripts/runpod_model_env.sh all`.
-
-CUDA 12.4 is the default wheel index. Override it when the selected Torch release
-provides the requested index; the setup script reports supported choices if the
-combination is unavailable:
+Example lifecycle:
 
 ```bash
-CUDA_INDEX=cu126 bash scripts/runpod_model_env.sh qwen3_4b
-CUDA_INDEX=cu121 bash scripts/runpod_model_env.sh dream
+bash scripts/qwen3_4b.sh setup
+bash scripts/qwen3_4b.sh check
+bash scripts/qwen3_4b.sh prepare
+bash scripts/qwen3_4b.sh run
 ```
 
-After activation, the generic pipeline command uses the active model. Its
-defaults run one GSM8K sample with 32 output tokens:
+`run` creates the environment automatically when it is missing and activates it
+inside the process; no manual `source` or `deactivate` is required. Its defaults
+use one built-in GSM8K demo sample, 32 output tokens, and seed 42. Override run
+settings with environment variables:
 
 ```bash
-python prepare_model.py --model-config "${DLLM_MODEL_CONFIG}"
-bash scripts/runpod_model_pipeline.sh
+DATA_SOURCE=demo N_SAMPLES=1 MAX_NEW_TOKENS=32 \
+  OUTPUT_ROOT=output/checks/qwen3-ar bash scripts/qwen3_4b.sh run
 ```
 
-For a full 150-sample AR run:
+CUDA 12.4 is the default package index. Override it during setup when supported:
 
 ```bash
-source scripts/use_model_env.sh qwen3_4b
-N_SAMPLES=150 MAX_NEW_TOKENS=512 OUTPUT_ROOT=output \
-  bash scripts/runpod_model_pipeline.sh
+CUDA_INDEX=cu126 bash scripts/qwen3_4b.sh setup
+CUDA_INDEX=cu121 bash scripts/dream.sh setup
 ```
 
-W1 additionally requires `W1_API_BASE_URL` and, when applicable, `W1_API_KEY`.
-The older `runpod_ar_env.sh` and `runpod_ar_smoke.sh` commands remain as Qwen
-aliases.
+For a full 150-sample AR run on the official GSM8K test split:
+
+```bash
+DATA_SOURCE=real N_SAMPLES=150 MAX_NEW_TOKENS=512 SEED=42 \
+  OUTPUT_ROOT=output/official-gsm8k/qwen3-ar bash scripts/qwen3_4b.sh run
+```
+
+Model weights, official datasets, and package wheels are shared through
+`.hf_cache/`, `.dataset_cache/`, and `.pip_cache/`. W1 additionally requires
+`W1_API_BASE_URL` and, when applicable, `W1_API_KEY`.
 
 ## Testing
 
@@ -195,11 +200,10 @@ dllm-bench report --output-root output --dataset gsm8k
 ```
 
 Pass `--variant best` to run just one, or `--variants best,fast` to name an
-explicit subset. `score`/`visualize` regenerate the same `--demo`/
-`--n-samples`/`--seed` sample list rather than reading it back off disk —
-pass matching flags to every stage of one run (real dataset loading will
-need to persist `Sample`s properly; today's `--demo` samples are cheap and
-deterministic enough that regenerating them is fine).
+explicit subset. `score`/`visualize` deterministically reconstruct the same
+sample list from `--demo`/`--no-demo`, `--n-samples`, and `--seed`; pass matching
+values to every stage. The official GSM8K loader uses stable source indices as
+sample IDs and a pinned source revision.
 
 Output lands under `output/` (override with `--output-root`), split by
 stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-best` and
@@ -224,7 +228,7 @@ To run the real AR baseline once `torch`/`transformers` are installed and
 ```bash
 dllm-bench generate --model-config configs/models/qwen3_4b.yaml \
                      --dataset-config configs/datasets/gsm8k.yaml \
-                     --demo --n-samples 5 --max-new-tokens 64
+                     --no-demo --seed 42 --n-samples 5 --max-new-tokens 512
 ```
 
 iLLaDA and DiffusionGemma work the same way (`configs/models/illada.yaml`,

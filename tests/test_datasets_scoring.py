@@ -1,7 +1,9 @@
+import json
+
 import pytest
 
 from dllm_bench.datasets.base import Sample
-from dllm_bench.datasets.gsm8k import GSM8KDataset, extract_final_number
+from dllm_bench.datasets.gsm8k import GSM8K_REVISION, GSM8KDataset, _load_official_test_samples, extract_final_number
 from dllm_bench.datasets.hellobench import HelloBenchDataset, HelloBenchReference, seq_rep_n
 from dllm_bench.datasets.ifeval import (
     IFEvalDataset,
@@ -58,6 +60,31 @@ def test_gsm8k_score_no_extractable_answer_is_invalid():
     result = ds.score(sample, "I have no idea what to compute here at all.")
     assert result.valid is False
     assert result.primary_score == 0.0
+
+
+def test_gsm8k_official_jsonl_loader_builds_stable_samples(tmp_path):
+    dataset_path = tmp_path / "test.jsonl"
+    rows = [
+        {
+            "question": f"Question {i}",
+            "answer": f"Reasoning for {i}.\n#### {i + 10}",
+        }
+        for i in range(1319)
+    ]
+    dataset_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+    samples = _load_official_test_samples(dataset_path)
+
+    assert len(samples) == 1319
+    assert samples[0].sample_id == "gsm8k-test-0000"
+    assert samples[-1].sample_id == "gsm8k-test-1318"
+    assert samples[0].prompt == "Question 0"
+    assert samples[0].reference == 10.0
+    assert samples[0].meta["source_revision"] == GSM8K_REVISION
+    assert samples[0].meta["gold_solution"] == "Reasoning for 0.\n#### 10"
 
 
 # ---------------------------------------------------------------------------

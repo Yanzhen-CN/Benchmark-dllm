@@ -14,6 +14,7 @@ per-request config overrides into a :class:`DiffusionStepConfig`.
 
 from __future__ import annotations
 
+import math
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -93,22 +94,28 @@ class HFDiffusionAdapter(BaseModelAdapter):
 
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         self._ensure_loaded()
-        # gen_length: request.config override > this adapter's configured
-        # step_config.gen_length > request.max_new_tokens. The last fallback
-        # matters for configs like illada.yaml's `best`/`fast` variants, which
-        # intentionally leave gen_length unset ("follows each task's own
-        # output length cap") — without it, `--max-new-tokens` on the CLI
-        # would silently have no effect on how much this adapter generates.
-        gen_length = (
+        # max_new_tokens is always a hard cap. Dream's formal 1024-token
+        # schedule is scaled down proportionally for shorter task/smoke runs;
+        # iLLaDA leaves gen_length unset and follows the request directly.
+        configured_gen_length = (
             request.config.get("gen_length")
             or self._step_config.gen_length
             or request.max_new_tokens
         )
+        gen_length = min(int(configured_gen_length), request.max_new_tokens)
+
+        steps = request.config.get("steps")
+        if steps is None:
+            steps = self._step_config.steps
+            base_gen_length = self._step_config.gen_length
+            if steps is not None and base_gen_length and gen_length < base_gen_length:
+                steps = max(1, math.ceil(steps * gen_length / base_gen_length))
+
         extra = dict(self._step_config.extra)
         extra.update(request.config.get("extra", {}))
         step_config = DiffusionStepConfig(
             gen_length=gen_length,
-            steps=request.config.get("steps", self._step_config.steps),
+            steps=steps,
             block_length=request.config.get("block_length", self._step_config.block_length),
             steps_per_block=request.config.get("steps_per_block", self._step_config.steps_per_block),
             extra=extra,
