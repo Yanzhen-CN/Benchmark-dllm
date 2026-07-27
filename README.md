@@ -354,6 +354,12 @@ duration, not the reported TPS/SPS/EPS windows. Energy defaults to the physical 
 mapped to CUDA logical device 0; set `DLLM_NVML_GPU_INDICES=0,1` explicitly
 for a future multi-GPU model.
 
+Compute profiling keeps the model's configured attention backend. For SDPA,
+the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in
+counter assumes equal Q/K/V head counts and asserts on Qwen3's grouped-query
+attention. This changes only FLOP accounting during the replay; it does not
+replace SDPA with eager attention or alter formal generation.
+
 Output run IDs append a variant only when it distinguishes configurations:
 Qwen writes under `model_output/qwen3_4b/`, while multi-configuration models
 use names such as `illada_best` and `illada_fast`. Local readers still accept
