@@ -11,17 +11,18 @@ def test_run_model_forces_generate_and_real_data(monkeypatch):
     assert run_model.main(["--dry-run", "-m", "illada"]) == 0
     assert captured[-2:] == ["--stage", "generate"]
     assert "--real-data" in captured
-    assert "--measure-compute" in captured
+    assert "--no-measure-compute" in captured
+    assert "--measure-compute" not in captured
     assert "--require-all-metrics" in captured
 
 
-def test_run_model_allows_explicit_compute_opt_out(monkeypatch):
+def test_run_model_allows_explicit_compute_opt_in(monkeypatch):
     captured = []
     monkeypatch.setattr(run_model.run_bench, "main", lambda argv: captured.extend(argv) or 0)
 
-    assert run_model.main(["--dry-run", "-m", "illada", "--no-measure-compute"]) == 0
-    assert "--no-measure-compute" in captured
-    assert "--measure-compute" not in captured
+    assert run_model.main(["--dry-run", "-m", "illada", "--measure-compute"]) == 0
+    assert "--measure-compute" in captured
+    assert "--no-measure-compute" not in captured
 
 
 def test_run_model_allows_explicit_missing_metrics_opt_out(monkeypatch):

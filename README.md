@@ -334,18 +334,17 @@ package in the existing venv. In particular, DreamReasoner uses
 the old 4.46.2 pin lacks `PretrainedConfig.validate_rope()` and cannot load the
 checkpoint.
 
-Formal `run_model.py` runs record timing, NVML energy, peak PyTorch VRAM,
-trace, and compute by default. Compute uses the design-approved separate FLOP
-profiling replay, so it increases total job duration but never contaminates
-the stored generation wall-clock/energy window. All formal generations for a
-dataset are completed first; compute replays run only afterward, so they are
-not interleaved between timed samples. Formal generation is persisted before
-its replay, allowing a failed profiler to resume and fill only missing compute
-without rerunning the model output. Formal runs also enable
-`--require-all-metrics`: missing generation metrics fail before persistence,
-while missing compute fails the run after retaining that resumable generation.
-Use `--no-measure-compute` together
-with `--allow-missing-metrics` only for an explicitly non-formal smoke run.
+Formal `run_model.py` runs record timing, NVML energy, peak PyTorch VRAM, and
+trace by default. FLOP/compute profiling is not part of the formal full-matrix
+run because it replays generation and substantially increases GPU time; enable
+it explicitly with `--measure-compute` only for a separate diagnostic run.
+When enabled, all formal generations for a dataset finish first and compute
+replays run afterward, outside the stored generation wall-clock/energy window.
+Formal generation is persisted before replay, so a failed profiler can resume
+and fill only missing compute without rerunning the model output. Formal runs
+also enable `--require-all-metrics`; it requires compute only when
+`--measure-compute` was explicitly selected. Use `--allow-missing-metrics`
+only for an explicitly non-formal smoke run.
 Before the first measured sample
 of each model/config/dataset, an 8-token untimed warmup initializes kernels;
 tokenization, model loading, warmup, progress output, and persistence stay
@@ -358,7 +357,7 @@ duration, not the reported TPS/SPS/EPS windows. Energy defaults to the physical 
 mapped to CUDA logical device 0; set `DLLM_NVML_GPU_INDICES=0,1` explicitly
 for a future multi-GPU model.
 
-Compute profiling keeps the model's configured attention backend. For SDPA,
+Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in
 counter assumes equal Q/K/V head counts and asserts on Qwen3's grouped-query
 attention. This changes only FLOP accounting during the replay; it does not
@@ -415,7 +414,8 @@ SPS is computed as `completed timed samples / total measured generation time`,
 equivalently `1 / mean seconds per sample`; it is a ratio of totals, not the
 mean of per-sample inverse latencies. This also exposes useful per-sample
 totals without another run: `TPS / SPS` is tokens/sample, `EPS / SPS` is
-joules/sample, `CPS / SPS` is TFLOPs/sample, and `1 / SPS` is seconds/sample.
+joules/sample, and `1 / SPS` is seconds/sample. If optional compute profiling
+was run, `CPS / SPS` additionally gives TFLOPs/sample.
 
 Output lands under `output/` (override with `--output-root`), split by
 stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-best` and

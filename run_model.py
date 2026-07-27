@@ -18,8 +18,11 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("run_model.py always runs the generate stage; remove --stage")
     if "--demo" not in arguments and "--real-data" not in arguments:
         arguments.append("--real-data")
+    # FLOP profiling replays generation and can roughly double the GPU work.
+    # Keep formal runs focused on directly measured runtime/resource metrics;
+    # compute remains available as an explicit diagnostic opt-in.
     if "--measure-compute" not in arguments and "--no-measure-compute" not in arguments:
-        arguments.append("--measure-compute")
+        arguments.append("--no-measure-compute")
     if "--require-all-metrics" not in arguments and "--allow-missing-metrics" not in arguments:
         arguments.append("--require-all-metrics")
     return run_bench.main([*arguments, "--stage", "generate"])
