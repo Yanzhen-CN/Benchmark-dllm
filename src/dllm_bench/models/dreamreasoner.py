@@ -132,7 +132,12 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             # AutoModel for the same class, but this adapter doesn't rely on
             # that alias).
             tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
-            model = AutoModelForCausalLM.from_pretrained(self._model_name, trust_remote_code=True)
+            model = AutoModelForCausalLM.from_pretrained(
+                self._model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+            )
             model.to(device)
             model.eval()
             return tokenizer, model

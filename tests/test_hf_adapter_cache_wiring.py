@@ -10,9 +10,11 @@ from __future__ import annotations
 import pytest
 
 transformers = pytest.importorskip("transformers")
+torch = pytest.importorskip("torch")
 
 from dllm_bench.models import model_cache
 from dllm_bench.models.diffusiongemma import DiffusionGemmaAdapter
+from dllm_bench.models.dreamreasoner import DreamReasonerAdapter
 from dllm_bench.models.hf_ar import QwenARAdapter
 from dllm_bench.models.hf_diffusion import DiffusionStepConfig
 from dllm_bench.models.illada import IlladaAdapter
@@ -35,7 +37,7 @@ class _FakeHFModel:
 
 def _install_counting_fakes(monkeypatch, *auto_classes, tokenizer_class=None):
     tokenizer_calls = {"n": 0}
-    model_calls = {"n": 0}
+    model_calls = {"n": 0, "kwargs": []}
 
     def fake_tokenizer_from_pretrained(name, *args, **kwargs):
         tokenizer_calls["n"] += 1
@@ -43,6 +45,7 @@ def _install_counting_fakes(monkeypatch, *auto_classes, tokenizer_class=None):
 
     def fake_model_from_pretrained(name, *args, **kwargs):
         model_calls["n"] += 1
+        model_calls["kwargs"].append(kwargs)
         return _FakeHFModel()
 
     monkeypatch.setattr(
@@ -74,6 +77,11 @@ def test_illada_best_and_fast_share_one_load(monkeypatch):
     assert tokenizer_calls["n"] == 1
     assert best._model is fast._model
     assert best._tokenizer is fast._tokenizer
+    assert model_calls["kwargs"] == [{
+        "trust_remote_code": True,
+        "torch_dtype": torch.bfloat16,
+        "low_cpu_mem_usage": True,
+    }]
     # each keeps its own step_config despite sharing the loaded model
     assert best._step_config.steps_per_block == 32
     assert fast._step_config.steps_per_block == 16
@@ -90,6 +98,25 @@ def test_illada_different_checkpoints_load_independently(monkeypatch):
 
     assert model_calls["n"] == 2
     assert a._model is not b._model
+
+
+def test_dreamreasoner_loads_in_checkpoint_native_bfloat16(monkeypatch):
+    _, model_calls = _install_counting_fakes(
+        monkeypatch, transformers.AutoModelForCausalLM
+    )
+    adapter = DreamReasonerAdapter(
+        "dreamreasoner-checkpoint",
+        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
+        config_name="best",
+    )
+
+    adapter._ensure_loaded()
+
+    assert model_calls["kwargs"] == [{
+        "trust_remote_code": True,
+        "torch_dtype": torch.bfloat16,
+        "low_cpu_mem_usage": True,
+    }]
 
 
 def test_qwen_ar_adapter_uses_shared_cache(monkeypatch):

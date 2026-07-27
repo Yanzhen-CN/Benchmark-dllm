@@ -18,6 +18,9 @@
 # (models/hf_diffusion.py) — confirmed needed, not a plain PreTrainedModel.
 model: illada
 max_context_tokens: 8192
+# Formal inference uses the checkpoint-native BF16 specified by the official
+# model card. This is not quantization; the adapter applies the dtype during
+# from_pretrained so the model never expands to default precision on CUDA.
 configs:
   best:
     # block_length=32, steps_per_block=32 (1 token/step), corresponds to

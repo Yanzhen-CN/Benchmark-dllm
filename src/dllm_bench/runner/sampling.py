@@ -63,6 +63,9 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
     checkpoint = getattr(adapter, "_model_name", None)
     if checkpoint:
         metadata["checkpoint"] = checkpoint
+    inference_dtype = getattr(adapter, "_inference_dtype", None)
+    if inference_dtype:
+        metadata["inference_dtype"] = inference_dtype
 
     git_commit = _get_git_commit()
     if git_commit:

@@ -65,6 +65,7 @@ class HFDiffusionAdapter(BaseModelAdapter):
         self._model_name = model_name_or_path
         self._step_config = step_config
         self._device = device
+        self._inference_dtype = "bfloat16"
         self._model = None
         self._tokenizer = None
 
@@ -84,7 +85,15 @@ class HFDiffusionAdapter(BaseModelAdapter):
             # overrides `_ensure_loaded` entirely (AutoModelForCausalLM
             # instead — see dreamreasoner.py), so this body never runs for it.
             tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
-            model = AutoModel.from_pretrained(self._model_name, trust_remote_code=True)
+            # iLLaDA is released as BF16 and its official model card requires
+            # this dtype. Omitting it constructs an unnecessarily large
+            # default-precision model that does not fit on a 24 GiB GPU.
+            model = AutoModel.from_pretrained(
+                self._model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+            )
             model.to(device)
             model.eval()
             return tokenizer, model

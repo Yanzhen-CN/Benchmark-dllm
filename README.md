@@ -363,6 +363,12 @@ duration, not the reported TPS/SPS/EPS windows. Energy defaults to the physical 
 mapped to CUDA logical device 0; set `DLLM_NVML_GPU_INDICES=0,1` explicitly
 for a future multi-GPU model.
 
+iLLaDA and DreamReasoner are loaded in checkpoint-native BF16 precision. The
+dtype is applied inside `from_pretrained` before the model moves to CUDA, so
+the 8B-class checkpoints do not transiently become default-precision models
+that exhaust a 24 GiB device. `inference_dtype` is persisted in each run's
+`_meta.json` for reproducibility.
+
 Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in
 counter assumes equal Q/K/V head counts and asserts on Qwen3's grouped-query
