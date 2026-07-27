@@ -69,7 +69,7 @@ src/dllm_bench/
                      # entry point), token_grid_viz.py + trace_distribution_viz.py
                      # (trace visuals), sudoku_trace_viz.py (Sudoku's extra GIF)
   cli.py            # `dllm-bench generate/score/visualize/report/matrix`
-tests/              # one file per module area, 256 passing + 8 optional skips
+tests/              # one file per module area, 257 passing + 8 optional skips
 ```
 
 ## Main entry point
@@ -103,15 +103,17 @@ runs should declare `samples_file` for every dataset and use `--real-data`.
 
 ```bash
 python setup_venv.py                   # every model declared in the matrix
-python setup_venv.py -m illada         # only .venv-illada
-python setup_venv.py -m dreamreasoner  # only .venv-dreamreasoner
-python setup_venv.py -m diffusiongemma # only .venv-diffusiongemma
+python setup_venv.py -m illada         # only .venvs/illada
+python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
+python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
 ```
 
 `setup_venv.py` is only a dispatcher. It calls
 `venv_scripts/<model>.py setup`, and each Python script creates its own venv
 with model-specific torch/transformers pins. No model packages are installed
-into the Python running `setup_venv.py`.
+into the Python running `setup_venv.py`. Model environments are grouped under
+the single `.venvs/` directory; the root `.venv/` remains the development and
+test environment.
 
 ### Model scripts
 
@@ -128,12 +130,12 @@ Available entry points and environments:
 
 | Model | Script | Environment |
 | --- | --- | --- |
-| Qwen3-4B AR | `venv_scripts/qwen3_4b.py` | `.venv-qwen3_4b` |
-| iLLaDA | `venv_scripts/illada.py` | `.venv-illada` |
-| DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venv-dreamreasoner` |
-| DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venv-diffusiongemma` |
-| W1 | `venv_scripts/w1.py` | `.venv-w1` |
-| Mock | `venv_scripts/mock.py` | `.venv-mock` |
+| Qwen3-4B AR | `venv_scripts/qwen3_4b.py` | `.venvs/qwen3_4b` |
+| iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
+| DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
+| DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
+| W1 | `venv_scripts/w1.py` | `.venvs/w1` |
+| Mock | `venv_scripts/mock.py` | `.venvs/mock` |
 
 Example lifecycle:
 

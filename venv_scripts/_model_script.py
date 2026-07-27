@@ -18,7 +18,7 @@ CUDA_INDEXES = ("cu118", "cu121", "cu124", "cu126")
 @dataclass(frozen=True)
 class ModelProfile:
     model_id: str
-    venv_name: str
+    venv_subdir: str
     model_config: str
     extras: str
     torch_version: str | None = None
@@ -28,29 +28,33 @@ class ModelProfile:
 
 PROFILES: Mapping[str, ModelProfile] = {
     "qwen3_4b": ModelProfile(
-        "qwen3_4b", ".venv-qwen3_4b", "configs/models/qwen3_4b.yaml",
+        "qwen3_4b", "qwen3_4b", "configs/models/qwen3_4b.yaml",
         "dev,hf,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
     ),
     "illada": ModelProfile(
-        "illada", ".venv-illada", "configs/models/illada.yaml",
+        "illada", "illada", "configs/models/illada.yaml",
         "dev,hf,gpu", "2.6.0", "4.57.1", ("cu118", "cu124", "cu126"),
     ),
     "dreamreasoner": ModelProfile(
-        "dreamreasoner", ".venv-dreamreasoner", "configs/models/dreamreasoner.yaml",
+        "dreamreasoner", "dreamreasoner", "configs/models/dreamreasoner.yaml",
         "dev,hf,gpu", "2.5.1", "4.46.2", ("cu118", "cu121", "cu124"),
     ),
     "diffusiongemma": ModelProfile(
-        "diffusiongemma", ".venv-diffusiongemma", "configs/models/diffusiongemma.yaml",
+        "diffusiongemma", "diffusiongemma", "configs/models/diffusiongemma.yaml",
         "dev,diffusiongemma,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
     ),
-    "w1": ModelProfile("w1", ".venv-w1", "configs/models/w1.yaml", "dev,api"),
-    "mock": ModelProfile("mock", ".venv-mock", "configs/models/mock.yaml", "dev"),
+    "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
+    "mock": ModelProfile("mock", "mock", "configs/models/mock.yaml", "dev"),
 }
 
 
 def venv_dir(profile: ModelProfile) -> Path:
     override = os.environ.get("DLLM_VENV_DIR")
-    return Path(override).expanduser().resolve() if override else REPO_ROOT / profile.venv_name
+    return (
+        Path(override).expanduser().resolve()
+        if override
+        else REPO_ROOT / ".venvs" / profile.venv_subdir
+    )
 
 
 def venv_python(directory: Path) -> Path:

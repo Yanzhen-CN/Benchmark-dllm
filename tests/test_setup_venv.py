@@ -29,3 +29,9 @@ def test_model_run_uses_the_model_venv_python(monkeypatch):
     assert _model_script.main("illada", ["run"]) == 0
     assert commands[0][0] == model_python
     assert commands[0][1:4] == ["-m", "dllm_bench.cli", "matrix"]
+
+
+def test_model_venvs_share_one_parent_directory(monkeypatch):
+    monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
+    profile = _model_script.PROFILES["illada"]
+    assert _model_script.venv_dir(profile) == _model_script.REPO_ROOT / ".venvs" / "illada"
