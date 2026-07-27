@@ -5,10 +5,12 @@ __pycache__/
 build/
 dist/
 .venv/
+.venv-*/
 venv/
 
 # generate/score/visualize pipeline output (model_output/score_output/visualization_output)
 output/
+.tmp_*/
 *.png
 *.gif
 

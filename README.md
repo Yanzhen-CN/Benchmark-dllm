@@ -83,6 +83,60 @@ This just runs `pip install -e .[...]` against whatever Python you invoke it
 with — no virtualenv is created for you; activate one yourself first if you
 want isolation. A manual `pip install -e ".[dev,hf,gpu]"` works identically.
 
+### RunPod model-specific environments
+
+Use one command to create (on first use) and activate the environment matching
+the selected model. It must be sourced so the activation remains in the current
+shell:
+
+```bash
+source scripts/use_model_env.sh qwen3_4b
+```
+
+Available model environments:
+
+```bash
+source scripts/use_model_env.sh qwen3_4b  # .venv-qwen3-ar
+source scripts/use_model_env.sh illada    # .venv-illada
+source scripts/use_model_env.sh dream     # .venv-dream
+source scripts/use_model_env.sh dg        # .venv-dg
+source scripts/use_model_env.sh w1        # .venv-w1
+source scripts/use_model_env.sh mock      # .venv-mock
+```
+
+Each local-model env has its own tested or checkpoint-declared Torch/Transformers
+pins. W1 has a lightweight API-only env. To prepare every env without activating
+one, run `bash scripts/runpod_model_env.sh all`.
+
+CUDA 12.4 is the default wheel index. Override it when the selected Torch release
+provides the requested index; the setup script reports supported choices if the
+combination is unavailable:
+
+```bash
+CUDA_INDEX=cu126 bash scripts/runpod_model_env.sh qwen3_4b
+CUDA_INDEX=cu121 bash scripts/runpod_model_env.sh dream
+```
+
+After activation, the generic pipeline command uses the active model. Its
+defaults run one GSM8K sample with 32 output tokens:
+
+```bash
+python prepare_model.py --model-config "${DLLM_MODEL_CONFIG}"
+bash scripts/runpod_model_pipeline.sh
+```
+
+For a full 150-sample AR run:
+
+```bash
+source scripts/use_model_env.sh qwen3_4b
+N_SAMPLES=150 MAX_NEW_TOKENS=512 OUTPUT_ROOT=output \
+  bash scripts/runpod_model_pipeline.sh
+```
+
+W1 additionally requires `W1_API_BASE_URL` and, when applicable, `W1_API_KEY`.
+The older `runpod_ar_env.sh` and `runpod_ar_smoke.sh` commands remain as Qwen
+aliases.
+
 ## Testing
 
 ```bash
