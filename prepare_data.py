@@ -9,6 +9,14 @@ validation, normalization, and generated-data work out of the run startup.
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from dllm_bench.runner.data_preparation import DataPreparationError, prepare_matrix_datasets
 
@@ -17,7 +25,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--experiment-config",
-        default="configs/experiments/full_matrix.yaml",
+        default=str(PROJECT_ROOT / "configs" / "experiments" / "full_matrix.yaml"),
     )
     parser.add_argument("--force", action="store_true", help="Rebuild matching cached artifacts")
     args = parser.parse_args()

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -17,6 +20,7 @@ from dllm_bench.runner.data_preparation import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GSM8K_CONFIG = REPO_ROOT / "configs" / "datasets" / "gsm8k.yaml"
 FULL_MATRIX_CONFIG = REPO_ROOT / "configs" / "experiments" / "full_matrix.yaml"
+PREPARE_SCRIPT = REPO_ROOT / "prepare_data.py"
 
 
 class _PreparedMatrixStub(Dataset):
@@ -100,3 +104,18 @@ def test_full_matrix_prepare_visits_all_six_datasets(tmp_path, monkeypatch):
     assert all(item.sample_count == 1 and item.prepared_now for item in first)
     assert all(not item.prepared_now for item in second)
     assert all(item.samples_path.is_file() and item.manifest_path.is_file() for item in first)
+
+
+def test_prepare_data_script_bootstraps_src_path_outside_repository(tmp_path):
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, str(PREPARE_SCRIPT), "--help"],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--experiment-config" in result.stdout
