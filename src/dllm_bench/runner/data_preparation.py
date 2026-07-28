@@ -12,6 +12,7 @@ import hashlib
 import inspect
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -102,6 +103,23 @@ def _write_samples(samples: list[Sample], path: Path) -> None:
             partial.unlink()
 
 
+def _prune_old_prepared_artifacts(dataset_root: Path, keep_dir: Path) -> None:
+    """Keep only the active fingerprint under one dataset's prepared root."""
+    dataset_root = dataset_root.resolve()
+    keep_dir = keep_dir.resolve()
+    if keep_dir.parent != dataset_root:
+        raise DataPreparationError(
+            f"refusing to prune prepared data outside {dataset_root}: {keep_dir}"
+        )
+    if not dataset_root.is_dir():
+        return
+    for candidate in dataset_root.iterdir():
+        if candidate.resolve() == keep_dir:
+            continue
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+
+
 def prepare_dataset(
     dataset_config: str | Path,
     *,
@@ -112,14 +130,16 @@ def prepare_dataset(
     dataset_config = Path(dataset_config).resolve()
     dataset = dataset or build_dataset(dataset_config)
     fingerprint = preparation_fingerprint(dataset_config, dataset, samples_file)
-    prepared_dir = (
-        ensure_data_layout()["datasets"] / "prepared" / dataset.name / fingerprint
+    dataset_prepared_root = (
+        ensure_data_layout()["datasets"] / "prepared" / dataset.name
     )
+    prepared_dir = dataset_prepared_root / fingerprint
     samples_path = prepared_dir / "samples.jsonl"
     manifest_path = prepared_dir / "manifest.json"
 
     if not force and samples_path.is_file() and manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        _prune_old_prepared_artifacts(dataset_prepared_root, prepared_dir)
         return PreparedDataset(
             dataset.name, samples_path, manifest_path,
             int(manifest["sample_count"]), False,
@@ -153,6 +173,7 @@ def prepare_dataset(
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    _prune_old_prepared_artifacts(dataset_prepared_root, prepared_dir)
     return PreparedDataset(
         dataset.name, samples_path, manifest_path, len(samples), True
     )

@@ -72,6 +72,27 @@ def test_prepare_dataset_writes_and_reuses_normalized_cache(tmp_path, monkeypatc
     ]
 
 
+def test_prepare_dataset_prunes_old_fingerprint_after_success(tmp_path, monkeypatch):
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
+    source = tmp_path / "gsm8k.jsonl"
+    _write_gsm8k_source(source)
+    first = prepare_dataset(GSM8K_CONFIG, samples_file=source)
+    old_dir = first.samples_path.parent
+
+    source.write_text(
+        source.read_text(encoding="utf-8")
+        + json.dumps({"sample_id": "new", "prompt": "new", "reference": 1})
+        + "\n",
+        encoding="utf-8",
+    )
+    second = prepare_dataset(GSM8K_CONFIG, samples_file=source)
+
+    assert second.samples_path.parent != old_dir
+    assert second.samples_path.is_file()
+    assert not old_dir.exists()
+    assert source.is_file()
+
+
 def test_prepare_data_cli_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
     source = tmp_path / "gsm8k.jsonl"

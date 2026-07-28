@@ -348,6 +348,10 @@ python prepare_data.py -d sudoku ruler
 python prepare_data.py --force  # rebuild matching prepared artifacts
 ```
 
+After a dataset is prepared successfully, only its active fingerprint directory
+is retained under `data/datasets/prepared/<dataset>/`; older prepared versions
+are removed automatically. Raw downloads and model caches are not removed.
+
 The first command automatically creates the lightweight `.venvs/root`
 environment when missing, installs only the base project dependencies there,
 and restarts itself inside that environment. It does not modify the system
