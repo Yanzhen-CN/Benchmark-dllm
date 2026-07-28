@@ -251,10 +251,11 @@ The default diagnostic suite uses 100 samples for each regular-capability
 dataset. Sudoku is stratified 50 easy / 50 hard. It uses the Park split from
 Ye et al. (ICLR 2025): rows 100000--100999 are the test split and each source
 puzzle is an 81-digit sequence (`0` = blank). Unlike Ye et al.'s task-specific
-models, the evaluated checkpoint receives one fixed instruction requiring only
-the continuous 81-digit solution, with no reasoning, label, spaces, or
-separators. Scoring deliberately remains tolerant: it extracts the final
-complete 81-digit answer or 9-row grid despite incidental wrapper text, then
+models, the evaluated checkpoint receives the puzzle as nine explicit 9-cell
+rows (`0` = blank), avoiding error-prone self-segmentation of a raw 81-digit
+input. It must end with `FINAL ANSWER: <81-digit solution>` and leave no zeros.
+Scoring deliberately remains tolerant: it prefers the marked answer and falls
+back to the final complete 81-digit answer or 9-row grid, then
 checks that the grid preserves every clue and satisfies all row, column, and box
 constraints. Strict direct-format compliance, reference exact match, blank-cell
 accuracy, given preservation, completion, and conflict rate are auxiliary

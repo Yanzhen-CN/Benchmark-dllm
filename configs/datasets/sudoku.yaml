@@ -26,10 +26,11 @@ dataset_kwargs:
   hard_count: 50
   seed: 42
 # Park data split used by Ye et al.: 81-digit puzzle (0 = blank) and reference
-# solution. The prompt requires only the continuous 81 solution digits, with no
-# reasoning, label, spaces, or separators. The primary score requires this exact
-# output format, but the scorer tolerantly extracts the final 81 digits or 9-row
-# grid before verifying all clues and Sudoku constraints. Strict direct-format
+# solution. The prompt displays the puzzle as nine explicit 9-cell rows so the
+# model does not have to split a raw 81-digit input itself, and requires a final
+# ``FINAL ANSWER: <81 digits>`` line with no zeros. The scorer tolerantly extracts
+# the marked answer (or the last complete 81 digits / 9-row grid as fallback)
+# before verifying all clues and Sudoku constraints. Strict direct-format
 # compliance, reference exact match, and blank-cell partial credit remain
 # audit/diagnostic metrics.
 # Rows 100000..100999 are the test split. Easy/Hard is our

@@ -33,15 +33,17 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
-SUDOKU_PROTOCOL_REVISION = "direct-prompt-tolerant-parser-v1"
+SUDOKU_PROTOCOL_REVISION = "grid-prompt-final-answer-v1"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
 SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
 SUDOKU_TRAIN_ROWS = 100_000
 SUDOKU_TEST_ROWS = 1_000
-SUDOKU_MAX_NEW_TOKENS = 128
+SUDOKU_MAX_NEW_TOKENS = 512
 
-_FINAL_ANSWER_MARKER_RE = re.compile(r"(?im)^\s*####\s*")
+_FINAL_ANSWER_MARKER_RE = re.compile(
+    r"(?im)^\s*(?:####|final\s+answer\s*:)\s*"
+)
 _COMPACT_SOLUTION_RE = re.compile(r"(?<![0-9])([1-9]{81})(?![0-9])")
 
 
@@ -364,13 +366,19 @@ def _grid_to_digits(grid: Grid) -> str:
 
 
 def _build_prompt(puzzle_digits: str) -> str:
+    rows = [
+        " ".join(puzzle_digits[row * 9 : (row + 1) * 9])
+        for row in range(9)
+    ]
     return (
-        "Directly solve the following 9x9 Sudoku puzzle. The puzzle is given "
-        "as an 81-digit row-major string, where 0 represents a blank cell. "
-        "Return only the completed 81-digit row-major solution using digits "
-        "1-9, with no spaces, separators, answer label, or explanation.\n"
-        f"Puzzle: {puzzle_digits}\n"
-        "Answer:"
+        "Solve the following 9x9 Sudoku puzzle. Each displayed row contains "
+        "exactly 9 cells, and 0 represents a blank cell. Fill every blank.\n"
+        "Puzzle:\n"
+        + "\n".join(rows)
+        + "\nReturn the completed grid as one row-major 81-digit string using "
+        "digits 1-9 only. Do not leave any 0 in the solution. End your response "
+        "with exactly one final line in this form:\n"
+        "FINAL ANSWER: <81 digits with no spaces or separators>"
     )
 
 
@@ -526,7 +534,7 @@ def _load_official_test_samples(
                             "source_index": train_rows + test_index,
                             "official_split": "test",
                             "source_input_format": "81_digits_zero_is_blank",
-                            "prompt_protocol": "direct_81_solution_digits_only",
+                            "prompt_protocol": "nine_row_grid_then_final_answer_marker",
                             "official_output_format": "81_solution_digits",
                             "max_new_tokens": SUDOKU_MAX_NEW_TOKENS,
                             "difficulty_rule": "naked_single_rounds_le_5_vs_ge_6",

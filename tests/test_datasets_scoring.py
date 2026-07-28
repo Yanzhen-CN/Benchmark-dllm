@@ -462,11 +462,11 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
         _build_prompt(easy),
         _build_prompt(hard),
     ]
-    assert all("Return only the completed 81-digit" in sample.prompt for sample in samples)
-    assert all(sample.prompt.endswith("\nAnswer:") for sample in samples)
+    assert all("Each displayed row contains exactly 9 cells" in sample.prompt for sample in samples)
+    assert all("FINAL ANSWER: <81 digits" in sample.prompt for sample in samples)
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
-    assert all(sample.meta["max_new_tokens"] == 128 for sample in samples)
+    assert all(sample.meta["max_new_tokens"] == 512 for sample in samples)
 
 
 def test_sudoku_preparation_freezes_fifty_easy_and_fifty_hard():
