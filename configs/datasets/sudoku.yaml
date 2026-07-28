@@ -27,12 +27,15 @@ dataset_kwargs:
   seed: 42
 # Park data split used by Ye et al.: 81-digit puzzle (0 = blank) and reference
 # solution. The prompt displays the puzzle as nine explicit 9-cell rows so the
-# model does not have to split a raw 81-digit input itself, and requires a final
-# ``FINAL ANSWER: <81 digits>`` line with no zeros. The scorer tolerantly extracts
-# the marked answer (or the last complete 81 digits / 9-row grid as fallback)
+# model does not have to split a raw 81-digit input itself, and requires the
+# entire response to be exactly one 81-digit solution with no zeros. The scorer
+# still tolerantly extracts a marked answer (or the last complete 81 digits /
+# 9-row grid as fallback)
 # before verifying all clues and Sudoku constraints. Strict direct-format
 # compliance, reference exact match, and blank-cell partial credit remain
 # audit/diagnostic metrics.
+# Formal samples use a 96-token output slot: enough for 81 digits and aligned
+# to the dLLMs' 32-token blocks, without inviting a fixed 512-token essay.
 # Rows 100000..100999 are the test split. Easy/Hard is our
 # reporting-only stratum: <=5 versus >=6 synchronous naked-single rounds.
 # Preparation freezes the selected formal 50/50 subset for every model.

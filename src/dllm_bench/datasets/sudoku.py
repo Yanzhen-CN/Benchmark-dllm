@@ -33,13 +33,16 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
-SUDOKU_PROTOCOL_REVISION = "grid-prompt-final-answer-v1"
+SUDOKU_PROTOCOL_REVISION = "grid-prompt-direct-answer-v2"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
 SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
 SUDOKU_TRAIN_ROWS = 100_000
 SUDOKU_TEST_ROWS = 1_000
-SUDOKU_MAX_NEW_TOKENS = 512
+# The expected answer is exactly 81 ASCII digits. A 96-token slot leaves
+# tokenizer headroom while staying aligned to the diffusion models' 32-token
+# blocks; a 512-token slot encouraged fixed-length dLLMs to produce essays.
+SUDOKU_MAX_NEW_TOKENS = 96
 
 _FINAL_ANSWER_MARKER_RE = re.compile(
     r"(?im)^\s*(?:####|final\s+answer\s*:)\s*"
@@ -233,6 +236,7 @@ class SudokuDataset(Dataset):
             "formal_easy_count": self._easy_count,
             "formal_hard_count": self._hard_count,
             "formal_subset_seed": self._seed,
+            "max_new_tokens": SUDOKU_MAX_NEW_TOKENS,
         }
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
@@ -375,10 +379,12 @@ def _build_prompt(puzzle_digits: str) -> str:
         "exactly 9 cells, and 0 represents a blank cell. Fill every blank.\n"
         "Puzzle:\n"
         + "\n".join(rows)
-        + "\nReturn the completed grid as one row-major 81-digit string using "
-        "digits 1-9 only. Do not leave any 0 in the solution. End your response "
-        "with exactly one final line in this form:\n"
-        "FINAL ANSWER: <81 digits with no spaces or separators>"
+        + "\n\nDirectly return the 81 numbers answer. Return ONLY the completed "
+        "grid as one row-major 81-digit string. "
+        "Your entire response must contain exactly 81 digits (1-9), with no "
+        "spaces, separators, labels, explanation, reasoning, or other text. "
+        "Do not leave any 0.\n"
+        "Answer (81 digits only):"
     )
 
 

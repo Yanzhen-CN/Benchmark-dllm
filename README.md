@@ -253,7 +253,10 @@ Ye et al. (ICLR 2025): rows 100000--100999 are the test split and each source
 puzzle is an 81-digit sequence (`0` = blank). Unlike Ye et al.'s task-specific
 models, the evaluated checkpoint receives the puzzle as nine explicit 9-cell
 rows (`0` = blank), avoiding error-prone self-segmentation of a raw 81-digit
-input. It must end with `FINAL ANSWER: <81-digit solution>` and leave no zeros.
+input. Its entire response must be only the row-major 81-digit solution and
+leave no zeros; reasoning, labels, spaces, and separators are forbidden.
+Formal samples reserve 96 output tokens, providing tokenizer headroom for the
+81 digits while remaining aligned to the dLLMs' 32-token generation blocks.
 Scoring deliberately remains tolerant: it prefers the marked answer and falls
 back to the final complete 81-digit answer or 9-row grid, then
 checks that the grid preserves every clue and satisfies all row, column, and box

@@ -92,7 +92,14 @@ def _sudoku_samples(n: int) -> list[Sample]:
         samples.append(
             Sample(
                 sample_id=f"sudoku-demo-{i}",
-                prompt=f"Solve this Sudoku puzzle (0 = blank):\n{text}",
+                prompt=(
+                    f"Solve this Sudoku puzzle (0 = blank):\n{text}\n\n"
+                    "Directly return the 81 numbers answer. Return ONLY the "
+                    "completed grid as one row-major 81-digit string. Your "
+                    "entire response must contain exactly 81 digits "
+                    "(1-9), with no spaces, labels, explanation, reasoning, or "
+                    "other text.\nAnswer (81 digits only):"
+                ),
                 reference=SudokuReference(puzzle=puzzle, solution=_EASY_SUDOKU_SOLUTION),
             )
         )
