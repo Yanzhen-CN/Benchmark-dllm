@@ -243,6 +243,106 @@ def test_no_demo_auto_prepares_missing_real_dataset_cache(tmp_path, monkeypatch)
     assert "Prepared 1 mbpp samples" in result.output
 
 
+def test_matrix_survives_a_genuine_oom_in_one_job_and_runs_remaining_jobs(tmp_path, monkeypatch):
+    """A model's own worst-case sample (e.g. DreamReasoner's untimed RULER
+    warmup) can hit a capacity OOM that survives every CPU-offload escalation
+    (see `models/base.py`'s `_recover_from_oom` / `warmup_generation`, which
+    deliberately re-raises once recovery is exhausted). `matrix_command`
+    must record that as a per-job finding and still run every other queued
+    job (e.g. HelloBench right after RULER) rather than aborting the whole
+    invocation."""
+    runner = CliRunner()
+    output_root = tmp_path / "output"
+    model_config = CONFIGS_DIR / "models" / "mock.yaml"
+    gsm8k_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
+    mbpp_config = CONFIGS_DIR / "datasets" / "mbpp.yaml"
+
+    experiment_config = tmp_path / "experiment.yaml"
+    experiment_config.write_text(
+        "seed: 42\n"
+        "models:\n"
+        f"  - name: mock\n    config: {model_config}\n    variants: [default]\n"
+        "datasets:\n"
+        f"  - config: {gsm8k_config}\n    max_new_tokens: 16\n"
+        f"  - config: {mbpp_config}\n    max_new_tokens: 16\n"
+    )
+
+    calls = []
+    real_generate = cli_module.generate.callback
+
+    def fake_generate(**kwargs):
+        calls.append(kwargs["dataset_config"])
+        if kwargs["dataset_config"] == str(gsm8k_config):
+            raise RuntimeError("CUDA out of memory. Tried to allocate 1.16 GiB")
+        return real_generate(**kwargs)
+
+    monkeypatch.setattr(cli_module, "generate", fake_generate)
+
+    result = runner.invoke(
+        main,
+        [
+            "matrix",
+            "--experiment-config", str(experiment_config),
+            "--model", "mock",
+            "--stage", "generate",
+            "--demo", "--n-samples", "3",
+            "--output-root", str(output_root),
+        ],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [str(gsm8k_config), str(mbpp_config)]
+    assert "unrecoverable CUDA OOM" in result.output
+
+    mbpp_out = output_root / "model_output" / "mock_default" / "mbpp"
+    assert (mbpp_out / "_meta.json").exists()
+
+
+def test_matrix_still_aborts_on_a_non_oom_failure(tmp_path, monkeypatch):
+    """Only an OOM-shaped failure is swallowed per-job — anything else is
+    a real bug likely to affect every job, so it must still abort loudly."""
+    runner = CliRunner()
+    output_root = tmp_path / "output"
+    model_config = CONFIGS_DIR / "models" / "mock.yaml"
+    gsm8k_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
+    mbpp_config = CONFIGS_DIR / "datasets" / "mbpp.yaml"
+
+    experiment_config = tmp_path / "experiment.yaml"
+    experiment_config.write_text(
+        "seed: 42\n"
+        "models:\n"
+        f"  - name: mock\n    config: {model_config}\n    variants: [default]\n"
+        "datasets:\n"
+        f"  - config: {gsm8k_config}\n    max_new_tokens: 16\n"
+        f"  - config: {mbpp_config}\n    max_new_tokens: 16\n"
+    )
+
+    calls = []
+
+    def fake_generate(**kwargs):
+        calls.append(kwargs["dataset_config"])
+        raise KeyError("some unrelated config bug")
+
+    monkeypatch.setattr(cli_module, "generate", fake_generate)
+
+    result = runner.invoke(
+        main,
+        [
+            "matrix",
+            "--experiment-config", str(experiment_config),
+            "--model", "mock",
+            "--stage", "generate",
+            "--demo", "--n-samples", "3",
+            "--output-root", str(output_root),
+        ],
+        catch_exceptions=True,
+    )
+
+    assert result.exit_code != 0
+    assert calls == [str(gsm8k_config)]  # aborted before the second job
+
+
 def test_score_before_generate_gives_clear_error(tmp_path):
     runner = CliRunner()
     result = runner.invoke(main, [

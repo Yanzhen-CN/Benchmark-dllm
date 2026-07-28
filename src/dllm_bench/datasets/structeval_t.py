@@ -251,7 +251,10 @@ def _parse_official_strict(text: str, fmt: Format) -> Any | None:
         if fmt == "yaml":
             import yaml
 
-            return yaml.safe_load(payload)
+            try:
+                return yaml.safe_load(payload)
+            except yaml.YAMLError:
+                return None
         if fmt == "xml":
             return _xml_element_to_official_dict(ET.fromstring(payload))
         if fmt == "toml":

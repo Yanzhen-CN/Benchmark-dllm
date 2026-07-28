@@ -199,6 +199,18 @@ def test_structeval_official_score_does_not_repair_malformed_output():
     assert evaluate_struct_progress('{"name": "Alice"', schema).parseability == 1.0
 
 
+def test_structeval_malformed_yaml_is_strict_zero_instead_of_crashing():
+    ds = StructEvalTDataset()
+    schema = StructEvalSchema(format="yaml", required_keys=["name"])
+    sample = Sample(sample_id="1", prompt="p", reference=schema)
+
+    result = ds.score(sample, "Here is the result:\n\n```yaml\nname: Alice")
+
+    assert result.primary_score == 0.0
+    assert result.aux["official_render_score"] == 0.0
+    assert result.aux["official_key_validation_score"] == 0.0
+
+
 def test_structeval_json_tolerates_unclosed_structure():
     schema = StructEvalSchema(format="json", required_keys=["name"])
     progress = evaluate_struct_progress('{"name": "Alice", "tags": ["a", "b"', schema)
