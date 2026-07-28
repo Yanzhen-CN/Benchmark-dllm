@@ -76,6 +76,7 @@ def run_scoring(
         else:
             if generation.status == RunStatus.SUCCESS:
                 score = dataset.score(sample, generation.output_text)
+                score.aux.update(dataset.trace_aux_metrics(sample, generation.trace))
             else:
                 score = ScoreResult(primary_score=0.0, valid=False, complete=False)
             save_score_result(score, score_path)

@@ -14,7 +14,11 @@ from dllm_bench.interfaces import GenerationRequest
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.runner.demo_samples import build_demo_samples
 from dllm_bench.runner.generate_stage import run_generation
-from dllm_bench.runner.persistence import load_generation_result, save_generation_result
+from dllm_bench.runner.persistence import (
+    load_generation_result,
+    load_score_result,
+    save_generation_result,
+)
 from dllm_bench.runner.score_stage import run_scoring
 
 
@@ -329,6 +333,24 @@ def test_run_scoring_end_to_end_after_generation(tmp_path):
     assert (score_out / "summary.json").exists()
     for sample in samples:
         assert (score_out / f"{sample.sample_id}.json").exists()
+
+
+def test_run_scoring_persists_dataset_trace_aux_metrics(tmp_path):
+    class TraceAwareGSM8KDataset(GSM8KDataset):
+        def trace_aux_metrics(self, sample, trace):
+            return {"test_trace_step_count": float(len(trace))}
+
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
+    dataset = TraceAwareGSM8KDataset()
+    samples = build_demo_samples("gsm8k", n=1)
+    model_out = tmp_path / "model_output"
+    score_out = tmp_path / "score_output"
+    run_generation(adapter, "gsm8k", samples, max_new_tokens=16, out_dir=model_out)
+
+    run_scoring(dataset, samples, model_out, score_out)
+
+    score = load_score_result(score_out / f"{samples[0].sample_id}.json")
+    assert score.aux["test_trace_step_count"] > 0
 
 
 def test_run_scoring_reports_missing_samples_without_crashing(tmp_path):

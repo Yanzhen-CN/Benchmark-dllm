@@ -1,7 +1,9 @@
 dataset: structeval_t
 dataset_class: dllm_bench.datasets.structeval_t.StructEvalTDataset
-primary_metric: complete_correct_rate
-aux_metrics: [format_valid_rate, structure_progress, content_progress, field_completion_rate]
+# Official non-renderable StructEval score:
+# round(0.2 * render_score + 0.8 * key_validation_score, 2).
+primary_metric: final_eval_score
+aux_metrics: [official_render_score, official_key_validation_score, complete_correct_rate, structure_progress, content_progress, structure_first_score, structure_first_eligible_ratio]
 sample_size: 100
 seed: 42
 # Generation traces are retained for every formal sample. Strategy analysis

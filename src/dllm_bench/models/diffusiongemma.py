@@ -32,7 +32,7 @@ import math
 
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
-from .model_cache import get_or_load
+from .model_cache import get_or_load, offloaded_parameter_bytes, reload_with_offload
 
 DEFAULT_DIFFUSIONGEMMA_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
 
@@ -61,19 +61,56 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         if self._model is not None:
             return
         import torch
-        from transformers import AutoProcessor, DiffusionGemmaForBlockDiffusion
 
         device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._device = device
 
         def _load():
-            processor = AutoProcessor.from_pretrained(self._model_name)
-            model = DiffusionGemmaForBlockDiffusion.from_pretrained(self._model_name)
-            model.to(device)
-            model.eval()
-            return processor, model
+            return self._load_model_and_processor(device, device_map_auto=False)
 
+        # This can be a cache *hit* on a model already reloaded with
+        # offloading after an OOM elsewhere (see `_reload_with_cpu_offload`)
+        # — check the actual model, don't assume a fresh, 100%-GPU load.
+        # DG is by far the largest model in this benchmark (26B-A4B MoE,
+        # explicitly a large-model reference rather than a same-scale
+        # comparison point per the design doc), so this is the adapter most
+        # likely to actually need this path in practice.
         self._processor, self._model = get_or_load(self._model_name, device, _load)
+        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
+        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
+
+    def _load_model_and_processor(self, device: str, *, device_map_auto: bool):
+        from transformers import AutoProcessor, DiffusionGemmaForBlockDiffusion
+
+        processor = AutoProcessor.from_pretrained(self._model_name)
+        kwargs: dict = {}
+        if device_map_auto:
+            kwargs["device_map"] = "auto"
+        model = DiffusionGemmaForBlockDiffusion.from_pretrained(self._model_name, **kwargs)
+        if not device_map_auto:
+            model.to(device)
+        model.eval()
+        return processor, model
+
+    def _reload_with_cpu_offload(self) -> bool:
+        """See `models/base.py`'s `BaseModelAdapter._reload_with_cpu_offload`
+        docstring — this only ever runs reactively, after a genuine capacity
+        OOM neither a plain retry nor a cache-cleared one could recover
+        from."""
+        if getattr(self, "_cpu_offloaded", False):
+            return True
+        if self._model is None:
+            return False
+
+        def _load_with_offload():
+            return self._load_model_and_processor(self._device, device_map_auto=True)
+
+        self._processor, self._model = reload_with_offload(
+            self._model_name, self._device, _load_with_offload
+        )
+        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
+        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
+        return True
 
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         self._ensure_loaded()

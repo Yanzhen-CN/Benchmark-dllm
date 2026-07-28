@@ -115,7 +115,7 @@ import math
 
 from ..interfaces import PositionState, TraceStep
 from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
-from .model_cache import get_or_load
+from .model_cache import get_or_load, offloaded_parameter_bytes, reload_with_offload
 from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
@@ -151,33 +151,92 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         device: str | None = None,
     ) -> None:
         super().__init__(model_name_or_path, step_config, name="dreamreasoner", config_name=config_name, device=device)
+        self._cpu_offloaded = False
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._device = device
 
         def _load():
-            # The design doc/README's quick-start explicitly uses
-            # AutoModelForCausalLM (config.json's auto_map also registers
-            # AutoModel for the same class, but this adapter doesn't rely on
-            # that alias).
-            tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
-            model = AutoModelForCausalLM.from_pretrained(
-                self._model_name,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
-            )
-            model.to(device)
-            model.eval()
-            return tokenizer, model
+            return self._load_model_and_tokenizer(device, device_map_auto=False)
 
+        # This can be a cache *hit* on a model a sibling variant (e.g. `best`,
+        # if `fast` is what's loading here) already reloaded with offloading
+        # after its own OOM (see `_reload_with_cpu_offload`) — check the
+        # actual model, don't assume a fresh, 100%-GPU load.
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
+        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
+        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
+
+    def _load_model_and_tokenizer(self, device: str, *, device_map_auto: bool):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        # The design doc/README's quick-start explicitly uses
+        # AutoModelForCausalLM (config.json's auto_map also registers
+        # AutoModel for the same class, but this adapter doesn't rely on
+        # that alias).
+        tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
+        kwargs: dict = dict(trust_remote_code=True, torch_dtype=torch.bfloat16)
+        if device_map_auto:
+            kwargs["device_map"] = "auto"
+        else:
+            kwargs["low_cpu_mem_usage"] = True
+        model = AutoModelForCausalLM.from_pretrained(self._model_name, **kwargs)
+        if not device_map_auto:
+            model.to(device)
+        model.eval()
+        return tokenizer, model
+
+    def _reload_with_cpu_offload(self) -> bool:
+        """GPU-only by default (matches every other model in this benchmark)
+        — this only ever runs reactively, after `models/base.py`'s
+        `generate()` has already tried a plain retry and a cache-cleared
+        retry and *still* hit a real CUDA OOM. At RULER's own advertised max
+        context (32768) this model's weights + KV cache alone leave almost
+        no headroom on a 24 GiB GPU — confirmed from a real OOM ("23.00 GiB
+        is allocated... 38.45 MiB reserved but unallocated": no fragmentation
+        slack, a genuine capacity ceiling the mask/prefill-chunk fixes
+        elsewhere in this file can't do anything further about). Falling
+        back to `device_map="auto"` here lets `accelerate` offload part of
+        the model to CPU so the sample can still *complete* with a real
+        accuracy/quality score (task correctness is unaffected — same
+        computation, just some of it on CPU) — see
+        `models/base.py`'s `_reload_with_cpu_offload` docstring for how
+        `self._cpu_offloaded`/`self._cpu_offloaded_bytes` get surfaced into
+        every affected sample's own result, not just a single per-run flag.
+        `model_cache.reload_with_offload` replaces the *shared* cache entry,
+        so `fast` (if `best` is the one that actually hit the OOM) sees the
+        already-offloaded model on its own next `_ensure_loaded()` call
+        instead of separately hitting the same OOM itself. Run RULER as its
+        own filtered invocation (`--dataset ruler`) to keep this from
+        leaking into an otherwise-clean dataset that never needed it —
+        once triggered, this stays offloaded for the rest of this process."""
+        if self._cpu_offloaded:
+            return True  # already offloaded from an earlier sample
+        if self._model is None:
+            return False  # never loaded at all yet — not this method's job
+
+        def _load_with_offload():
+            return self._load_model_and_tokenizer(self._device, device_map_auto=True)
+
+        self._tokenizer, self._model = reload_with_offload(
+            self._model_name, self._device, _load_with_offload
+        )
+        # Evicting the old (100%-GPU) copy before this reload frees its
+        # memory first, so it's possible `device_map="auto"` finds enough
+        # room to place everything back on the GPU after all — only flag
+        # this run as offloaded if real parameter/buffer bytes actually
+        # ended up off-GPU, not just because `device_map="auto"` was asked
+        # for. Either way, the reload itself succeeded, so the caller should
+        # still retry.
+        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
+        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
+        return True
 
     def _resolve_mask_token_id(self, step_config: DiffusionStepConfig) -> int:
         candidates = (

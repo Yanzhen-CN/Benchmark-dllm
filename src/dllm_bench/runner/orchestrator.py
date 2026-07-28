@@ -84,6 +84,7 @@ def run_experiment(
 
         if generation.status == RunStatus.SUCCESS:
             score = dataset.score(sample, generation.output_text)
+            score.aux.update(dataset.trace_aux_metrics(sample, generation.trace))
         else:
             score = ScoreResult(primary_score=0.0, valid=False, complete=False)
 
@@ -113,6 +114,10 @@ def summarize_records(
     """
     score_results = [r.score for r in records]
     agg = dataset.aggregate_records([r.sample for r in records], score_results)
+    generation_agg = dataset.aggregate_generation_records(
+        [r.sample for r in records], [r.generation for r in records]
+    )
+    agg.update(generation_agg)
     q = agg[f"{dataset.name}_score"]
     aux = {k: v for k, v in agg.items() if k != f"{dataset.name}_score"}
 

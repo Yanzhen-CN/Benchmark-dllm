@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..interfaces import GenerationResult, TraceStep
 
 
 @dataclass
@@ -52,6 +55,12 @@ class Dataset(ABC):
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         """Score one generated output against its sample's reference."""
 
+    def trace_aux_metrics(
+        self, sample: Sample, trace: list[TraceStep]
+    ) -> dict[str, float]:
+        """Optional generation-process metrics computed outside task scoring."""
+        return {}
+
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
         """Default aggregation: mean primary score + mean of every aux key
         that appears on every result, plus valid/complete rates."""
@@ -75,3 +84,11 @@ class Dataset(ABC):
         if len(samples) != len(results):
             raise ValueError("samples and results must have the same length")
         return self.aggregate(results)
+
+    def aggregate_generation_records(
+        self, samples: list[Sample], generations: list[GenerationResult]
+    ) -> dict[str, float]:
+        """Optional dataset-specific timing/status stratification."""
+        if len(samples) != len(generations):
+            raise ValueError("samples and generations must have the same length")
+        return {}

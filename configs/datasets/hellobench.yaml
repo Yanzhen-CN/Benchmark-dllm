@@ -1,10 +1,16 @@
-# Diagnostic long-output evaluation: short prompts, 10 samples at each of the
-# 2K/4K-word targets. Generation caps are per sample, not a matrix-wide 256.
+# Long-output feasibility case study: one sample at each of the 2K/4K-word
+# targets (2 total). Iterative dLLMs can take many hours per sample,
+# so this is deliberately not treated as a statistically stable leaderboard.
+# Generation caps are per sample, not a matrix-wide 256.
 dataset: hellobench
 dataset_class: dllm_bench.datasets.hellobench.HelloBenchDataset
-primary_metric: helloeval_score
-aux_metrics: [length_compliance_rate, seq_rep_4]
-samples_per_length: 10
+# This deliberately does not claim to be official HelloEval: official
+# HelloEval requires checklist-based LLM judging. The offline primary score
+# combines objective length/repetition/segment signals and explicit major
+# observable failure penalties.
+primary_metric: objective_quality_score
+aux_metrics: [length_compliance_rate, seq_rep_4, repeated_segment_fraction, major_issue_free_rate, refusal_issue_rate, prompt_echo_issue_rate, corrupt_text_issue_rate, generation_time_mean_seconds_by_length, generation_time_median_seconds_by_length, generation_success_rate_by_length]
+samples_per_length: 1
 output_profiles:
   - target_words: 2000
     max_new_tokens: 3072
@@ -15,7 +21,3 @@ seed: 42
 # full per-forward, per-position trace for 2K/4K-word outputs is prohibitively
 # large and is not used by the HelloBench score or retention calculation.
 trace_scope: none
-# NOTE: HelloEval is an LLM-judge rubric in the real benchmark. Without a
-# judge_fn wired in, HelloBenchDataset falls back to a repetition+length
-# heuristic that is NOT the real metric (see dllm_bench/datasets/hellobench.py).
-judge_fn: null

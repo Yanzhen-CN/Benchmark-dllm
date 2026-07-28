@@ -1,7 +1,7 @@
 """Section 2.1/2.2: length-retention ratios for long-input and long-output.
 
     Context Retention               = Score_{model max} / Score_{common 8K}
-    LongOutput Quality Retention    = HelloEval_{4K} / HelloEval_{2K}
+    LongOutput Quality Retention    = ObjectiveQuality_{4K} / ObjectiveQuality_{2K}
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ def context_retention(score_model_max: float, score_common: float) -> float:
     return score_model_max / score_common
 
 
-def long_output_quality_retention(helloeval_4k: float, helloeval_2k: float) -> float:
-    if helloeval_2k <= 0:
-        raise ValueError("helloeval_2k must be positive")
-    return helloeval_4k / helloeval_2k
+def long_output_quality_retention(quality_4k: float, quality_2k: float) -> float:
+    if quality_2k <= 0:
+        raise ValueError("quality_2k must be positive")
+    return quality_4k / quality_2k

@@ -66,9 +66,33 @@ class BaseModelAdapter(ABC):
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         """Run one sample. Must not itself measure timing/energy/VRAM."""
 
+    def _reload_with_cpu_offload(self) -> bool:
+        """Attempt recovery from a genuine (non-fragmentation) capacity OOM
+        by reloading this adapter's model with part of it offloaded to CPU
+        (`accelerate`'s `device_map="auto"`). Returns whether this adapter
+        knows how to do that and the reload succeeded — default: no (API
+        -backed and mock adapters have no local model to reload at all).
+
+        Deliberately reactive, not opt-in-by-default: every model stays
+        100%-GPU (fully comparable to every other model's Time/Energy/
+        Compute) unless a real OOM proves it doesn't fit, and only then for
+        that one model+config from then on — see `generate()`'s retry
+        escalation. A successful reload should set `self._cpu_offloaded =
+        True` and, if measurable, `self._cpu_offloaded_bytes` (how many
+        parameter/buffer bytes ended up off-GPU — see
+        `model_cache.offloaded_parameter_bytes`), so `generate()` can stamp
+        both into every subsequent result's `extra` for this adapter: once
+        offloaded, *every* later sample genuinely runs through the
+        partially-CPU-resident model (every forward pass reaches every
+        layer), not just whichever sample first triggered it, so their
+        Time/Energy/Compute are equally not comparable to a 100%-GPU run and
+        must carry the same flag."""
+        return False
+
     def generate(self, request: GenerationRequest) -> GenerationResult:
         _seed_everything(request.seed)
-        for attempt in (0, 1):
+        attempt = 0
+        while True:
             measurement = _SampleMeasurement()
             self._active_measurement = measurement
             try:
@@ -86,19 +110,23 @@ class BaseModelAdapter(ABC):
             except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure -> Run Status
                 measurement.stop()
                 self._active_measurement = None
-                if attempt == 0 and _looks_like_oom(exc):
-                    # One retry with a freshly-cleared CUDA cache — see
+                if _looks_like_oom(exc) and attempt == 0:
+                    # First retry: just a freshly-cleared CUDA cache — see
                     # `_release_cuda_cache`'s docstring for the accumulated
-                    # -fragmentation pattern this recovers from. Only the
-                    # retried attempt's timing is ever recorded; this failed
-                    # one is discarded entirely (same as a warmup call is
-                    # never counted), so a sample that never needed a retry
-                    # is completely unaffected — clearing the cache before
-                    # every sample regardless of need would otherwise force
-                    # the next allocation back to a slow, cold `cudaMalloc`
-                    # *inside* the timed window even when nothing was wrong.
+                    # -fragmentation pattern this recovers from, cheaply and
+                    # with no effect on any sample that never needed it.
                     _release_cuda_cache()
                     _seed_everything(request.seed)
+                    attempt += 1
+                    continue
+                if _looks_like_oom(exc) and attempt == 1 and self._reload_with_cpu_offload():
+                    # Cache-clearing alone didn't fix it — a real capacity
+                    # ceiling, not fragmentation. Escalate to the expensive
+                    # fix (reload with part of the model on CPU) only now,
+                    # and only because this specific sample proved it's
+                    # actually needed.
+                    _seed_everything(request.seed)
+                    attempt += 1
                     continue
                 status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
                 return GenerationResult(
@@ -116,6 +144,11 @@ class BaseModelAdapter(ABC):
                 )
                 result.energy_joules = measurement.energy_joules
                 result.peak_vram_gb = measurement.peak_vram_gb
+                if getattr(self, "_cpu_offloaded", False):
+                    result.extra["cpu_offloaded"] = True
+                    offloaded_bytes = getattr(self, "_cpu_offloaded_bytes", None)
+                    if offloaded_bytes is not None:
+                        result.extra["cpu_offloaded_bytes"] = offloaded_bytes
                 return result
 
     def profile_compute(self, request: GenerationRequest) -> ComputeHandle:

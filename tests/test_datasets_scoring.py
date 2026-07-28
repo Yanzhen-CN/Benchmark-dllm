@@ -4,7 +4,13 @@ import pytest
 
 from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.gsm8k import GSM8K_REVISION, GSM8KDataset, _load_official_test_samples, extract_final_number
-from dllm_bench.datasets.hellobench import HelloBenchDataset, HelloBenchReference, seq_rep_n
+from dllm_bench.datasets.hellobench import (
+    HelloBenchDataset,
+    HelloBenchReference,
+    detect_major_issues,
+    repeated_segment_fraction,
+    seq_rep_n,
+)
 from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample, extract_code
 from dllm_bench.datasets.ruler import RulerDataset, RulerReference, position_robustness
 from dllm_bench.datasets.structeval_t import (
@@ -18,6 +24,12 @@ from dllm_bench.datasets.sudoku import (
     classify_difficulty,
     group_by_difficulty,
     parse_grid,
+)
+from dllm_bench.interfaces import (
+    GenerationRequest,
+    GenerationResult,
+    RunStatus,
+    TimingResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -133,6 +145,18 @@ def test_mbpp_score_syntax_error_is_not_executable():
     assert result.valid is False
 
 
+def test_mbpp_aggregate_exposes_official_metric_name():
+    ds = MBPPDataset()
+    sample = Sample(
+        sample_id="1",
+        prompt="write add(a, b)",
+        reference=MbppSample(test_list=["assert add(2, 3) == 5"]),
+    )
+    passing = ds.score(sample, "def add(a, b):\n    return a + b")
+    failing = ds.score(sample, "def add(a, b):\n    return a - b")
+    assert ds.aggregate([passing, failing])["pass_at_1"] == pytest.approx(0.5)
+
+
 # ---------------------------------------------------------------------------
 # StructEval-T
 # ---------------------------------------------------------------------------
@@ -156,8 +180,23 @@ def test_structeval_json_missing_key_is_incomplete():
     schema = StructEvalSchema(format="json", required_keys=["name", "age"])
     sample = Sample(sample_id="1", prompt="p", reference=schema)
     result = ds.score(sample, '{"name": "Alice"}')
-    assert result.primary_score == 0.0
+    # Official non-renderable StructEval: 20% strict parse + 80% path coverage.
+    assert result.primary_score == pytest.approx(0.6)
+    assert result.aux["official_render_score"] == 1.0
+    assert result.aux["official_key_validation_score"] == pytest.approx(0.5)
+    assert result.aux["complete_correct_rate"] == 0.0
     assert result.aux["field_completion_rate"] == pytest.approx(0.5)
+
+
+def test_structeval_official_score_does_not_repair_malformed_output():
+    ds = StructEvalTDataset()
+    schema = StructEvalSchema(format="json", required_keys=["name"])
+    sample = Sample(sample_id="1", prompt="p", reference=schema)
+    result = ds.score(sample, '{"name": "Alice"')
+    assert result.primary_score == 0.0
+    assert result.aux["official_render_score"] == 0.0
+    # The trace diagnostic remains deliberately fault-tolerant.
+    assert evaluate_struct_progress('{"name": "Alice"', schema).parseability == 1.0
 
 
 def test_structeval_json_tolerates_unclosed_structure():
@@ -186,6 +225,35 @@ def test_structeval_csv_basic():
     progress = evaluate_struct_progress("name,age\nAlice,30\n", schema)
     assert progress.parseability == 1.0
     assert progress.key_coverage == 1.0
+
+
+def test_structeval_official_csv_uses_header_paths():
+    ds = StructEvalTDataset()
+    schema = StructEvalSchema(
+        format="csv", required_keys=["csv::name", "csv::age", "csv::missing"]
+    )
+    sample = Sample(sample_id="1", prompt="p", reference=schema)
+    result = ds.score(sample, "name,age\nAlice,30\n")
+    assert result.aux["official_render_score"] == 1.0
+    assert result.aux["official_key_validation_score"] == pytest.approx(2 / 3)
+    assert result.primary_score == pytest.approx(0.73)
+
+
+def test_structeval_official_xml_preserves_root_and_repeated_elements():
+    ds = StructEvalTDataset()
+    schema = StructEvalSchema(
+        format="xml",
+        required_keys=["root.name", "root.items.item[1].value"],
+    )
+    sample = Sample(sample_id="1", prompt="p", reference=schema)
+    output = (
+        "<root><name>Alice</name><items><item><value>1</value></item>"
+        "<item><value>2</value></item></items></root>"
+    )
+    result = ds.score(sample, output)
+    assert result.primary_score == 1.0
+    assert result.aux["official_key_validation_score"] == 1.0
+    assert ds.aggregate([result])["final_eval_score"] == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -333,12 +401,70 @@ def test_hellobench_score_outside_length_tolerance():
     output = " ".join(f"w{i}" for i in range(10))
     result = ds.score(sample, output)
     assert result.aux["length_compliance_rate"] == 0.0
+    assert result.aux["severe_underlength_issue_rate"] == 1.0
     assert result.complete is False
 
 
-def test_hellobench_uses_custom_judge_fn_when_provided():
-    ds = HelloBenchDataset(judge_fn=lambda prompt, output: 0.42)
-    ref = HelloBenchReference(target_length_words=5)
-    sample = Sample(sample_id="1", prompt="p", reference=ref)
-    result = ds.score(sample, "one two three four five")
-    assert result.primary_score == pytest.approx(0.42)
+def test_hellobench_detects_repeated_segment_loop():
+    segment = "This exact sentence contains enough words to count as a repeated segment."
+    output = " ".join([segment] * 8)
+    assert repeated_segment_fraction(output) > 0.5
+    issues = detect_major_issues("write a long essay", output, target_words=100)
+    assert issues.repeated_segment_loop is True
+    assert issues.high_repetition is True
+
+
+def test_hellobench_detects_refusal_and_prompt_echo():
+    prompt = " ".join(f"instruction{index}" for index in range(40))
+    output = f"I cannot comply with this request. {prompt}"
+    issues = detect_major_issues(prompt, output, target_words=100)
+    assert issues.refusal is True
+    assert issues.prompt_echo is True
+
+
+def test_hellobench_objective_score_is_not_named_helloeval():
+    ds = HelloBenchDataset()
+    ref = HelloBenchReference(target_length_words=10)
+    sample = Sample(sample_id="1", prompt="write", reference=ref)
+    result = ds.score(sample, "one two three four five six seven eight nine ten")
+    assert result.primary_score == pytest.approx(1.0)
+    assert result.aux["major_issue_free_rate"] == 1.0
+    summary = ds.aggregate_records([sample], [result])
+    assert summary["objective_quality_score"] == 1.0
+
+
+def test_hellobench_aggregates_per_length_generation_time():
+    ds = HelloBenchDataset()
+    samples = [
+        Sample(
+            sample_id=f"sample-{index}",
+            prompt="write",
+            reference=HelloBenchReference(target_length_words=2000),
+        )
+        for index in range(3)
+    ]
+
+    def generation(index: int, seconds: float | None, status: RunStatus):
+        return GenerationResult(
+            request=GenerationRequest(
+                prompt="write", max_new_tokens=3072, sample_id=f"sample-{index}"
+            ),
+            output_text="output" if status == RunStatus.SUCCESS else "",
+            status=status,
+            final_valid_length=1000 + index,
+            timing=TimingResult(seconds) if seconds is not None else None,
+        )
+
+    generations = [
+        generation(0, 3600.0, RunStatus.SUCCESS),
+        generation(1, 7200.0, RunStatus.SUCCESS),
+        generation(2, None, RunStatus.FAILED),
+    ]
+    summary = ds.aggregate_generation_records(samples, generations)
+    assert summary["generation_success_rate_2000_words"] == pytest.approx(2 / 3)
+    assert summary["timed_sample_count_2000_words"] == 2.0
+    assert summary["generation_time_mean_seconds_2000_words"] == 5400.0
+    assert summary["generation_time_median_seconds_2000_words"] == 5400.0
+    assert summary["generation_time_min_seconds_2000_words"] == 3600.0
+    assert summary["generation_time_max_seconds_2000_words"] == 7200.0
+    assert summary["generation_time_mean_hours_2000_words"] == pytest.approx(1.5)

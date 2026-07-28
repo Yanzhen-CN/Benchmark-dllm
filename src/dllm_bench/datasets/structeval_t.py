@@ -1,6 +1,13 @@
-"""StructEval-T: Complete Correct Rate, plus Format/Structure/field-completion/
-content-correctness auxiliaries (section 1), built on the fault-tolerant,
-partial-structure-aware detectors required by Appendix A.1/A.2.
+"""StructEval-T official final score plus diagnostic formation metrics.
+
+The final-output primary score follows the upstream non-renderable evaluator:
+``round(0.2 * render_score + 0.8 * key_validation_score, 2)``.  Here
+``render_score`` is strict syntax/parse validity and ``key_validation_score``
+is the fraction of ``raw_output_metric`` paths present in the parsed object.
+
+The fault-tolerant, partial-structure-aware detectors remain deliberately
+separate.  They are diagnostics for generation-process analysis and must not
+silently replace the official final-output score.
 
 :func:`evaluate_struct_progress` is the reusable building block: the dataset
 scorer calls it once on the final output for the section-1 Complete Correct
@@ -207,6 +214,149 @@ _PARSERS = {
 }
 
 
+def _xml_element_to_official_dict(element: ET.Element) -> dict[str, Any]:
+    """Small ``xmltodict``-compatible conversion for official path checks."""
+    node: dict[str, Any] = {f"@{key}": value for key, value in element.attrib.items()}
+    children: dict[str, list[Any]] = {}
+    for child in element:
+        converted = _xml_element_value(child)
+        children.setdefault(child.tag, []).append(converted)
+    for tag, values in children.items():
+        node[tag] = values[0] if len(values) == 1 else values
+    text = (element.text or "").strip()
+    if text:
+        if node:
+            node["#text"] = text
+        else:
+            return {element.tag: text}
+    return {element.tag: node}
+
+
+def _xml_element_value(element: ET.Element) -> Any:
+    wrapped = _xml_element_to_official_dict(element)
+    return wrapped[element.tag]
+
+
+def _parse_official_strict(text: str, fmt: Format) -> Any | None:
+    """Parse exactly enough for StructEval's strict non-renderable evaluator.
+
+    Unlike :func:`evaluate_struct_progress`, this never repairs or truncates a
+    malformed output.  A fenced payload is extracted because StructEval's
+    render stage likewise extracts the generated code before saving it.
+    """
+    payload = _strip_code_fence(text)
+    try:
+        if fmt == "json":
+            return json.loads(payload)
+        if fmt == "yaml":
+            import yaml
+
+            return yaml.safe_load(payload)
+        if fmt == "xml":
+            return _xml_element_to_official_dict(ET.fromstring(payload))
+        if fmt == "toml":
+            try:
+                import tomllib
+            except ImportError:  # pragma: no cover - Python 3.10 only
+                import tomli as tomllib
+            return tomllib.loads(payload)
+        if fmt == "csv":
+            reader = csv.DictReader(io.StringIO(payload))
+            return {"csv_headers": reader.fieldnames, "csv_rows": list(reader)}
+    except (ValueError, TypeError, ET.ParseError):
+        return None
+    return None
+
+
+def _tokenize_official_path(path: str) -> list[str]:
+    """Port of StructEval ``eval_utils.tokenize_path``."""
+    if path.startswith("csv::"):
+        return [path]
+    tokens: list[str] = []
+    buffer = ""
+    in_backticks = False
+    index = 0
+    while index < len(path):
+        char = path[index]
+        if char == "`":
+            in_backticks = not in_backticks
+            index += 1
+            continue
+        if char == "." and not in_backticks:
+            if buffer:
+                tokens.append(buffer)
+                buffer = ""
+            index += 1
+            continue
+        if char == "[" and not in_backticks:
+            if buffer:
+                tokens.append(buffer)
+                buffer = ""
+            close = path.find("]", index)
+            if close == -1:
+                raise ValueError(f"unclosed '[' in StructEval path: {path}")
+            tokens.append(path[index : close + 1])
+            index = close + 1
+            continue
+        buffer += char
+        index += 1
+    if buffer:
+        tokens.append(buffer)
+    return tokens
+
+
+def _official_path_exists(data: Any, path: str) -> bool:
+    """Port of StructEval ``eval_utils.path_exists``."""
+    try:
+        tokens = _tokenize_official_path(path)
+    except ValueError:
+        return False
+
+    def walk(node: Any, remaining: list[str]) -> bool:
+        if not remaining:
+            return True
+        token, *rest = remaining
+        if isinstance(node, dict) and "csv_headers" in node and token.startswith("csv::"):
+            header = token[5:]
+            return header in (node.get("csv_headers") or []) and not rest
+        if token == "*":
+            return isinstance(node, list) and any(walk(item, rest) for item in node)
+        if token.startswith("[") and token.endswith("]"):
+            try:
+                item_index = int(token[1:-1])
+            except ValueError:
+                return False
+            return (
+                isinstance(node, list)
+                and 0 <= item_index < len(node)
+                and walk(node[item_index], rest)
+            )
+        if isinstance(node, dict):
+            if token in node:
+                return walk(node[token], rest)
+            if token.startswith("@") and token[1:] in node:
+                return walk(node[token[1:]], rest)
+        return False
+
+    return walk(data, tokens)
+
+
+def official_structeval_nonrenderable_score(
+    text: str, schema: StructEvalSchema
+) -> tuple[float, float, float]:
+    """Return upstream ``(final, render, key_validation)`` scores."""
+    parsed = _parse_official_strict(text, schema.format)
+    render_score = 1.0 if parsed is not None else 0.0
+    if parsed is None or not schema.required_keys:
+        key_validation_score = 0.0
+    else:
+        key_validation_score = sum(
+            1.0 for path in schema.required_keys if _official_path_exists(parsed, path)
+        ) / len(schema.required_keys)
+    final_score = round(0.2 * render_score + 0.8 * key_validation_score, 2)
+    return final_score, render_score, key_validation_score
+
+
 def flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
     """Flatten JSON/YAML/TOML-like nested dict/list into dotted-path -> leaf value."""
     out: dict[str, Any] = {}
@@ -354,7 +504,7 @@ def struct_eval_t_checkpoint_scores(
     always the final forward) using StructEval-T's own detectors, returning
     (structure_progress_scores, content_progress_scores) — the per-checkpoint
     curves :mod:`dllm_bench.metrics.strategy_score` turns into one sample's
-    AUC/SFI.
+    pairwise Structure-First Score.
     """
     if not trace:
         return [], []
@@ -429,6 +579,9 @@ class StructEvalTDataset(Dataset):
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         schema: StructEvalSchema = sample.reference
+        official_score, render_score, key_validation_score = (
+            official_structeval_nonrenderable_score(output_text, schema)
+        )
         progress = evaluate_struct_progress(output_text, schema)
 
         complete_correct = (
@@ -443,16 +596,49 @@ class StructEvalTDataset(Dataset):
             )
         )
         return ScoreResult(
-            primary_score=1.0 if complete_correct else 0.0,
+            primary_score=official_score,
             aux={
-                "format_valid_rate": progress.parseability,
+                "official_render_score": render_score,
+                "official_key_validation_score": key_validation_score,
+                "complete_correct_rate": 1.0 if complete_correct else 0.0,
+                "format_valid_rate": render_score,
                 "structure_progress": progress.structure_progress,
                 "content_progress": progress.content_progress,
-                "field_completion_rate": progress.key_coverage,
+                "field_completion_rate": key_validation_score,
             },
-            valid=progress.parseability == 1.0,
+            valid=render_score == 1.0,
             complete=complete_correct or progress.value_coverage > 0,
         )
+
+    def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
+        summary = super().aggregate(results)
+        summary["final_eval_score"] = summary["structeval_t_score"]
+        structure_first = [
+            result.aux["structure_first_score"]
+            for result in results
+            if "structure_first_score" in result.aux
+        ]
+        summary["structure_first_eligible_ratio"] = len(structure_first) / len(results)
+        if structure_first:
+            summary["structure_first_score"] = sum(structure_first) / len(structure_first)
+        return summary
+
+    def trace_aux_metrics(
+        self, sample: Sample, trace: list[TraceStep]
+    ) -> dict[str, float]:
+        if not trace:
+            return {"structure_first_eligible_rate": 0.0}
+        from ..metrics.strategy_score import strategy_score
+
+        schema: StructEvalSchema = sample.reference
+        structure, content = struct_eval_t_checkpoint_scores(trace, schema)
+        score = strategy_score(structure, content)
+        if score is None:
+            return {"structure_first_eligible_rate": 0.0}
+        return {
+            "structure_first_score": score,
+            "structure_first_eligible_rate": 1.0,
+        }
 
 
 def _nesting_prefixes(paths: list[str]) -> list[str]:

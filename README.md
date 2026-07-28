@@ -28,7 +28,7 @@ What's still open, and why:
 | Piece | Status | Why |
 | --- | --- | --- |
 | W1 | API adapter + configuration (`models/w1_api.py`, `configs/models/w1.yaml`) | The transport/timing path is implemented; the private endpoint and its trace payload still need to be validated against the real service before Part 4 is enabled. |
-| HelloEval score | Heuristic fallback in `datasets/hellobench.py` | The real metric is an LLM-judge rubric. Pass `judge_fn` to `HelloBenchDataset` to use a real judge. |
+| HelloBench semantic judge | Deliberately excluded | Official HelloEval requires checklist-based LLM judging. This project reports a clearly named, judge-free `objective_quality_score` plus observable major-failure rates; it never labels that score HelloEval. |
 | Real dataset loading | GSM8K + local files | `--no-demo` downloads pinned/checksummed official GSM8K; every dataset also accepts local JSON/JSONL through `--samples-file`. Remaining official task-bank downloaders are external preparation. |
 | Batch experiment runner | Implemented with isolated environments | `run_bench.py` reads the matrix and delegates each model to its own script/venv. |
 | Running the real models end-to-end | Not done in this environment | No GPU / multi-GB checkpoint downloads here — the sampling loops themselves are ported/verified against reference code and algorithm-tested with fake logits (see table above), but nobody has run them against the actual weights yet. First real run should sanity-check output quality before trusting the pipeline's numbers. |
@@ -188,10 +188,24 @@ targets are 8128 and `model_max - 64` tokens. If both windows are 8192 (as for
 iLLaDA), the same common point is run once: 30 samples rather than a duplicated
 60. The formal strengthened profile can raise each cell from 10 to 20.
 
-HelloBench independently measures long output from short prompts: 10 samples
-target 2K words with `max_new_tokens=3072`, and 10 target 4K words with
-`max_new_tokens=6144`. These are attached per sample by the runner, so the
-matrix-wide fallback cannot accidentally reduce both groups to 256 tokens.
+HelloBench is a long-output feasibility case study rather than a statistically
+stable leaderboard: 1 shared sample targets 2K words with
+`max_new_tokens=3072`, and 1 shared sample targets 4K words with
+`max_new_tokens=6144` (2 total per model configuration). These are attached
+per sample by the runner, so the matrix-wide fallback cannot accidentally
+reduce both groups to 256 tokens. Every model uses the same two deterministic
+samples; any already-generated larger AR run may be retained, but formal
+cross-model comparison uses only this common subset. Per-sample wall-clock,
+output length, TPS, energy, peak VRAM, objective quality, and major-failure
+flags describe feasibility and cost; no population mean, variance, confidence
+interval, or general capability claim is made from one sample per length.
+Its primary `objective_quality_score` is explicitly not official HelloEval:
+it combines target-length fidelity, Seq-Rep-4, and repeated-segment quality,
+then applies transparent penalties for empty/severely short or long output,
+high repetition, exact segment loops, refusal, long prompt echo, and corrupt
+control/replacement characters. The individual issue flags and issue-free
+rate are preserved as auxiliary metrics. Semantic correctness, factuality,
+coherence, style, and checklist satisfaction are not claimed without a judge.
 
 Model weights, official/generated datasets, and package wheels are all kept
 under the repository-root `.data/` directory (`huggingface/`, `datasets/`,
@@ -403,7 +417,15 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 | StructEval-T | 100 |
 | Sudoku | 100 (50 Easy + 50 Hard) |
 | RULER | 10 per context-window x position cell |
-| HelloBench | 10 at 2K words + 10 at 4K words |
+| HelloBench case study | 1 at 2K words + 1 at 4K words (2 total) |
+
+MBPP's primary metric is official pass@1: one candidate passes only when all
+official tests pass, and the dataset score is the mean pass rate. Its
+structure/content progress values are trace-only auxiliary diagnostics.
+StructEval-T uses the official non-renderable formula as its primary metric,
+`round(0.2 * strict_parse_success + 0.8 * required_path_coverage, 2)`; the
+fault-tolerant formation score and strict all-fields-complete 0/1 result are
+retained only as auxiliary diagnostics.
 
 RULER runs the common 8192-token context-window point and the model's own
 maximum point. If those are identical, the common samples are reused rather
@@ -525,6 +547,15 @@ own trace visualizer) for continuity with that prior art:
 - **Effective Tokens per Forward**, **Structure/Content formation**,
   **Accepted-Ratio × Certainty** — the design doc's own Part 4 formulas
   (`metrics/trace_parallelism.py`/`strategy_score.py`/`certainty.py`).
+
+For StructEval-T and MBPP, framework features and substantive-content
+features are classified separately at each checkpoint. `strategy_score.py`
+uses their first-formation increments in a Kendall-like pairwise ordering:
+structure earlier = 1, tie = 0.5, content earlier = 0. The resulting
+`structure_first_score` is in `[0,1]`; 1 means a strong framework-first
+generation preference, while 0.5 means synchronized or order-balanced
+formation. It is a trace diagnostic only and never replaces official
+StructEval `final_eval_score` or MBPP `pass_at_1`.
 
 **Sudoku** gets one more artifact on top: an animated 9x9 grid walking
 through the solve (`report/sudoku_trace_viz.py`), most useful for **Hard**

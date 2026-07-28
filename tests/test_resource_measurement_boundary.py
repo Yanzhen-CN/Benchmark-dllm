@@ -197,3 +197,67 @@ def test_generate_does_not_retry_a_non_oom_failure(monkeypatch):
 
     assert adapter.generate_core_calls == 1  # no retry attempted
     assert result.status == RunStatus.FAILED
+
+
+class _OOMTwiceThenSucceedWithOffloadAdapter(BaseModelAdapter):
+    """Fails its first two `_generate_core` calls with OOM (simulating
+    cache-clearing alone not being enough — a genuine capacity ceiling, not
+    fragmentation), then succeeds once `_reload_with_cpu_offload` has
+    "reloaded" it (simulated by just flipping `_cpu_offloaded`)."""
+
+    deferred_measurement = True
+
+    def __init__(self, *, supports_offload: bool):
+        self.generate_core_calls = 0
+        self.reload_calls = 0
+        self._supports_offload = supports_offload
+        self._cpu_offloaded = False
+
+    def _generate_core(self, request):
+        self.generate_core_calls += 1
+        if self.generate_core_calls <= 2:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        return GenerationResult(
+            request=request, output_text="ok", status=RunStatus.SUCCESS, final_valid_length=1
+        )
+
+    def _reload_with_cpu_offload(self):
+        self.reload_calls += 1
+        if not self._supports_offload:
+            return False
+        self._cpu_offloaded = True
+        self._cpu_offloaded_bytes = 123_456
+        return True
+
+
+def test_generate_escalates_to_cpu_offload_after_a_second_oom(monkeypatch):
+    monkeypatch.setattr(base_module, "_release_cuda_cache", lambda: None)
+
+    adapter = _OOMTwiceThenSucceedWithOffloadAdapter(supports_offload=True)
+    result = adapter.generate(GenerationRequest(prompt="test", max_new_tokens=1, seed=42))
+
+    assert adapter.generate_core_calls == 3  # normal, cache-cleared retry, offload retry
+    assert adapter.reload_calls == 1  # only escalates to reload once, after the 2nd OOM
+    assert result.status == RunStatus.SUCCESS
+    assert result.extra["cpu_offloaded"] is True
+    assert result.extra["cpu_offloaded_bytes"] == 123_456
+
+
+def test_generate_gives_up_as_oom_when_adapter_cannot_reload_with_offload(monkeypatch):
+    monkeypatch.setattr(base_module, "_release_cuda_cache", lambda: None)
+
+    adapter = _OOMTwiceThenSucceedWithOffloadAdapter(supports_offload=False)
+    result = adapter.generate(GenerationRequest(prompt="test", max_new_tokens=1, seed=42))
+
+    assert adapter.generate_core_calls == 2  # never gets a 3rd attempt
+    assert adapter.reload_calls == 1  # asked, but it declined
+    assert result.status == RunStatus.OOM
+    assert "cpu_offloaded" not in result.extra
+
+
+def test_generate_never_flags_cpu_offloaded_for_an_adapter_that_never_offloaded():
+    result = _OOMOnceThenSucceedAdapter().generate(
+        GenerationRequest(prompt="test", max_new_tokens=1, seed=42)
+    )
+    assert result.status == RunStatus.SUCCESS
+    assert "cpu_offloaded" not in result.extra

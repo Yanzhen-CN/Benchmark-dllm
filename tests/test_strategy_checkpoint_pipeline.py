@@ -1,18 +1,20 @@
 """Score a trace's decoded text at fixed checkpoints plus the final forward,
-then combine the resulting curves into one sample's AUC/SFI.
+then combine the resulting curves into one sample's Structure-First Score.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.structeval_t import (
     StructEvalSchema,
+    StructEvalTDataset,
     checkpoint_indices,
     struct_eval_t_checkpoint_scores,
 )
 from dllm_bench.interfaces import PositionState, TraceStep
-from dllm_bench.datasets.mbpp import mbpp_checkpoint_scores
+from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample, mbpp_checkpoint_scores
 from dllm_bench.metrics.strategy_score import strategy_score
 
 
@@ -88,10 +90,15 @@ def test_struct_eval_t_checkpoint_scores_feed_directly_into_strategy_score():
     structure_scores, content_scores = struct_eval_t_checkpoint_scores(trace, schema, interval=1)
     score = strategy_score(structure_scores, content_scores)
     assert score is not None
-    assert score > 0  # structure formed before content did
+    assert score > 0.5  # structure formed before content did
+    aux = StructEvalTDataset().trace_aux_metrics(
+        Sample(sample_id="1", prompt="p", reference=schema), trace
+    )
+    assert aux["structure_first_score"] == pytest.approx(score)
+    assert aux["structure_first_eligible_rate"] == 1.0
 
 
-def test_mbpp_checkpoint_scores_feed_directly_into_sfi():
+def test_mbpp_checkpoint_scores_feed_directly_into_structure_first_score():
     trace = [
         _step("def solve(x):\n    if x:\n        return", 0),
         _step("def solve(x):\n    if x:\n        return x + 1", 1),
@@ -100,4 +107,13 @@ def test_mbpp_checkpoint_scores_feed_directly_into_sfi():
     assert structure[-1] == pytest.approx(1.0)
     assert content[-1] == pytest.approx(1.0)
     assert structure[0] > content[0]
-    assert strategy_score(structure, content) > 0
+    assert strategy_score(structure, content) > 0.5
+    aux = MBPPDataset().trace_aux_metrics(
+        Sample(
+            sample_id="1",
+            prompt="p",
+            reference=MbppSample(test_list=["assert solve(1) == 2"]),
+        ),
+        trace,
+    )
+    assert aux["structure_first_score"] > 0.5

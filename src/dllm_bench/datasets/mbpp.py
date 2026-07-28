@@ -150,6 +150,38 @@ class MBPPDataset(Dataset):
             complete=complete,
         )
 
+    def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
+        summary = super().aggregate(results)
+        # Keep the generic key for pipeline compatibility and expose the
+        # official metric name explicitly in summary.json.
+        summary["pass_at_1"] = summary["mbpp_score"]
+        structure_first = [
+            result.aux["structure_first_score"]
+            for result in results
+            if "structure_first_score" in result.aux
+        ]
+        summary["structure_first_eligible_ratio"] = len(structure_first) / len(results)
+        if structure_first:
+            summary["structure_first_score"] = sum(structure_first) / len(structure_first)
+        return summary
+
+    def trace_aux_metrics(
+        self, sample: Sample, trace: list[TraceStep]
+    ) -> dict[str, float]:
+        del sample
+        if not trace:
+            return {"structure_first_eligible_rate": 0.0}
+        from ..metrics.strategy_score import strategy_score
+
+        structure, content = mbpp_checkpoint_scores(trace)
+        score = strategy_score(structure, content)
+        if score is None:
+            return {"structure_first_eligible_rate": 0.0}
+        return {
+            "structure_first_score": score,
+            "structure_first_eligible_rate": 1.0,
+        }
+
 
 def _python_feature_sets(code: str) -> tuple[list[set[str]], list[set[str]]]:
     """Appendix A.3's four structure and three content feature groups."""
