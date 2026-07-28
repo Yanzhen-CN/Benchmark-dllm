@@ -68,31 +68,47 @@ class BaseModelAdapter(ABC):
 
     def generate(self, request: GenerationRequest) -> GenerationResult:
         _seed_everything(request.seed)
-        measurement = _SampleMeasurement()
-        self._active_measurement = measurement
-        try:
-            if not self.deferred_measurement:
-                measurement.start()
-            result = self._generate_core(request)
-        except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure -> Run Status
-            status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
-            return GenerationResult(
-                request=request,
-                output_text="",
-                status=status,
-                error_message=str(exc),
-            )
-        finally:
-            measurement.stop()
-            self._active_measurement = None
-
-        result.timing = TimingResult(
-            wall_clock_seconds=measurement.wall_clock_seconds or 0.0,
-            source="measured",
-        )
-        result.energy_joules = measurement.energy_joules
-        result.peak_vram_gb = measurement.peak_vram_gb
-        return result
+        for attempt in (0, 1):
+            measurement = _SampleMeasurement()
+            self._active_measurement = measurement
+            try:
+                if not self.deferred_measurement:
+                    measurement.start()
+                result = self._generate_core(request)
+            except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure -> Run Status
+                measurement.stop()
+                self._active_measurement = None
+                if attempt == 0 and _looks_like_oom(exc):
+                    # One retry with a freshly-cleared CUDA cache — see
+                    # `_release_cuda_cache`'s docstring for the accumulated
+                    # -fragmentation pattern this recovers from. Only the
+                    # retried attempt's timing is ever recorded; this failed
+                    # one is discarded entirely (same as a warmup call is
+                    # never counted), so a sample that never needed a retry
+                    # is completely unaffected — clearing the cache before
+                    # every sample regardless of need would otherwise force
+                    # the next allocation back to a slow, cold `cudaMalloc`
+                    # *inside* the timed window even when nothing was wrong.
+                    _release_cuda_cache()
+                    _seed_everything(request.seed)
+                    continue
+                status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
+                return GenerationResult(
+                    request=request,
+                    output_text="",
+                    status=status,
+                    error_message=str(exc),
+                )
+            else:
+                measurement.stop()
+                self._active_measurement = None
+                result.timing = TimingResult(
+                    wall_clock_seconds=measurement.wall_clock_seconds or 0.0,
+                    source="measured",
+                )
+                result.energy_joules = measurement.energy_joules
+                result.peak_vram_gb = measurement.peak_vram_gb
+                return result
 
     def profile_compute(self, request: GenerationRequest) -> ComputeHandle:
         """Separate profiling replay for ComputePerSample (Appendix B): run the
@@ -112,6 +128,7 @@ class BaseModelAdapter(ABC):
     def warmup_generation(self, request: GenerationRequest) -> None:
         """Run a short untimed generation to initialize kernels/caches."""
         _seed_everything(request.seed)
+        _release_cuda_cache()
         self._active_measurement = None
         previous = getattr(self, "_suppress_trace_instrumentation", False)
         self._suppress_trace_instrumentation = True
@@ -216,6 +233,47 @@ def _seed_everything(seed: int) -> None:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+    except ImportError:
+        pass
+
+
+def _release_cuda_cache() -> None:
+    """Return PyTorch's cached-but-currently-unused CUDA blocks to the driver.
+
+    A long sweep (a dataset's full sample count, times however many diffusion
+    steps each sample takes) allocates and frees many similarly-but-not
+    identically-shaped tensors in one long-lived process — exactly the
+    pattern that fragments PyTorch's caching allocator over time. Observed in
+    practice: a model's `best` variant (more steps per sample, so more
+    allocations) can run an entire dataset's worth of samples successfully,
+    and the very next variant (`fast`, fewer steps — strictly less GPU work
+    per sample) OOMs on its very first sample, in the same process right
+    after `best` finishes. That ordering only makes sense as accumulated
+    fragmentation, not `fast` itself being more expensive.
+
+    Deliberately NOT called before every sample: `generate()` only calls this
+    on a retry after an actual OOM, timing just the retried attempt (the
+    failed one is discarded, like a warmup call). Clearing the cache
+    unconditionally would force the next allocation back to a cold, slow
+    `cudaMalloc` *inside* the timed window even for a sample that was never
+    going to have a problem, quietly inflating every single Time-per-Sample
+    measurement rather than just the rare one that actually needed it.
+    `warmup_generation` calls this unconditionally instead, since warmup is
+    never timed at all — a good place to catch the best->fast fragmentation
+    case specifically, at zero measurement cost."""
+    import gc
+
+    # A GPU tensor kept alive by a reference cycle (rather than a simple,
+    # immediately-decremented refcount) can outlive the Python scope that
+    # created it until a GC pass actually runs. Forcing one first means
+    # `empty_cache()` below sees the fullest possible picture of what's
+    # actually free before it decides what to hand back to the driver.
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     except ImportError:
         pass
 

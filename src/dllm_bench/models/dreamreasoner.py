@@ -71,6 +71,24 @@ Confirmed facts driving this port (not guessed):
   same as iLLaDA. This means design doc 4.2.6's `ErrorThenCorrect` is
   expected to come out ~0 for this model, same as iLLaDA — a real,
   ported-implementation-driven finding, not a modeling gap in this adapter.
+- The real source's own `build_block_diffusion_attention_mask` materializes
+  a dense `(total_length, total_length)` tensor up front — fine at the
+  source's own short-context examples, but at RULER's long-context points
+  (up to this model's own 32768-token window, see
+  `configs/datasets/ruler.yaml`) that tensor alone is multiple GB, on top of
+  the ~16 GiB bf16 model and the KV cache, and was observed to OOM a 24 GiB
+  GPU. This adapter never materializes it: every call this port ever makes
+  only ever needs "attend to everything already in the KV cache plus myself"
+  — which is exactly what passing no `attention_mask` (`None`) already means
+  once prefill itself is done incrementally, one block at a time, rather
+  than in one shot over the whole prompt (see `_run_denoising`). This is a
+  memory-only change — every call still sees exactly the same key/value set
+  it would under the source's explicit block-tril mask (block i can attend
+  to blocks 0..i and nothing after), since blocks are only ever added to the
+  cache in that same 0..i order and nothing later is ever visible to an
+  earlier call. The source's own `build_block_diffusion_attention_mask` is
+  therefore not ported at all — there is no slice of it any call here would
+  ever need that isn't already exactly "no mask".
 
 This benchmark's own addition (not from source): a full-vocab softmax over
 each step's raw logits, purely to populate `entropy_by_position`/
@@ -198,21 +216,26 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         num_blocks = max(1, math.ceil((prompt_len + gen_length) / block_length))
         total_length = num_blocks * block_length
 
-        attention_mask = _build_block_diffusion_attention_mask(num_blocks, block_length, device)
         position_ids = torch.arange(total_length, device=device, dtype=torch.long).unsqueeze(0)
 
         x = torch.full((1, total_length), mask_token_id, dtype=torch.long, device=device)
         x[:, :prompt_len] = input_ids
 
         prefill_blocks = prompt_len // block_length
-        prefill_length = prefill_blocks * block_length
         past_key_values = DynamicCache()
 
-        if prefill_length > 0:
+        # Prefill one block at a time (store_kv=True, no attention_mask) —
+        # each call's key/value set is exactly the cache accumulated so far
+        # plus this block's own tokens, which is exactly what the source's
+        # explicit block-tril mask restricts a one-shot prefill call to.
+        # See the module docstring for why this never needs the source's own
+        # dense (total_length, total_length) mask tensor.
+        for prefill_block in range(prefill_blocks):
+            block_start = prefill_block * block_length
+            block_end = block_start + block_length
             self._model(
-                x[:, :prefill_length],
-                attention_mask=attention_mask[:, :prefill_length, :prefill_length],
-                position_ids=position_ids[:, :prefill_length],
+                x[:, block_start:block_end],
+                position_ids=position_ids[:, block_start:block_end],
                 past_key_values=past_key_values,
                 use_cache=True,
                 store_kv=True,
@@ -226,7 +249,6 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             block_start = num_block * block_length
             block_end = block_start + block_length
             cur_x = x[:, block_start:block_end].clone()
-            cur_attn = attention_mask[:, block_start:block_end, :block_end]
             cur_pos = position_ids[:, block_start:block_end]
 
             for step in range(denoising_steps + 1):
@@ -238,7 +260,6 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     # to them. No positions change, so no TraceStep.
                     self._model(
                         cur_x,
-                        attention_mask=cur_attn,
                         position_ids=cur_pos,
                         past_key_values=past_key_values,
                         use_cache=True,
@@ -249,7 +270,6 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                 force_accept = step == denoising_steps - 1
                 logits = self._model(
                     cur_x,
-                    attention_mask=cur_attn,
                     position_ids=cur_pos,
                     past_key_values=past_key_values,
                     use_cache=True,
@@ -367,15 +387,6 @@ def _get_num_transfer_tokens(block_length: int, steps: int):
     num_transfer_tokens = torch.zeros(steps, dtype=torch.int64) + base
     num_transfer_tokens[:remainder] += 1
     return num_transfer_tokens
-
-
-def _build_block_diffusion_attention_mask(num_blocks: int, block_length: int, device, batch_size: int = 1):
-    import torch
-
-    block_mask = torch.tril(torch.ones(num_blocks, num_blocks, device=device))
-    return block_mask.repeat_interleave(block_length, dim=0).repeat_interleave(block_length, dim=1).unsqueeze(0).expand(
-        batch_size, -1, -1
-    )
 
 
 def _select_transfer_index(

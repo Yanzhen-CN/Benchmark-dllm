@@ -304,6 +304,23 @@ def model_environment(profile: ModelProfile) -> dict[str, str]:
         DLLM_MODEL_CONFIG=profile.model_config,
         DLLM_VENV=str(venv_dir(profile)),
     )
+    if "gpu" in profile.extras.split(",") and "PYTORCH_CUDA_ALLOC_CONF" not in environment:
+        # PyTorch's own OOM error message recommends this: a long sweep
+        # (a dataset's full sample count, many diffusion steps each)
+        # allocates and frees many similarly-but-not-identically-shaped
+        # tensors in one long-lived process, which fragments the default
+        # segment-based allocator over time — observed in practice as a
+        # model's `best` variant (more steps/sample, so more allocations)
+        # running an entire dataset successfully, and the very next variant
+        # (`fast`, strictly less GPU work per sample) OOM-ing on its very
+        # first sample right after. `expandable_segments` lets an existing
+        # CUDA memory segment grow in place instead of needing a whole new
+        # one to fit a request nothing else fits, which avoids that failure
+        # mode without ever needing to clear the cache mid-run — so, unlike
+        # a runtime `empty_cache()` + retry, this has no cold-allocation
+        # cost to land inside any sample's measured time. Only sets a
+        # default; an operator's own `PYTORCH_CUDA_ALLOC_CONF` always wins.
+        environment["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     return environment
 
 

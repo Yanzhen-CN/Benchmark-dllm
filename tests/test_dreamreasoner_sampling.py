@@ -46,7 +46,7 @@ class _FakeLogitsModel:
         self.calls: list[dict] = []
 
     def __call__(self, x, attention_mask=None, position_ids=None, past_key_values=None, use_cache=None, store_kv=None):
-        self.calls.append({"store_kv": store_kv, "shape": tuple(x.shape)})
+        self.calls.append({"store_kv": store_kv, "shape": tuple(x.shape), "attention_mask": attention_mask})
 
         class _Output:
             pass
@@ -323,3 +323,39 @@ def test_dreamreasoner_default_denoising_steps_falls_back_to_block_length():
 
     _, trace, _ = adapter._run_denoising("prompt", step_config)
     assert len(trace) == 4  # denoising_steps defaulted to block_length=4
+
+
+def test_dreamreasoner_prefill_runs_one_block_at_a_time_with_no_dense_mask():
+    """Regression test for a real OOM: the source's own
+    `build_block_diffusion_attention_mask` materializes a dense
+    (total_length, total_length) tensor, which is several GB at RULER's
+    long-context points (see module docstring) — this adapter must never
+    build or pass one. A multi-block prompt must be prefilled one block at a
+    time (each call shaped (1, block_length), never the whole prompt at
+    once), and no call anywhere should pass a 2D+ attention_mask."""
+    prompt_len = 12  # 3 whole blocks of prompt, block-aligned
+    gen_length = 4
+    block_length = 4
+    logits = torch.zeros(1, block_length, VOCAB_SIZE)
+    step_config = DiffusionStepConfig(
+        gen_length=gen_length,
+        block_length=block_length,
+        steps_per_block=4,
+        extra={"remasking_strategy": "low_confidence_static", "mask_token_id": 99},
+    )
+    adapter = DreamReasonerAdapter("unused-checkpoint", step_config, config_name="test")
+    fake_model = _FakeLogitsModel(logits)
+    adapter._model = fake_model
+    adapter._tokenizer = _FakeTokenizer(prompt_len)
+    adapter._device = "cpu"
+
+    adapter._run_denoising("prompt", step_config)
+
+    prefill_calls = fake_model.calls[:3]  # 3 prefill blocks, before any denoising step
+    assert len(prefill_calls) == 3
+    for call in prefill_calls:
+        assert call["shape"] == (1, block_length)  # never the whole (1, 12) prompt at once
+        assert call["store_kv"] is True
+    # No call anywhere (prefill, draft, or finalize) ever receives a 2D+
+    # attention_mask — every call in this adapter passes none at all.
+    assert all(call["attention_mask"] is None for call in fake_model.calls)
