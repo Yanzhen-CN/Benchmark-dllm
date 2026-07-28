@@ -11,6 +11,7 @@ venv/
 
 # generate/score/visualize pipeline output (model_output/score_output/visualization_output)
 output/
+artifacts/
 .tmp_*/
 *.png
 *.gif

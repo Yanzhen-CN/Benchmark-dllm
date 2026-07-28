@@ -1,7 +1,17 @@
 dataset: sudoku
 dataset_class: dllm_bench.datasets.sudoku.SudokuDataset
-primary_metric: official_exact_match_accuracy
-aux_metrics: [accuracy_easy, accuracy_hard]
+primary_metric: blank_cell_accuracy  # correct originally-blank cells / all originally-blank cells
+aux_metrics:
+  - official_exact_match_accuracy
+  - official_format_valid
+  - exact_solve_rate
+  - blank_cell_accuracy_by_difficulty
+  - exact_solve_rate_by_difficulty
+  - cell_accuracy
+  - given_preservation_rate
+  - constraint_satisfaction_rate
+  - completion_rate
+  - conflict_rate
 sample_size: 100
 difficulty_counts:
   easy: 50
@@ -11,9 +21,9 @@ dataset_kwargs:
   easy_count: 50
   hard_count: 50
   seed: 42
-# Official Ye et al. / Park protocol: raw 81-digit puzzle (0 = blank), raw
-# 81-digit solution, whole-sequence exact-match scoring. Rows 100000..100999
-# of the source million-game file are the official test split. Easy/Hard is
-# our reporting-only stratum on that unchanged split: <=5 versus >=6
-# synchronous naked-single rounds. Preparation materializes and freezes the
-# selected formal 50/50 subset; model runs all consume that same 100-row file.
+# The source split and raw 81-digit input/output contract follow Ye et al. /
+# Park. Blank-cell accuracy is the diagnostic primary score; strict official
+# whole-sequence exact match is retained separately. Rows 100000..100999 are
+# the source test split. Easy/Hard is our reporting-only stratum on that
+# unchanged split: <=5 versus >=6 synchronous naked-single rounds. Preparation
+# freezes the selected formal 50/50 subset for every model.

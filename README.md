@@ -32,7 +32,7 @@ What's still open, and why:
 | HelloBench semantic judge | Deliberately excluded | Official HelloEval requires checklist-based LLM judging. This project reports a clearly named, judge-free `objective_quality_score` plus observable major-failure rates; it never labels that score HelloEval. |
 | Real dataset loading | GSM8K + local files | `--no-demo` downloads pinned/checksummed official GSM8K; every dataset also accepts local JSON/JSONL through `--samples-file`. Remaining official task-bank downloaders are external preparation. |
 | Batch experiment runner | Implemented with isolated environments | `run_bench.py` reads the matrix and delegates each model to its own script/venv. |
-| Running the real models end-to-end | Not done in this environment | No GPU / multi-GB checkpoint downloads here — the sampling loops themselves are ported/verified against reference code and algorithm-tested with fake logits (see table above), but nobody has run them against the actual weights yet. First real run should sanity-check output quality before trusting the pipeline's numbers. |
+| Running the real models end-to-end | Diagnostic runs imported | Qwen3-4B, iLLaDA, and DreamReasoner outputs from RTX 4090 runs are available locally. Coverage, OOM rows, protocol failures, and missing model pairs are audited in `docs/CURRENT_RESULTS.md`; these results are not yet publication-ready. |
 
 None of these block the framework from being extended — each is isolated
 behind the same `ModelAdapter`/`Dataset` interface, with a TODO at the exact
@@ -49,6 +49,7 @@ setup_venv.py / run_tests.py   # venv dispatcher / test runner (see below)
 prepare_model.py               # pre-warm a model's HF checkpoint cache (see below)
 prepare_data.py                # prepare/cache every real dataset in the matrix
 venv_scripts/                  # one Python venv/install/run script per model
+docs/                          # benchmark audit, task taxonomy, and artifact layout
 configs/
   models/       # one YAML per model, one or more named `configs:` variants (Appendix D)
   datasets/     # one YAML per dataset (section 1/6): dataset class + sample size + seed
@@ -75,7 +76,15 @@ src/dllm_bench/
                      # (trace visuals), sudoku_trace_viz.py (Sudoku's extra GIF)
   cli.py            # `dllm-bench generate/score/visualize/report/matrix`
 tests/              # one file per module area; see Testing for the current suite
+output/             # ignored canonical generate/score/visualize artifacts
+artifacts/          # ignored transfer archives and superseded local analyses
 ```
+
+See `docs/PROJECT_LAYOUT.md` for the ownership and retention rules for every
+top-level directory. Current imported-run coverage and known validity limits
+are recorded in `docs/CURRENT_RESULTS.md`. The paper-style benchmark proposal,
+DiffusionGemma run plan, and first-draft checklist live in
+`docs/FIRST_DRAFT_REPORT.md`.
 
 ## Main entry points
 
@@ -234,10 +243,11 @@ DATA_SOURCE=real OUTPUT_ROOT=output/formal \
 ```
 
 The default diagnostic suite uses 100 samples for each regular-capability
-dataset. Sudoku is stratified 50 easy / 50 hard. Its source and scoring follow
-Ye et al. (ICLR 2025): Park's million-game rows 100000--100999 are the test
-split, the prompt is the raw 81-digit puzzle (`0` = blank), the expected output
-is the raw 81-digit solution, and the score is whole-sequence exact match.
+dataset. Sudoku is stratified 50 easy / 50 hard. Its source and I/O protocol
+follow Ye et al. (ICLR 2025): Park's million-game rows 100000--100999 are the
+test split, the prompt is the raw 81-digit puzzle (`0` = blank), and the
+expected output is the raw 81-digit solution. Strict whole-sequence exact match
+is retained alongside the diagnostic blank-cell primary score described below.
 Easy/Hard is a reporting-only split on this unchanged official test set
 (at most 5 versus at least 6 synchronous naked-single rounds). Data preparation
 materializes the seeded formal subset itself (50 Easy + 50 Hard), so every
@@ -503,6 +513,14 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 | RULER | 10 per context-window x position cell |
 | HelloBench | 10 at 2K words + 10 at 4K words (20 total) |
 
+Sudoku's primary score is partial credit over the cells that were blank in
+the prompt: `correct blank cells / all blank cells`. A copied, unsolved
+puzzle therefore scores zero, while a partially correct solution receives
+proportional credit. Reports also retain strict `exact_solve_rate`, legacy
+all-cell `cell_accuracy`, given-cell preservation, completion, and
+constraint/conflict rates. Partial credit and exact solve rate are both
+reported separately for Easy and Hard puzzles.
+
 For HelloBench, repeat `--hellobench-length` to select `2k`, `4k`, or both.
 `--n-samples` is the total across the selected output profiles: selecting only
 `4k --n-samples 3` runs three 4K samples, while selecting both with
@@ -586,8 +604,9 @@ dllm-bench generate --model-config configs/models/qwen3_8b.yaml \
 
 iLLaDA and DiffusionGemma work the same way (`configs/models/illada.yaml`,
 `configs/models/diffusiongemma.yaml`). Their isolated scripts install the
-appropriate transformer versions. Nobody has run either against real
-weights yet in this environment (no GPU here) — see the Status table above.
+appropriate transformer versions. Imported iLLaDA runs have been scored;
+DiffusionGemma and its same-scale Gemma AR reference are still missing from the
+current result snapshot — see `docs/CURRENT_RESULTS.md`.
 
 ## Model checkpoints and caching
 
