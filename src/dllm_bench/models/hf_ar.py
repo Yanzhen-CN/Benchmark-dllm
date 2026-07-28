@@ -124,6 +124,7 @@ class QwenARAdapter(BaseModelAdapter):
             request.prompt,
             device=self._device,
             chat_template_kwargs={"enable_thinking": self._enable_thinking},
+            target_input_tokens=request.config.get("target_input_tokens"),
         )
         prompt_len = inputs["input_ids"].shape[1]
         capture_trace = self._capture_trace and self._trace_instrumentation_enabled()
@@ -194,4 +195,5 @@ class QwenARAdapter(BaseModelAdapter):
             trace=trace,
             num_forward_passes=len(generated_ids),
             final_valid_length=len(generated_ids),
+            extra={"input_tokens": int(prompt_len)},
         )

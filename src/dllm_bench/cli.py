@@ -258,6 +258,15 @@ def generate(
                 GenerationRequest(
                     prompt=warmup_sample.prompt,
                     max_new_tokens=warmup_tokens,
+                    config=(
+                        {
+                            "target_input_tokens": int(
+                                warmup_sample.meta["target_input_tokens"]
+                            )
+                        }
+                        if "target_input_tokens" in warmup_sample.meta
+                        else {}
+                    ),
                     sample_id="__warmup__",
                     seed=resolved_seed,
                 )

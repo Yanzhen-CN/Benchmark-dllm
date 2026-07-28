@@ -229,6 +229,18 @@ def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):
     assert (out_dir / "_meta.json").exists()
 
 
+def test_run_generation_passes_ruler_input_budget_to_adapter(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    sample = build_demo_samples("gsm8k", n=1)[0]
+    sample.meta["target_input_tokens"] = 8128
+    out_dir = tmp_path / "model_output"
+
+    run_generation(adapter, "ruler", [sample], max_new_tokens=64, out_dir=out_dir)
+
+    result = load_generation_result(out_dir / f"{sample.sample_id}.json")
+    assert result.request.config["target_input_tokens"] == 8128
+
+
 def test_run_generation_can_disable_trace_without_losing_forward_count(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
     sample = build_demo_samples("gsm8k", n=1)[0]

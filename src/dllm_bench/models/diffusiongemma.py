@@ -38,6 +38,7 @@ from .model_cache import (
     offloaded_parameter_bytes,
     reload_with_offload,
 )
+from .prompting import tokenize_instruction_prompt
 
 DEFAULT_DIFFUSIONGEMMA_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
 
@@ -171,12 +172,14 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         # the arguments below — no `self` parameter here on purpose.
         self._model._prepare_sampler = wrapped_prepare_sampler
         try:
-            # NOTE: this encode call is the standard AutoProcessor text
-            # pattern, inferred rather than directly quoted from the reference
-            # run.py (which builds its batch differently, from a
-            # pre-tokenized sample file) — confirm against the real
-            # processor before formal runs.
-            encoded = self._processor(text=request.prompt, return_tensors="pt").to(self._device)
+            # The official checkpoint uses AutoProcessor.apply_chat_template;
+            # the shared helper also applies RULER's post-template token cap.
+            encoded = tokenize_instruction_prompt(
+                self._processor,
+                request.prompt,
+                device=self._device,
+                target_input_tokens=request.config.get("target_input_tokens"),
+            )
             prompt_len = encoded["input_ids"].shape[1]
             self._start_measurement()
             with torch.inference_mode():
@@ -205,6 +208,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             trace=trace,
             num_forward_passes=forward_count,
             final_valid_length=len(generated_ids),
+            extra={"input_tokens": int(prompt_len)},
         )
 
 

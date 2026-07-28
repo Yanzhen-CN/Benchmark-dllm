@@ -72,7 +72,14 @@ def run_experiment(
         request = GenerationRequest(
             prompt=sample.prompt,
             max_new_tokens=sample_max_new_tokens,
-            config=dict(extra_config or {}),
+            config={
+                **dict(extra_config or {}),
+                **(
+                    {"target_input_tokens": int(sample.meta["target_input_tokens"])}
+                    if "target_input_tokens" in sample.meta
+                    else {}
+                ),
+            },
             sample_id=sample.sample_id,
             seed=seed,
         )

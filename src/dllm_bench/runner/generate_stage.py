@@ -136,6 +136,10 @@ def run_generation(
             )
         request_config = dict(extra_config or {})
         request_config["capture_trace"] = capture_trace
+        if "target_input_tokens" in sample.meta:
+            request_config["target_input_tokens"] = int(
+                sample.meta["target_input_tokens"]
+            )
         request = GenerationRequest(
             prompt=sample.prompt,
             max_new_tokens=sample_max_new_tokens,
