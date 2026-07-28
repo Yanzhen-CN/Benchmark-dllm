@@ -1,7 +1,7 @@
-# Diagnostic long-input evaluation. Each model runs the common 8192-token
-# context-window point and its own maximum context-window point. The prompt
-# occupies window - 64 tokens so that the short answer remains inside the
-# decoder-only model's legal total sequence length.
+# Controlled long-input comparison. Every model runs the same 8192-token
+# context-window point. Model-advertised maxima remain checkpoint metadata and
+# are not mixed into the formal quality/resource comparison. The prompt uses
+# window - 64 tokens so the short answer remains inside the legal total length.
 dataset: ruler
 dataset_class: dllm_bench.datasets.ruler.RulerDataset
 primary_metric: accuracy
@@ -10,13 +10,11 @@ task_types: [niah, multi_hop, aggregation]
 positions: [front, middle, back]
 samples_per_context_window_position: 10
 common_context_window_tokens: 8192
-include_model_max_context_window: true
+include_model_max_context_window: false
 max_output_tokens: 64
 seed: 42
 dataset_kwargs:
-  # All formal local-model maxima. Reference-only W1 uses the common 8192
-  # point and therefore needs no separate prepared maximum window.
-  context_windows: [8192, 32768, 40960, 262144]
+  context_windows: [8192]
   samples_per_context_window_position: 10
   max_output_tokens: 64
   seed: 42

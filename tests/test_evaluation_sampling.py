@@ -6,6 +6,7 @@ from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.hellobench import HelloBenchReference
 from dllm_bench.datasets.ruler import RulerReference
 from dllm_bench.datasets.sudoku import SudokuReference
+from dllm_bench.registry import load_yaml
 from dllm_bench.runner.evaluation_sampling import select_configured_samples
 
 
@@ -198,6 +199,18 @@ def test_ruler_deduplicates_equal_common_and_model_windows():
     )
 
     assert len(selected) == 30
+
+
+def test_formal_ruler_config_uses_only_shared_8192_window_for_large_models():
+    selected = select_configured_samples(
+        _ruler_samples((8192, 262144)),
+        load_yaml("configs/datasets/ruler.yaml"),
+        {"max_context_tokens": 262144},
+        seed=3,
+    )
+
+    assert len(selected) == 30
+    assert {sample.meta["context_window_tokens"] for sample in selected} == {8192}
 
 
 def test_ruler_reports_missing_stratum_clearly():

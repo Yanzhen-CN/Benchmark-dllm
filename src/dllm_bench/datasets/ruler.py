@@ -1,8 +1,8 @@
-"""RULER: Accuracy, plus Context Retention, Position Robustness, Completion,
-Truncation (section 1 / 2.1).
+"""RULER: Accuracy, Position Robustness, Completion, and Truncation.
 
-Context Retention compares the model-max context-window point with the common
-8192-token point; Completion/Truncation are derived
+The formal matrix uses one controlled 8192-token context window for every
+model. The reusable sampling layer can still select additional configured
+windows for a separate capacity study. Completion/Truncation are derived
 from each run's :class:`~dllm_bench.interfaces.RunStatus` at the orchestrator
 level (a run that hit ``RunStatus.TRUNCATED`` did not finish naturally), not
 computed here. This module owns per-sample accuracy and the Position

@@ -216,8 +216,9 @@ python prepare_model.py -m gemma4_26b_a4b -m diffusiongemma
 
 For formal comparisons, keep GPU type, precision, dataset sample set, output
 caps, trace policy, and compute-profiling flag identical. Do not quantize or
-CPU-offload only one side. A longest-window RULER OOM remains a valid capacity
-finding rather than a reason to silently change one model's execution class.
+CPU-offload only one side. The formal RULER comparison uses one shared
+8192-token context window; model-advertised maximum context is metadata, not a
+second task point mixed into the primary resource comparison.
 `run_model.py` creates the environment automatically when it is missing, then
 launches the model's generation rows with that venv's Python executable. It does
 not depend on shell activation. Override settings with environment variables:
@@ -243,13 +244,10 @@ DATA_SOURCE=real OUTPUT_ROOT=output/formal \
 
 The default diagnostic suite uses 100 samples for each regular-capability
 dataset. Sudoku is stratified 50 easy / 50 hard. RULER selects 10 samples for
-each `context-window × position` cell at both the common 8192-token point and
-the selected model's own maximum window; NIAH, multi-hop tracing, and
-aggregation are balanced inside those cells. The 64-token
-answer allowance is included in that window, so the corresponding prompt
-targets are 8128 and `model_max - 64` tokens. If both windows are 8192 (as for
-iLLaDA), the same common point is run once: 30 samples rather than a duplicated
-60. The formal strengthened profile can raise each cell from 10 to 20.
+each position cell at the shared 8192-token point; NIAH, multi-hop tracing,
+and aggregation are balanced inside those cells. The 64-token answer allowance
+is included in that window, so every RULER prompt targets 8128 tokens. This
+produces 30 samples per model configuration.
 
 HelloBench is a focused long-output diagnostic rather than a full leaderboard
 run: 10 shared samples target 2K words with `max_new_tokens=3072`, and 10
@@ -551,11 +549,10 @@ StructEval-T uses the official non-renderable formula as its primary metric,
 fault-tolerant formation score and strict all-fields-complete 0/1 result are
 retained only as auxiliary diagnostics.
 
-RULER runs the common 8192-token context-window point and the model's own
-maximum point. If those are identical, the common samples are reused rather
-than duplicated. Each context-window point contains 30 samples: 10 at each of
-front/middle/back, balanced so that NIAH, multi-hop, and aggregation also have
-10 samples each. RULER keeps 64 tokens inside the total model window for its
+RULER runs only the shared 8192-token context-window point. It contains 30
+samples: 10 at each of front/middle/back, balanced so that NIAH, multi-hop,
+and aggregation also have 10 samples each. Model-advertised context maxima are
+not additional formal task points. RULER keeps 64 tokens inside the total model window for its
 short answer; the input target is therefore `context_window - 64`. The
 prepared filler is fitted again after the selected model's chat template and
 tokenizer are applied, so the actual encoded input does not exceed that
