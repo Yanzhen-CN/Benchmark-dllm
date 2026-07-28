@@ -384,6 +384,15 @@ the 8B-class checkpoints do not transiently become default-precision models
 that exhaust a 24 GiB device. `inference_dtype` is persisted in each run's
 `_meta.json` for reproducibility.
 
+If a local HF model still reaches a genuine capacity OOM after one
+cache-cleared retry, the runner may reload it with Accelerate CPU offload.
+Every affected sample records `extra.cpu_offloaded=true` plus the actual
+CPU-resident parameter/buffer amount as `cpu_offloaded_bytes` and
+`cpu_offloaded_gib`; the dataset `_meta.json` records the same placement after
+the lazy load has completed. Such samples keep valid task-quality results, but
+their time/TPS/SPS, GPU-only energy, and peak-VRAM values must be compared as a
+separate CPU-offloaded execution class rather than mixed with fully-GPU runs.
+
 Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in
 counter assumes equal Q/K/V head counts and asserts on Qwen3's grouped-query

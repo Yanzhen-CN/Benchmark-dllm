@@ -184,6 +184,23 @@ def run_generation(
             )
         save_generation_result(generation, sample_path)
 
+    # Placement is not known when `_meta.json` is first created: HF adapters
+    # load lazily, and CPU offload is only triggered after a real sample OOM.
+    # Refresh only these runtime placement fields after generation. Preserve
+    # a previous true value when a resumed invocation skipped every sample
+    # and therefore never loaded the model in this process.
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    run_metadata = meta.setdefault("run_metadata", {})
+    current_metadata = collect_run_metadata(adapter)
+    if current_metadata["cpu_offloaded"]:
+        run_metadata["cpu_offloaded"] = True
+        if "cpu_offloaded_bytes" in current_metadata:
+            run_metadata["cpu_offloaded_bytes"] = current_metadata["cpu_offloaded_bytes"]
+            run_metadata["cpu_offloaded_gib"] = current_metadata["cpu_offloaded_gib"]
+    else:
+        run_metadata.setdefault("cpu_offloaded", False)
+    save_meta(meta, meta_path)
+
     return GenerateStageSummary(
         out_dir=str(out_dir), generated=generated, skipped=skipped, total=len(samples)
     )

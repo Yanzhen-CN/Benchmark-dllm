@@ -171,6 +171,37 @@ def test_dreamreasoner_reload_with_cpu_offload_switches_to_device_map_auto(monke
     ]
 
 
+def test_dreamreasoner_releases_old_model_before_auto_device_placement(monkeypatch):
+    monkeypatch.setattr(
+        transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: object()
+    )
+    load_count = 0
+    adapter = None
+
+    def fake_model_from_pretrained(name, *args, **kwargs):
+        nonlocal load_count
+        load_count += 1
+        if load_count == 2:
+            assert adapter._model is None
+        return _FakeHFModel()
+
+    monkeypatch.setattr(
+        transformers.AutoModelForCausalLM,
+        "from_pretrained",
+        fake_model_from_pretrained,
+    )
+    adapter = DreamReasonerAdapter(
+        "dreamreasoner-checkpoint",
+        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
+        config_name="best",
+    )
+
+    adapter._ensure_loaded()
+    adapter._reload_with_cpu_offload()
+
+    assert load_count == 2
+
+
 def test_dreamreasoner_reload_flags_cpu_offloaded_when_real_bytes_land_on_cpu(monkeypatch):
     def fake_model_from_pretrained(name, *args, **kwargs):
         model = _FakeHFModel()
@@ -193,6 +224,17 @@ def test_dreamreasoner_reload_flags_cpu_offloaded_when_real_bytes_land_on_cpu(mo
 
     assert adapter._cpu_offloaded is True
     assert adapter._cpu_offloaded_bytes == 50 * 2  # only the cpu-resident tensor's bytes
+
+
+def test_offload_measurement_does_not_count_meta_or_disk_placeholders():
+    model = _FakeHFModel()
+    model._fake_parameters = [
+        _FakeOffloadableTensor("cuda", numel=100, element_size=2),
+        _FakeOffloadableTensor("cpu", numel=50, element_size=2),
+        _FakeOffloadableTensor("meta", numel=500, element_size=2),
+    ]
+
+    assert model_cache.offloaded_parameter_bytes(model) == 50 * 2
 
 
 def test_dreamreasoner_reload_not_flagged_when_everything_still_lands_on_gpu(monkeypatch):

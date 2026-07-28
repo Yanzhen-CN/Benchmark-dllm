@@ -105,8 +105,15 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         def _load_with_offload():
             return self._load_model_and_processor(self._device, device_map_auto=True)
 
+        def _release_current() -> None:
+            self._model = None
+            self._processor = None
+
         self._processor, self._model = reload_with_offload(
-            self._model_name, self._device, _load_with_offload
+            self._model_name,
+            self._device,
+            _load_with_offload,
+            release_current=_release_current,
         )
         self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
         self._cpu_offloaded = self._cpu_offloaded_bytes > 0

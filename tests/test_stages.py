@@ -40,6 +40,28 @@ def test_run_generation_writes_one_file_per_sample(tmp_path):
         assert (out_dir / f"{sample.sample_id}.json").exists()
 
 
+def test_run_generation_refreshes_lazy_cpu_offload_metadata(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    samples = build_demo_samples("gsm8k", n=1)
+    real_generate = adapter.generate
+
+    def generate(request):
+        result = real_generate(request)
+        adapter._cpu_offloaded = True
+        adapter._cpu_offloaded_bytes = 2 * 1024**3
+        return result
+
+    adapter.generate = generate
+    out_dir = tmp_path / "model_output"
+
+    run_generation(adapter, "gsm8k", samples, max_new_tokens=16, out_dir=out_dir)
+
+    meta = json.loads((out_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["run_metadata"]["cpu_offloaded"] is True
+    assert meta["run_metadata"]["cpu_offloaded_bytes"] == 2 * 1024**3
+    assert meta["run_metadata"]["cpu_offloaded_gib"] == 2.0
+
+
 def test_run_generation_reports_per_sample_start_and_finish(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
     samples = build_demo_samples("gsm8k", n=2)

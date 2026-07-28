@@ -115,19 +115,28 @@ class BaseModelAdapter(ABC):
                     # `_release_cuda_cache`'s docstring for the accumulated
                     # -fragmentation pattern this recovers from, cheaply and
                     # with no effect on any sample that never needed it.
+                    # An exception traceback can retain the failed forward's
+                    # local tensors. Release it before empty_cache(), or the
+                    # allocator cannot actually reclaim those live blocks.
+                    exc.__traceback__ = None
                     _release_cuda_cache()
                     _seed_everything(request.seed)
                     attempt += 1
                     continue
-                if _looks_like_oom(exc) and attempt == 1 and self._reload_with_cpu_offload():
-                    # Cache-clearing alone didn't fix it — a real capacity
-                    # ceiling, not fragmentation. Escalate to the expensive
-                    # fix (reload with part of the model on CPU) only now,
-                    # and only because this specific sample proved it's
-                    # actually needed.
-                    _seed_everything(request.seed)
-                    attempt += 1
-                    continue
+                if _looks_like_oom(exc) and attempt == 1:
+                    # The reload must also happen after the failed forward's
+                    # traceback releases its tensor references; otherwise
+                    # device_map="auto" sees artificially low free VRAM.
+                    exc.__traceback__ = None
+                    if self._reload_with_cpu_offload():
+                        # Cache-clearing alone didn't fix it — a real capacity
+                        # ceiling, not fragmentation. Escalate to the expensive
+                        # fix (reload with part of the model on CPU) only now,
+                        # and only because this specific sample proved it's
+                        # actually needed.
+                        _seed_everything(request.seed)
+                        attempt += 1
+                        continue
                 status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
                 return GenerationResult(
                     request=request,
@@ -149,6 +158,7 @@ class BaseModelAdapter(ABC):
                     offloaded_bytes = getattr(self, "_cpu_offloaded_bytes", None)
                     if offloaded_bytes is not None:
                         result.extra["cpu_offloaded_bytes"] = offloaded_bytes
+                        result.extra["cpu_offloaded_gib"] = offloaded_bytes / (1024 ** 3)
                 return result
 
     def profile_compute(self, request: GenerationRequest) -> ComputeHandle:

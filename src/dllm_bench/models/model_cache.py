@@ -17,6 +17,7 @@ cache, not a disk one (that's `hf_cache.py`'s job).
 
 from __future__ import annotations
 
+import gc
 from collections.abc import Callable
 from typing import Any
 
@@ -44,7 +45,13 @@ def evict(model_name_or_path: str, device: str) -> None:
     _CACHE.pop((model_name_or_path, device), None)
 
 
-def reload_with_offload(model_name_or_path: str, device: str, offload_loader: Callable[[], Any]) -> Any:
+def reload_with_offload(
+    model_name_or_path: str,
+    device: str,
+    offload_loader: Callable[[], Any],
+    *,
+    release_current: Callable[[], None] | None = None,
+) -> Any:
     """Evict whatever's cached for this (name, device) key and reload via
     `offload_loader` (which must itself request `device_map="auto"` — this
     function has no HF-loading knowledge of its own), replacing the cache
@@ -53,11 +60,26 @@ def reload_with_offload(model_name_or_path: str, device: str, offload_loader: Ca
     reason this goes through the shared cache rather than each adapter
     instance separately swapping its own `self._model`."""
     evict(model_name_or_path, device)
+    # Evicting the cache is not enough: the adapter that hit the OOM still
+    # owns its `self._model` reference. Drop that reference before asking
+    # Accelerate to inspect available VRAM, otherwise device_map="auto"
+    # sees the old full-GPU copy and needlessly offloads too much (or fails
+    # to construct the replacement at all).
+    if release_current is not None:
+        release_current()
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
     return get_or_load(model_name_or_path, device, offload_loader)
 
 
 def offloaded_parameter_bytes(model: Any) -> int:
-    """Sum of parameter+buffer bytes NOT resident on a CUDA device, once
+    """Sum of parameter+buffer bytes resident on CPU, once
     `accelerate`'s `device_map="auto"` has moved part of a model to CPU —
     a direct, measurable answer to "how much VRAM did this overflow by"
     (design doc: this also incidentally measures each model's real VRAM
@@ -68,9 +90,9 @@ def offloaded_parameter_bytes(model: Any) -> int:
     needs no extra instrumentation around the forward pass itself."""
     total = 0
     for tensor in model.parameters():
-        if tensor.device.type != "cuda":
+        if tensor.device.type == "cpu":
             total += tensor.numel() * tensor.element_size()
     for tensor in model.buffers():
-        if tensor.device.type != "cuda":
+        if tensor.device.type == "cpu":
             total += tensor.numel() * tensor.element_size()
     return total

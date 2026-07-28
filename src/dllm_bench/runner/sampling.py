@@ -78,6 +78,7 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
     offloaded_bytes = getattr(adapter, "_cpu_offloaded_bytes", None)
     if offloaded_bytes is not None:
         metadata["cpu_offloaded_bytes"] = offloaded_bytes
+        metadata["cpu_offloaded_gib"] = offloaded_bytes / (1024 ** 3)
 
     git_commit = _get_git_commit()
     if git_commit:

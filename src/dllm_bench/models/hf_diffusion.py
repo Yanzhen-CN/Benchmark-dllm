@@ -130,8 +130,15 @@ class HFDiffusionAdapter(BaseModelAdapter):
         def _load_with_offload():
             return self._load_model_and_tokenizer(self._device, device_map_auto=True)
 
+        def _release_current() -> None:
+            self._model = None
+            self._tokenizer = None
+
         self._tokenizer, self._model = reload_with_offload(
-            self._model_name, self._device, _load_with_offload
+            self._model_name,
+            self._device,
+            _load_with_offload,
+            release_current=_release_current,
         )
         # Evicting the old (100%-GPU) copy before this reload frees its
         # memory first, so it's possible `device_map="auto"` finds enough

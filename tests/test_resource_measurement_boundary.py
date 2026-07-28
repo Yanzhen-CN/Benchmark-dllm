@@ -241,6 +241,7 @@ def test_generate_escalates_to_cpu_offload_after_a_second_oom(monkeypatch):
     assert result.status == RunStatus.SUCCESS
     assert result.extra["cpu_offloaded"] is True
     assert result.extra["cpu_offloaded_bytes"] == 123_456
+    assert result.extra["cpu_offloaded_gib"] == 123_456 / (1024 ** 3)
 
 
 def test_generate_gives_up_as_oom_when_adapter_cannot_reload_with_offload(monkeypatch):
