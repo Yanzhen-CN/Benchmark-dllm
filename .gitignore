@@ -16,6 +16,10 @@ artifacts/
 *.png
 *.gif
 
+# Versioned technical-report figures.
+!docs/figures/
+!docs/figures/*.png
+
 # Persistent project-local downloads/caches (models, datasets, package wheels)
 .data/
 # Legacy cache locations from older checkouts.

@@ -81,10 +81,15 @@ artifacts/          # ignored transfer archives and superseded local analyses
 ```
 
 See `docs/PROJECT_LAYOUT.md` for the ownership and retention rules for every
-top-level directory. Current imported-run coverage and known validity limits
-are recorded in `docs/CURRENT_RESULTS.md`. The paper-style benchmark proposal,
-DiffusionGemma run plan, and first-draft checklist live in
-`docs/FIRST_DRAFT_REPORT.md`.
+top-level directory. The complete imported-run tables, task diagnostics,
+matched comparisons, and figures live in `docs/TECHNICAL_DATA_REPORT.md`;
+`docs/CURRENT_RESULTS.md` remains the compact result ledger.
+
+Rebuild the tracked technical report from the current local result snapshot:
+
+```bash
+python scripts/build_technical_report.py
+```
 
 ## Main entry points
 
