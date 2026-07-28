@@ -103,6 +103,9 @@ python run_model.py --dry-run -m illada
 python run_model.py -m illada --n-samples 20
 python run_model.py -m illada -v fast
 python run_model.py -m illada_optimized -v fast
+python run_model.py -m illada -d hellobench --hellobench-length 2k --n-samples 3
+python run_model.py -m illada -d hellobench --hellobench-length 4k --n-samples 3
+python run_model.py -m illada -d hellobench --hellobench-length 2k --hellobench-length 4k --n-samples 6
 python run_score.py --dry-run -m illada
 python run_score.py -m dreamreasoner -d ruler hellobench --no-resume  # force re-score; never regenerates model output
 ```
@@ -533,6 +536,12 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 | Sudoku | 100 (50 Easy + 50 Hard) |
 | RULER | 10 per context-window x position cell |
 | HelloBench | 10 at 2K words + 10 at 4K words (20 total) |
+
+For HelloBench, repeat `--hellobench-length` to select `2k`, `4k`, or both.
+`--n-samples` is the total across the selected output profiles: selecting only
+`4k --n-samples 3` runs three 4K samples, while selecting both with
+`--n-samples 6` deterministically balances the run as three 2K plus three 4K.
+With neither option, the formal default remains 10 plus 10.
 
 MBPP's primary metric is official pass@1: one candidate passes only when all
 official tests pass, and the dataset score is the mean pass rate. Its

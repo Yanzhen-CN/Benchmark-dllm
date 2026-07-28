@@ -108,6 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--demo", dest="data_source", action="store_const", const="demo", default="demo")
     data.add_argument("--real-data", dest="data_source", action="store_const", const="real")
     parser.add_argument("--n-samples", type=int, default=None)
+    parser.add_argument(
+        "--hellobench-length",
+        action="append",
+        choices=("2k", "4k", "2000", "4000"),
+        help="HelloBench output profile; repeat to include both (default: 2k and 4k)",
+    )
     variants = parser.add_mutually_exclusive_group()
     variants.add_argument(
         "-v", "--variant",
@@ -174,6 +180,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         env_updates["N_REPRESENTATIVE"] = str(args.n_representative)
     if args.n_samples is not None:
         env_updates["N_SAMPLES"] = str(args.n_samples)
+    if args.hellobench_length:
+        env_updates["HELLOBENCH_LENGTHS"] = ",".join(args.hellobench_length)
     selected_variants = args.variant or args.variants
     if selected_variants:
         env_updates["MATRIX_VARIANTS"] = selected_variants

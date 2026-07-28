@@ -76,6 +76,22 @@ def test_variant_flag_is_forwarded_to_the_selected_model(monkeypatch):
     assert captured["env_updates"]["MATRIX_VARIANTS"] == "fast"
 
 
+def test_hellobench_length_and_total_count_are_forwarded(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
+
+    assert run_bench.main([
+        "-m", "illada", "-d", "hellobench", "--real-data",
+        "--hellobench-length", "2k", "--n-samples", "3",
+    ]) == 0
+    assert captured["env_updates"]["HELLOBENCH_LENGTHS"] == "2k"
+    assert captured["env_updates"]["N_SAMPLES"] == "3"
+
+
 def test_variant_and_variants_are_mutually_exclusive():
     with pytest.raises(SystemExit):
         run_bench.main([

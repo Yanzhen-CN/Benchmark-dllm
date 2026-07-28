@@ -90,6 +90,33 @@ def test_hellobench_balances_profiles_and_attaches_generation_caps():
     } == {2000: 3072, 4000: 6144}
 
 
+def test_hellobench_selected_profile_uses_total_sample_limit():
+    samples = [
+        Sample(
+            sample_id=f"hello-{target}-{index}",
+            prompt="write",
+            reference=HelloBenchReference(target_length_words=target),
+        )
+        for target in (2000, 4000)
+        for index in range(5)
+    ]
+    config = {
+        "dataset": "hellobench",
+        "samples_per_length": 10,
+        "output_profiles": [
+            {"target_words": 4000, "max_new_tokens": 6144},
+        ],
+    }
+
+    selected = select_configured_samples(
+        samples, config, {}, n_samples=3, seed=11
+    )
+
+    assert len(selected) == 3
+    assert {sample.reference.target_length_words for sample in selected} == {4000}
+    assert all(sample.meta["max_new_tokens"] == 6144 for sample in selected)
+
+
 def _ruler_samples(windows: tuple[int, ...], per_position: int = 5) -> list[Sample]:
     samples = []
     for window in windows:

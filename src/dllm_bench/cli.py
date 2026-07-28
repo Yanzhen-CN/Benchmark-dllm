@@ -104,6 +104,11 @@ def _common_options(f):
     f = click.option("--demo/--no-demo", default=True, show_default=True, help="Use demos; --no-demo loads official data where supported")(f)
     f = click.option("--samples-file", default=None, type=click.Path(exists=True), help="Local JSON/JSONL samples; overrides --demo")(f)
     f = click.option("--n-samples", default=None, type=int, help="Defaults to the dataset config's `sample_size`")(f)
+    f = click.option(
+        "--hellobench-length", "hellobench_lengths", multiple=True,
+        type=click.Choice(["2k", "4k", "2000", "4000"]),
+        help="HelloBench output profile; repeat to include both",
+    )(f)
     f = click.option("--seed", default=None, type=int, help="Defaults to the dataset config's `seed` (42)")(f)
     f = click.option("--output-root", default="output", show_default=True, type=click.Path(), help="Root of model_output/score_output/visualization_output")(f)
     return f
@@ -127,6 +132,7 @@ def _resolve_samples(
     samples_file: str | None,
     n_samples: int | None,
     seed: int | None,
+    hellobench_lengths: tuple[str, ...] = (),
 ) -> tuple[list, int]:
     defaults = dataset_run_defaults(dataset_config)
     resolved_n = n_samples if n_samples is not None else (defaults["sample_size"] or 5)
@@ -134,6 +140,14 @@ def _resolve_samples(
 
     if resolved_n <= 0:
         raise click.UsageError("--n-samples must be greater than zero")
+    if hellobench_lengths and dataset.name != "hellobench":
+        raise click.UsageError(
+            "--hellobench-length can only be used with the hellobench dataset"
+        )
+    if hellobench_lengths and demo:
+        raise click.UsageError(
+            "--hellobench-length requires real HelloBench data; use --real-data/--no-demo"
+        )
     if samples_file or not demo:
         try:
             prepared = prepare_dataset(
@@ -142,9 +156,20 @@ def _resolve_samples(
                 dataset=dataset,
             )
             available = load_prepared_samples(prepared)
+            sampling_config = load_yaml(dataset_config)
+            if hellobench_lengths:
+                target_words = {
+                    2000 if value in {"2k", "2000"} else 4000
+                    for value in hellobench_lengths
+                }
+                sampling_config["output_profiles"] = [
+                    profile
+                    for profile in sampling_config.get("output_profiles", [])
+                    if int(profile["target_words"]) in target_words
+                ]
             samples = select_configured_samples(
                 available,
-                load_yaml(dataset_config),
+                sampling_config,
                 load_yaml(model_config),
                 n_samples=n_samples,
                 seed=resolved_seed,
@@ -198,6 +223,7 @@ def generate(
     samples_file: str | None,
     n_samples: int | None,
     seed: int | None,
+    hellobench_lengths: tuple[str, ...],
     output_root: str,
     max_new_tokens: int,
     measure_compute: bool,
@@ -214,7 +240,7 @@ def generate(
         )
     capture_trace = trace_scope == "all_samples"
     dataset = build_dataset(dataset_config)
-    samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
+    samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
 
     click.echo(f"Sweeping variants {variant_list} of {model_config} on {dataset.name} ({len(samples)} samples)")
     for v in variant_list:
@@ -348,12 +374,13 @@ def score(
     samples_file: str | None,
     n_samples: int | None,
     seed: int | None,
+    hellobench_lengths: tuple[str, ...],
     output_root: str,
     resume: bool,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, _ = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
+    samples, _ = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
     configured_model = model_name(model_config)
 
     for v in variant_list:
@@ -379,13 +406,14 @@ def visualize(
     samples_file: str | None,
     n_samples: int | None,
     seed: int | None,
+    hellobench_lengths: tuple[str, ...],
     output_root: str,
     n_representative: int | None,
     sample_ids: str | None,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
+    samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
     configured_model = model_name(model_config)
 
     all_samples = samples
@@ -503,6 +531,10 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
 @click.option("--experiment-config", required=True, type=click.Path(exists=True))
 @click.option("--model", "model_names", multiple=True, required=True, help="Exactly one model name; run_bench.py dispatches multiple isolated environments")
 @click.option("--variants", "variant_names", default=None, help="Comma-separated variant subset for the selected model")
+@click.option(
+    "--hellobench-length", "hellobench_lengths", multiple=True,
+    type=click.Choice(["2k", "4k", "2000", "4000"]),
+)
 @click.option("--dataset", "dataset_names", multiple=True, help="Dataset name to include; repeat to select multiple")
 @click.option("--stage", type=click.Choice(["generate", "score", "visualize", "all"]), default="all", show_default=True)
 @click.option("--demo/--no-demo", default=False, show_default=True, help="Use demo data for every matrix row")
@@ -518,6 +550,7 @@ def matrix_command(
     experiment_config: str,
     model_names: tuple[str, ...],
     variant_names: str | None,
+    hellobench_lengths: tuple[str, ...],
     dataset_names: tuple[str, ...],
     stage: str,
     demo: bool,
@@ -564,6 +597,11 @@ def matrix_command(
             dataset_config=str(job.dataset_config), demo=demo,
             samples_file=samples_file, n_samples=n_samples, seed=seed,
             output_root=output_root,
+            hellobench_lengths=(
+                hellobench_lengths
+                if job.dataset_config.stem == "hellobench"
+                else ()
+            ),
         )
         click.echo(f"[{index}/{len(jobs)}] {job.model_config.name} x {job.dataset_config.name}")
         if stage in {"generate", "all"}:

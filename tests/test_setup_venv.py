@@ -102,6 +102,17 @@ def test_model_run_forwards_sampling_variant_filter(monkeypatch):
     assert arguments[variants_index + 1] == "fast"
 
 
+def test_model_run_forwards_each_hellobench_length(monkeypatch):
+    monkeypatch.setenv("HELLOBENCH_LENGTHS", "2k,4k")
+    arguments = _model_script.benchmark_arguments(_model_script.PROFILES["illada"])
+
+    assert arguments.count("--hellobench-length") == 2
+    first = arguments.index("--hellobench-length")
+    second = arguments.index("--hellobench-length", first + 1)
+    assert arguments[first + 1] == "2k"
+    assert arguments[second + 1] == "4k"
+
+
 def test_dreamreasoner_matches_checkpoint_transformers_version():
     assert _model_script.PROFILES["dreamreasoner"].transformers_version == "5.7.0"
 

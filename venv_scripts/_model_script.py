@@ -411,6 +411,10 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
                 arguments.extend(["--dataset", dataset_name.strip()])
     if os.environ.get("MATRIX_VARIANTS"):
         arguments.extend(["--variants", os.environ["MATRIX_VARIANTS"]])
+    if os.environ.get("HELLOBENCH_LENGTHS"):
+        for length in os.environ["HELLOBENCH_LENGTHS"].split(","):
+            if length.strip():
+                arguments.extend(["--hellobench-length", length.strip()])
     return arguments
 
 
