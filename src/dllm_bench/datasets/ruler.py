@@ -82,8 +82,10 @@ class RulerDataset(Dataset):
         exact = bool(ref.required_answers) and len(hits) == len(ref.required_answers)
         partial_rate = len(hits) / len(ref.required_answers) if ref.required_answers else 1.0
         return ScoreResult(
-            primary_score=1.0 if exact else 0.0,
-            aux={"partial_match_rate": partial_rate},
+            # NVIDIA RULER's official string_match_all gives fractional credit
+            # for each required reference found in the prediction.
+            primary_score=partial_rate,
+            aux={"all_answers_match": 1.0 if exact else 0.0},
             valid=True,
             complete=bool(output_text.strip()),
         )
@@ -175,9 +177,15 @@ def _fit_prompt(payload: str, question: str, target_words: int, position: Positi
     Native token counts vary by model tokenizer. The requested window and
     input target are retained in metadata for last-mile fitting before timing.
     """
-    fixed_words = len(payload.split()) + len(question.split())
+    # Official RULER keeps an answer prefix after the question so generation
+    # starts in answer mode instead of spending budget on explanation/refusal.
+    answer_prefix = "Answer:"
+    fixed_words = len(payload.split()) + len(question.split()) + 1
     filler = ("background " * max(0, target_words - fixed_words)).strip()
-    return f"{_place_payload(filler, payload, position)}\n\n{question}"
+    return (
+        f"{_place_payload(filler, payload, position)}\n\n"
+        f"{question}\n{answer_prefix}"
+    )
 
 
 def _make_generated_sample(

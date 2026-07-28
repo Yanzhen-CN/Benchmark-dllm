@@ -4,8 +4,8 @@
 # window - 64 tokens so the short answer remains inside the legal total length.
 dataset: ruler
 dataset_class: dllm_bench.datasets.ruler.RulerDataset
-primary_metric: accuracy
-aux_metrics: [partial_match_rate]
+primary_metric: official_string_match_all
+aux_metrics: [all_answers_match, position_robustness]
 task_types: [niah, multi_hop, aggregation]
 positions: [front, middle, back]
 samples_per_context_window_position: 10

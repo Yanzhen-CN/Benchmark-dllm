@@ -243,7 +243,12 @@ DATA_SOURCE=real OUTPUT_ROOT=output/formal \
 ```
 
 The default diagnostic suite uses 100 samples for each regular-capability
-dataset. Sudoku is stratified 50 easy / 50 hard. RULER selects 10 samples for
+dataset. Sudoku is stratified 50 easy / 50 hard. Its source and scoring follow
+Ye et al. (ICLR 2025): Park's million-game rows 100000--100999 are the test
+split, the prompt is the raw 81-digit puzzle (`0` = blank), the expected output
+is the raw 81-digit solution, and the score is whole-sequence exact match.
+Easy/Hard is a reporting-only split on this unchanged official test set
+(at most 5 versus at least 6 synchronous naked-single rounds). RULER selects 10 samples for
 each position cell at the shared 8192-token point; NIAH, multi-hop tracing,
 and aggregation are balanced inside those cells. The 64-token answer allowance
 is included in that window, so every RULER prompt targets 8128 tokens. This
@@ -460,18 +465,22 @@ Compare `illada_best` with `illada_optimized_best`, or `illada_fast` with
 `illada_optimized_fast`, to isolate the architecture change. The differentiating
 implementation is `models/illada.py`'s `canvas_mode == "growing"` path.
 
-DreamReasoner retains the checkpoint's official prefix-KV-cache generation
-path from
+DreamReasoner retains the checkpoint's prefix-KV-cache generation path from
 [`generation_utils.py`](https://huggingface.co/Dream-org/DreamReasoner-8B/blob/main/generation_utils.py).
-Long prompt prefill uses equivalent bounded block-triangular chunks instead
-of materializing one sequence-square mask. For the formal greedy path,
-selected-token confidence is computed as
+The original `dreamreasoner` model is frozen to the final 2026-07-27
+implementation (`6dfd132`): it builds the complete block-triangular mask,
+prefills all complete prompt blocks in one forward, passes the corresponding
+mask slice during block denoising, and uses full-softmax confidence. This is
+the correctness baseline; at very long RULER contexts its sequence-square
+mask can require substantial VRAM. The separate `dreamreasoner_optimized`
+model combines prefix blocks using a bounded block-triangular mask. For that
+optimized greedy path, selected-token confidence is computed as
 `exp(selected_logit - logsumexp(logits))`; this is numerically equivalent to
 gathering from the full softmax but avoids another block-by-vocabulary tensor.
-This path is exposed only by the separate `dreamreasoner_optimized` model;
-the original `dreamreasoner` model retains the current full-softmax
-implementation. The differentiating implementation is
-`models/dreamreasoner.py::_sample_with_temperature_topk_topp`.
+Both changes are exposed only by the separate `dreamreasoner_optimized`
+model; the original model retains the 2026-07-27 full-mask prefill and
+full-softmax confidence. The execution branch is recorded in every output as
+`execution_path`.
 
 Run the isolated systems ablation on the same idle GPU, without concurrent
 jobs, and write it outside the formal output tree:
@@ -554,6 +563,9 @@ samples: 10 at each of front/middle/back, balanced so that NIAH, multi-hop,
 and aggregation also have 10 samples each. Model-advertised context maxima are
 not additional formal task points. RULER keeps 64 tokens inside the total model window for its
 short answer; the input target is therefore `context_window - 64`. The
+prompt ends with the official-style `Answer:` prefix. Its primary score follows
+NVIDIA RULER's `string_match_all`: each required reference found in the output
+receives equal fractional credit; `all_answers_match` is retained separately.
 prepared filler is fitted again after the selected model's chat template and
 tokenizer are applied, so the actual encoded input does not exceed that
 target. Local HF model records include the observed count in
@@ -687,8 +699,9 @@ formation. It is a trace diagnostic only and never replaces official
 StructEval `final_eval_score` or MBPP `pass_at_1`.
 
 **Sudoku** gets one more artifact on top: an animated 9x9 grid walking
-through the solve (`report/sudoku_trace_viz.py`), most useful for **Hard**
-puzzles that need at least one trial-and-error step. Per-cell coloring:
+through the solve (`report/sudoku_trace_viz.py`). Easy/Hard here means the
+analysis-only naked-single-round stratum; it is not an official source label
+and does not assert that a puzzle requires backtracking. Per-cell coloring:
 
 - gray — not yet decided
 - black text, white background — a given (prompt-supplied) cell, echoed

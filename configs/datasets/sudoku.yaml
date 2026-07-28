@@ -1,16 +1,14 @@
 dataset: sudoku
 dataset_class: dllm_bench.datasets.sudoku.SudokuDataset
-primary_metric: accuracy_by_difficulty  # reported separately for easy/hard, not blended
-aux_metrics: [cell_accuracy, constraint_satisfaction_rate, completion_rate, conflict_rate]
+primary_metric: official_exact_match_accuracy
+aux_metrics: [accuracy_easy, accuracy_hard]
 sample_size: 100
 difficulty_counts:
   easy: 50
   hard: 50
 seed: 42
-dataset_kwargs:
-  easy_count: 50
-  hard_count: 50
-  seed: 42
-# Difficulty is derived (classify_difficulty), not assigned: easy = solvable
-# by naked-single elimination alone; hard = needs >=1 trial-and-error step.
-# Formal sample files are stratified to the exact 50/50 split above.
+# Official Ye et al. / Park protocol: raw 81-digit puzzle (0 = blank), raw
+# 81-digit solution, whole-sequence exact-match scoring. Rows 100000..100999
+# of the source million-game file are the official test split. Easy/Hard is
+# our reporting-only stratum on that unchanged split: <=5 versus >=6
+# synchronous naked-single rounds. The selected formal subset is 50/50.

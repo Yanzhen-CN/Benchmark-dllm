@@ -71,27 +71,13 @@ Confirmed facts driving this port (not guessed):
   same as iLLaDA. This means design doc 4.2.6's `ErrorThenCorrect` is
   expected to come out ~0 for this model, same as iLLaDA — a real,
   ported-implementation-driven finding, not a modeling gap in this adapter.
-- The real source's own `build_block_diffusion_attention_mask` materializes
-  a dense `(total_length, total_length)` tensor up front — fine at the
-  source's own short-context examples, but at RULER's long-context points
-  (up to this model's own 32768-token window, see
-  `configs/datasets/ruler.yaml`) that tensor alone is multiple GB, on top of
-  the ~16 GiB bf16 model and the KV cache, and was observed to OOM a 24 GiB
-  GPU. This adapter never materializes the full version: prefill runs in
-  chunks of up to `_PREFILL_CHUNK_BLOCKS` blocks per call (not the whole
-  prompt in one shot, and not one block per call either — see
-  `_run_denoising`'s prefill comment for why chunking needs a real, but
-  chunk-sized-not-sequence-sized, attention_mask, while a lone block per call
-  needs none at all). Every call — whatever its chunk size — still sees
-  exactly the same key/value set the source's explicit block-tril mask would
-  give it (block i can attend to blocks 0..i and nothing after): already
-  -cached earlier chunks are unconditionally visible (concatenated in by
-  `past_key_values.update`), and only the chunk's own new tokens need the
-  block-tril pattern applied explicitly, since those are the only positions
-  where "block j come later, must stay invisible to block i" could otherwise
-  be violated. The source's own full-sequence
-  `build_block_diffusion_attention_mask` is therefore never ported at all —
-  no call here ever needs a mask bigger than one chunk.
+- The default execution path is intentionally frozen to the final 2026-07-27
+  implementation (commit `6dfd132`): it materializes the checkpoint's dense
+  `(total_length, total_length)` block-triangular mask and performs one-shot
+  prefix prefill. That known-good path is the correctness baseline, even
+  though its mask can consume several GB at long RULER contexts. Only the
+  separately named `dreamreasoner_optimized` model replaces it with bounded
+  chunks of up to `_PREFILL_CHUNK_BLOCKS` blocks per forward.
 
 This benchmark's own addition (not from source): a full-vocab softmax over
 each step's raw logits, purely to populate `entropy_by_position`/
@@ -120,18 +106,8 @@ from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
 
-# How many blocks get prefilled per forward call. Bigger than 1 (unlike the
-# denoising loop, which must do one real block at a time) trades a bounded,
-# still-small attention_mask for far fewer forward calls at long context —
-# see _run_denoising's prefill comment for the exact size/correctness
-# argument. Keep the cap in the same 1024-token problem-size unit used by the
-# benchmark's diffusion comparison: with the checkpoint's block_length=32,
-# 32 blocks make one 1024-token prefill chunk. Shorter benchmark questions
-# naturally use one smaller chunk containing only their actual full blocks;
-# long RULER inputs are split into consecutive 1024-token chunks. At the
-# 32768-token RULER point the largest bounded mask is therefore roughly
-# (1024, 32768), about 128 MiB in float32, rather than the source's multi-GB
-# full-sequence square mask.
+# Optimized-model setting only. The default model never reads this value.
+# With block_length=32, 32 blocks make one 1024-token prefill chunk.
 _PREFILL_CHUNK_BLOCKS = 32
 
 class DreamReasonerAdapter(HFDiffusionAdapter):
@@ -151,9 +127,9 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         name: str = "dreamreasoner",
     ) -> None:
         super().__init__(model_name_or_path, step_config, name=name, config_name=config_name, device=device)
-        self.inference_optimizations.extend(
-            ["official_prefix_kv_cache", "bounded_chunked_prefill_mask"]
-        )
+        self.inference_optimizations.append("official_prefix_kv_cache")
+        if self.execution_path == "optimized":
+            self.inference_optimizations.append("bounded_chunked_prefill_mask")
         if step_config.extra.get("greedy_confidence_mode", "softmax") == "logsumexp":
             self.inference_optimizations.append("greedy_logsumexp_confidence")
 
@@ -266,47 +242,67 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         prefill_blocks = prompt_len // block_length
         past_key_values = DynamicCache()
 
-        # Prefill in chunks of up to _PREFILL_CHUNK_BLOCKS blocks per call
-        # (store_kv=True) instead of one block per call — fewer, bigger
-        # forward calls means less per-call overhead (kernel launches, cache
-        # bookkeeping) at long context, where the single-block version could
-        # mean 1000+ tiny calls. A chunk spanning more than one block needs a
-        # real (but bounded) attention_mask: within the chunk's own new
-        # tokens, block i must still only see block j<=i (same block-tril
-        # rule as the source's own mask, just scoped to one chunk instead of
-        # the whole sequence) — already-cached earlier chunks are fully
-        # visible to every row (concatenated in by `past_key_values.update`),
-        # so the mask only needs an explicit 0 pattern over the chunk's own
-        # tokens, sized (chunk_length, chunk_length), never
-        # (total_length, total_length). A single-block chunk still needs no
-        # mask at all (nothing "later" to wrongly become visible within it).
-        chunk_index = 0
-        while chunk_index < prefill_blocks:
-            blocks_in_chunk = min(_PREFILL_CHUNK_BLOCKS, prefill_blocks - chunk_index)
-            chunk_start = chunk_index * block_length
-            chunk_length = blocks_in_chunk * block_length
-            chunk_end = chunk_start + chunk_length
-
-            attention_mask = None
-            if blocks_in_chunk > 1:
-                intra_chunk_tril = torch.tril(torch.ones(blocks_in_chunk, blocks_in_chunk, device=device))
-                intra_chunk_mask = intra_chunk_tril.repeat_interleave(block_length, dim=0).repeat_interleave(
-                    block_length, dim=1
+        if self.execution_path == "optimized":
+            # Experimental path only: combine several prefix blocks into one
+            # forward and preserve their block-causal relation with a bounded
+            # mask. This must never be used by the formal base model because
+            # it has not been validated as bit-for-bit equivalent against the
+            # checkpoint's custom attention/cache implementation.
+            chunk_index = 0
+            while chunk_index < prefill_blocks:
+                blocks_in_chunk = min(
+                    _PREFILL_CHUNK_BLOCKS, prefill_blocks - chunk_index
                 )
-                if chunk_start > 0:
-                    prefix_visible = torch.ones(chunk_length, chunk_start, device=device)
-                    intra_chunk_mask = torch.cat([prefix_visible, intra_chunk_mask], dim=1)
-                attention_mask = intra_chunk_mask.unsqueeze(0)
+                chunk_start = chunk_index * block_length
+                chunk_length = blocks_in_chunk * block_length
+                chunk_end = chunk_start + chunk_length
 
-            self._model(
-                x[:, chunk_start:chunk_end],
-                attention_mask=attention_mask,
-                position_ids=position_ids[:, chunk_start:chunk_end],
-                past_key_values=past_key_values,
-                use_cache=True,
-                store_kv=True,
+                attention_mask = None
+                if blocks_in_chunk > 1:
+                    intra_chunk_tril = torch.tril(
+                        torch.ones(blocks_in_chunk, blocks_in_chunk, device=device)
+                    )
+                    intra_chunk_mask = intra_chunk_tril.repeat_interleave(
+                        block_length, dim=0
+                    ).repeat_interleave(block_length, dim=1)
+                    if chunk_start > 0:
+                        prefix_visible = torch.ones(
+                            chunk_length, chunk_start, device=device
+                        )
+                        intra_chunk_mask = torch.cat(
+                            [prefix_visible, intra_chunk_mask], dim=1
+                        )
+                    attention_mask = intra_chunk_mask.unsqueeze(0)
+
+                self._model(
+                    x[:, chunk_start:chunk_end],
+                    attention_mask=attention_mask,
+                    position_ids=position_ids[:, chunk_start:chunk_end],
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                    store_kv=True,
+                )
+                chunk_index += blocks_in_chunk
+        else:
+            # Exact 2026-07-27 baseline (commit 6dfd132): build the checkpoint's
+            # complete block-triangular mask and prefill every complete prompt
+            # block in one forward. Do not replace this correctness baseline
+            # with any later OOM/prefill optimization.
+            attention_mask = _build_block_diffusion_attention_mask(
+                num_blocks, block_length, device
             )
-            chunk_index += blocks_in_chunk
+            prefill_length = prefill_blocks * block_length
+            if prefill_length > 0:
+                self._model(
+                    x[:, :prefill_length],
+                    attention_mask=attention_mask[
+                        :, :prefill_length, :prefill_length
+                    ],
+                    position_ids=position_ids[:, :prefill_length],
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                    store_kv=True,
+                )
 
         num_transfer_tokens = _get_num_transfer_tokens(block_length, denoising_steps)
         trace: list[TraceStep] = []
@@ -317,6 +313,11 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             block_end = block_start + block_length
             cur_x = x[:, block_start:block_end].clone()
             cur_pos = position_ids[:, block_start:block_end]
+            cur_attn = (
+                None
+                if self.execution_path == "optimized"
+                else attention_mask[:, block_start:block_end, :block_end]
+            )
 
             for step in range(denoising_steps + 1):
                 mask_index = cur_x == mask_token_id
@@ -327,6 +328,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     # to them. No positions change, so no TraceStep.
                     self._model(
                         cur_x,
+                        attention_mask=cur_attn,
                         position_ids=cur_pos,
                         past_key_values=past_key_values,
                         use_cache=True,
@@ -337,6 +339,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                 force_accept = step == denoising_steps - 1
                 logits = self._model(
                     cur_x,
+                    attention_mask=cur_attn,
                     position_ids=cur_pos,
                     past_key_values=past_key_values,
                     use_cache=True,
@@ -479,6 +482,24 @@ def _get_num_transfer_tokens(block_length: int, steps: int):
     num_transfer_tokens = torch.zeros(steps, dtype=torch.int64) + base
     num_transfer_tokens[:remainder] += 1
     return num_transfer_tokens
+
+
+def _build_block_diffusion_attention_mask(
+    num_blocks: int,
+    block_length: int,
+    device,
+    batch_size: int = 1,
+):
+    """Exact block-triangular mask used by the 2026-07-27 default path."""
+    import torch
+
+    block_mask = torch.tril(torch.ones(num_blocks, num_blocks, device=device))
+    return (
+        block_mask.repeat_interleave(block_length, dim=0)
+        .repeat_interleave(block_length, dim=1)
+        .unsqueeze(0)
+        .expand(batch_size, -1, -1)
+    )
 
 
 def _select_transfer_index(

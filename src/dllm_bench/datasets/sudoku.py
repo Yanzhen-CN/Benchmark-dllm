@@ -1,25 +1,39 @@
-"""Sudoku: Easy/Hard Accuracy, plus Cell Accuracy, constraint-satisfaction
-rate, completion rate, and conflict rate (section 1).
+"""Official Sudoku protocol from Ye et al. (ICLR 2025).
 
-Difficulty (section 1's definition) is derived, not asserted: a puzzle is
-**Easy** if repeated naked-single elimination alone solves it, **Hard** if
-that gets stuck and would need at least one trial-and-error/backtracking
-step. :func:`classify_difficulty` implements exactly that rule so difficulty
-is reproducible from the puzzle grid alone.
+The paper uses Park's one-million-game dataset, rows 0..99,999 for training
+and rows 100,000..100,999 for testing. A puzzle is the raw 81-digit sequence
+(``0`` means blank), the target is the raw 81-digit solution, and accuracy is
+whole-sequence exact match. Easy/Hard is this benchmark's reporting stratum
+only; it never changes the official input, target, or score.
 """
 
 from __future__ import annotations
 
+import csv
+import hashlib
+import os
 import re
-import random
+import zipfile
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from .base import Dataset, Sample, ScoreResult
+from ..data_paths import ensure_data_layout
 
 Grid = list[list[int]]
 
 _BLANK_TOKENS = {".", "0", "_"}
+
+SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
+SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
+SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
+SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
+SUDOKU_TRAIN_ROWS = 100_000
+SUDOKU_TEST_ROWS = 1_000
+SUDOKU_OFFICIAL_MAX_NEW_TOKENS = 82
 
 
 def _box_cells(r: int, c: int) -> list[tuple[int, int]]:
@@ -35,27 +49,31 @@ def candidates(grid: Grid, r: int, c: int) -> set[int]:
     return set(range(1, 10)) - used
 
 
-def solve_naked_singles(grid: Grid) -> tuple[Grid, bool]:
-    """Repeatedly fill any cell with exactly one candidate. Returns
-    (resulting_grid, fully_solved)."""
-    grid = deepcopy(grid)
-    changed = True
-    while changed:
-        changed = False
-        for r in range(9):
-            for c in range(9):
-                if grid[r][c] == 0:
-                    cell_candidates = candidates(grid, r, c)
-                    if len(cell_candidates) == 1:
-                        grid[r][c] = next(iter(cell_candidates))
-                        changed = True
-    fully_solved = all(grid[r][c] != 0 for r in range(9) for c in range(9))
-    return grid, fully_solved
+def naked_single_rounds(puzzle: Grid) -> int | None:
+    """Synchronous naked-single rounds; ``None`` means singles get stuck."""
+    grid = deepcopy(puzzle)
+    rounds = 0
+    while any(0 in row for row in grid):
+        fills: list[tuple[int, int, int]] = []
+        for row in range(9):
+            for col in range(9):
+                if grid[row][col] != 0:
+                    continue
+                options = candidates(grid, row, col)
+                if len(options) == 1:
+                    fills.append((row, col, next(iter(options))))
+        if not fills:
+            return None
+        for row, col, value in fills:
+            grid[row][col] = value
+        rounds += 1
+    return rounds
 
 
 def classify_difficulty(puzzle: Grid) -> str:
-    _, fully_solved = solve_naked_singles(puzzle)
-    return "easy" if fully_solved else "hard"
+    """Analysis-only split on the official test set, not an official label."""
+    rounds = naked_single_rounds(puzzle)
+    return "easy" if rounds is not None and rounds <= 5 else "hard"
 
 
 def parse_grid(text: str) -> Grid | None:
@@ -82,41 +100,6 @@ def parse_grid(text: str) -> Grid | None:
     return grid
 
 
-def _units() -> list[list[tuple[int, int]]]:
-    rows = [[(r, c) for c in range(9)] for r in range(9)]
-    cols = [[(r, c) for r in range(9)] for c in range(9)]
-    boxes = [
-        [(r, c) for r in range(br, br + 3) for c in range(bc, bc + 3)]
-        for br in (0, 3, 6)
-        for bc in (0, 3, 6)
-    ]
-    return rows + cols + boxes
-
-
-_UNITS = _units()
-
-
-def constraint_satisfaction_rate(grid: Grid) -> float:
-    satisfied = 0
-    for unit in _UNITS:
-        values = [grid[r][c] for r, c in unit if grid[r][c] != 0]
-        if len(values) == len(set(values)):
-            satisfied += 1
-    return satisfied / len(_UNITS)
-
-
-def completion_rate(grid: Grid) -> float:
-    filled = sum(1 for row in grid for v in row if v != 0)
-    return filled / 81
-
-
-def cell_accuracy(grid: Grid, solution: Grid) -> float:
-    correct = sum(
-        1 for r in range(9) for c in range(9) if grid[r][c] == solution[r][c]
-    )
-    return correct / 81
-
-
 @dataclass
 class SudokuReference:
     puzzle: Grid
@@ -131,52 +114,42 @@ class SudokuDataset(Dataset):
     def __init__(
         self,
         samples: list[Sample] | None = None,
-        easy_count: int = 50,
-        hard_count: int = 50,
-        seed: int = 42,
+        cache_dir: str | Path | None = None,
     ) -> None:
         self._samples = list(samples) if samples is not None else None
-        self._easy_count = easy_count
-        self._hard_count = hard_count
-        self._seed = seed
+        data_root = Path(cache_dir or ensure_data_layout()["datasets"])
+        self._archive_path = (
+            data_root / "sudoku" / SUDOKU_SOURCE_REVISION / "bryanpark-sudoku.zip"
+        )
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
         samples = (
             list(self._samples)
             if self._samples is not None
-            else generate_sudoku_bank(self._easy_count, self._hard_count, self._seed)
+            else _load_official_test_samples(
+                _ensure_official_archive(self._archive_path)
+            )
         )
         return samples[:n] if n is not None else samples
 
+    def preparation_signature(self) -> dict[str, object]:
+        return {
+            "source_revision": SUDOKU_SOURCE_REVISION,
+            "archive_sha256": SUDOKU_ARCHIVE_SHA256,
+            "csv_sha256": SUDOKU_CSV_SHA256,
+            "test_start": SUDOKU_TRAIN_ROWS,
+            "test_rows": SUDOKU_TEST_ROWS,
+        }
+
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: SudokuReference = sample.reference
-        grid = parse_grid(output_text)
-
-        if grid is None:
-            return ScoreResult(
-                primary_score=0.0,
-                aux={
-                    "cell_accuracy": 0.0,
-                    "constraint_satisfaction_rate": 0.0,
-                    "completion_rate": 0.0,
-                    "conflict_rate": 1.0,
-                },
-                valid=False,
-                complete=False,
-            )
-
-        accuracy = 1.0 if grid == ref.solution else 0.0
-        satisfaction = constraint_satisfaction_rate(grid)
+        prediction = output_text.strip()
+        target = _grid_to_digits(ref.solution)
+        valid = bool(re.fullmatch(r"[1-9]{81}", prediction))
         return ScoreResult(
-            primary_score=accuracy,
-            aux={
-                "cell_accuracy": cell_accuracy(grid, ref.solution),
-                "constraint_satisfaction_rate": satisfaction,
-                "completion_rate": completion_rate(grid),
-                "conflict_rate": 1.0 - satisfaction,
-            },
-            valid=True,
-            complete=completion_rate(grid) == 1.0,
+            primary_score=1.0 if prediction == target else 0.0,
+            valid=valid,
+            complete=valid,
         )
 
     def aggregate_records(
@@ -204,110 +177,121 @@ def group_by_difficulty(
     return grouped
 
 
-def _base_solution(rng: random.Random) -> Grid:
-    pattern = lambda row, col: (row * 3 + row // 3 + col) % 9
-    rows = [group * 3 + row for group in rng.sample(range(3), 3) for row in rng.sample(range(3), 3)]
-    cols = [group * 3 + col for group in rng.sample(range(3), 3) for col in rng.sample(range(3), 3)]
-    digits = rng.sample(range(1, 10), 9)
-    return [[digits[pattern(row, col)] for col in cols] for row in rows]
+def _grid_to_digits(grid: Grid) -> str:
+    return "".join(str(value) for row in grid for value in row)
 
 
-def _count_solutions(grid: Grid, limit: int = 2) -> int:
-    work = deepcopy(grid)
-    count = 0
-
-    def search() -> None:
-        nonlocal count
-        if count >= limit:
-            return
-        best: tuple[int, int, set[int]] | None = None
-        for row in range(9):
-            for col in range(9):
-                if work[row][col] != 0:
-                    continue
-                options = candidates(work, row, col)
-                if not options:
-                    return
-                if best is None or len(options) < len(best[2]):
-                    best = (row, col, options)
-        if best is None:
-            count += 1
-            return
-        row, col, options = best
-        for value in sorted(options):
-            work[row][col] = value
-            search()
-            work[row][col] = 0
-            if count >= limit:
-                return
-
-    search()
-    return count
-
-
-def _make_puzzle(solution: Grid, difficulty: str, rng: random.Random) -> Grid:
-    puzzle = deepcopy(solution)
-    cells = [(row, col) for row in range(9) for col in range(9)]
-    rng.shuffle(cells)
-    target_blanks = 40 if difficulty == "easy" else 48
-    blanks = 0
-    for row, col in cells:
-        previous = puzzle[row][col]
-        puzzle[row][col] = 0
-        unique = _count_solutions(puzzle) == 1
-        derived = classify_difficulty(puzzle)
-        keep = unique and (
-            (difficulty == "easy" and derived == "easy")
-            or difficulty == "hard"
+def _digits_to_grid(value: str, *, row_index: int, field: str) -> Grid:
+    if not re.fullmatch(r"[0-9]{81}", value):
+        raise ValueError(
+            f"official Sudoku row {row_index} has invalid {field}; expected 81 digits"
         )
-        if keep:
-            blanks += 1
-        else:
-            puzzle[row][col] = previous
-        if blanks >= target_blanks and classify_difficulty(puzzle) == difficulty:
-            return puzzle
-    if classify_difficulty(puzzle) != difficulty:
-        raise RuntimeError(f"could not generate a unique {difficulty} Sudoku puzzle")
-    return puzzle
+    return [[int(value[row * 9 + col]) for col in range(9)] for row in range(9)]
 
 
-def _sudoku_prompt(puzzle: Grid) -> str:
-    rows = [" ".join(str(value) if value else "." for value in row) for row in puzzle]
-    return (
-        "Solve this Sudoku. Return the completed 9x9 grid, one row per line, "
-        "using digits 1-9 only.\n\n" + "\n".join(rows)
-    )
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def generate_sudoku_bank(easy_count: int, hard_count: int, seed: int = 42) -> list[Sample]:
-    if easy_count < 0 or hard_count < 0 or easy_count + hard_count == 0:
-        raise ValueError("Sudoku counts must be non-negative and not both zero")
-    rng = random.Random(seed)
+def _verified_csv_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with zipfile.ZipFile(path) as archive:
+        with archive.open("sudoku.csv") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _archive_is_official(path: Path) -> bool:
+    if not path.is_file() or _sha256_file(path) != SUDOKU_ARCHIVE_SHA256:
+        return False
+    try:
+        return _verified_csv_digest(path) == SUDOKU_CSV_SHA256
+    except (KeyError, zipfile.BadZipFile):
+        return False
+
+
+def _ensure_official_archive(path: Path) -> Path:
+    if _archive_is_official(path):
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    request = Request(SUDOKU_ARCHIVE_URL, headers={"User-Agent": "dllm-bench/0.1"})
+    try:
+        with urlopen(request, timeout=180) as response:  # noqa: S310 - fixed HTTPS URL
+            payload = response.read()
+    except (OSError, URLError) as exc:
+        raise RuntimeError(f"failed to download official Sudoku data: {exc}") from exc
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != SUDOKU_ARCHIVE_SHA256:
+        raise RuntimeError(
+            "official Sudoku archive failed checksum verification: "
+            f"expected {SUDOKU_ARCHIVE_SHA256}, got {digest}"
+        )
+    partial_path = path.with_suffix(path.suffix + ".part")
+    try:
+        partial_path.write_bytes(payload)
+        if _verified_csv_digest(partial_path) != SUDOKU_CSV_SHA256:
+            raise RuntimeError("official Sudoku CSV failed checksum verification")
+        os.replace(partial_path, path)
+    finally:
+        if partial_path.exists():
+            partial_path.unlink()
+    return path
+
+
+def _load_official_test_samples(
+    path: Path,
+    *,
+    train_rows: int = SUDOKU_TRAIN_ROWS,
+    test_rows: int = SUDOKU_TEST_ROWS,
+) -> list[Sample]:
     samples: list[Sample] = []
-    for difficulty, count in (("easy", easy_count), ("hard", hard_count)):
-        generated = 0
-        attempts = 0
-        while generated < count:
-            attempts += 1
-            if attempts > count * 30 + 100:
-                raise RuntimeError(f"failed to generate {count} unique {difficulty} puzzles")
-            solution = _base_solution(rng)
-            try:
-                puzzle = _make_puzzle(solution, difficulty, rng)
-            except RuntimeError:
-                continue
-            sample_id = f"sudoku-{difficulty}-{generated:04d}"
-            samples.append(
-                Sample(
-                    sample_id=sample_id,
-                    prompt=_sudoku_prompt(puzzle),
-                    reference=SudokuReference(puzzle, solution, difficulty),
-                    meta={
-                        "source": "deterministic-generator",
-                        "generator_seed": seed,
-                        "difficulty_rule": "naked-singles-vs-backtracking",
-                    },
+    with zipfile.ZipFile(path) as archive:
+        with archive.open("sudoku.csv") as raw:
+            rows = csv.reader(line.decode("utf-8") for line in raw)
+            header = next(rows, None)
+            if header != ["quizzes", "solutions"]:
+                raise ValueError(f"unexpected official Sudoku CSV header: {header!r}")
+            for _ in range(train_rows):
+                if next(rows, None) is None:
+                    raise ValueError("official Sudoku CSV ended before the test split")
+            for test_index in range(test_rows):
+                row = next(rows, None)
+                if row is None:
+                    raise ValueError(
+                        f"expected {test_rows} official Sudoku test rows, found {test_index}"
+                    )
+                if len(row) != 2:
+                    raise ValueError(f"official Sudoku row {test_index} has {len(row)} columns")
+                puzzle_digits, solution_digits = row
+                puzzle = _digits_to_grid(
+                    puzzle_digits, row_index=test_index, field="puzzle"
                 )
-            )
-            generated += 1
+                solution = _digits_to_grid(
+                    solution_digits, row_index=test_index, field="solution"
+                )
+                difficulty = classify_difficulty(puzzle)
+                rounds = naked_single_rounds(puzzle)
+                samples.append(
+                    Sample(
+                        sample_id=f"sudoku-test-{test_index:04d}",
+                        prompt=puzzle_digits,
+                        reference=SudokuReference(puzzle, solution, difficulty),
+                        meta={
+                            "source": "bryanpark/sudoku",
+                            "source_revision": SUDOKU_SOURCE_REVISION,
+                            "source_index": train_rows + test_index,
+                            "official_split": "test",
+                            "official_input_format": "81_digits_zero_is_blank",
+                            "official_output_format": "81_solution_digits",
+                            "max_new_tokens": SUDOKU_OFFICIAL_MAX_NEW_TOKENS,
+                            "difficulty_rule": "naked_single_rounds_le_5_vs_ge_6",
+                            "naked_single_rounds": rounds,
+                        },
+                    )
+                )
     return samples

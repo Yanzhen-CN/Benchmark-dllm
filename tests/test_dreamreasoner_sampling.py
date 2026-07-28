@@ -366,7 +366,11 @@ def test_dreamreasoner_prefill_never_builds_a_full_sequence_mask(monkeypatch):
         gen_length=gen_length,
         block_length=block_length,
         steps_per_block=4,
-        extra={"remasking_strategy": "low_confidence_static", "mask_token_id": 99},
+        extra={
+            "remasking_strategy": "low_confidence_static",
+            "mask_token_id": 99,
+            "execution_path": "optimized",
+        },
     )
     adapter = DreamReasonerAdapter("unused-checkpoint", step_config, config_name="test")
     fake_model = _FakeLogitsModel(logits)
@@ -409,7 +413,11 @@ def test_dreamreasoner_prefill_chunk_mask_values_are_correct_block_tril():
         gen_length=gen_length,
         block_length=block_length,
         steps_per_block=2,
-        extra={"remasking_strategy": "low_confidence_static", "mask_token_id": 99},
+        extra={
+            "remasking_strategy": "low_confidence_static",
+            "mask_token_id": 99,
+            "execution_path": "optimized",
+        },
     )
     adapter = DreamReasonerAdapter("unused-checkpoint", step_config, config_name="test")
     fake_model = _FakeLogitsModel(logits)
@@ -457,7 +465,11 @@ def test_dreamreasoner_single_block_chunk_still_needs_no_mask():
         gen_length=gen_length,
         block_length=block_length,
         steps_per_block=4,
-        extra={"remasking_strategy": "low_confidence_static", "mask_token_id": 99},
+        extra={
+            "remasking_strategy": "low_confidence_static",
+            "mask_token_id": 99,
+            "execution_path": "optimized",
+        },
     )
     adapter = DreamReasonerAdapter("unused-checkpoint", step_config, config_name="test")
     fake_model = _FakeLogitsModel(logits)
@@ -470,3 +482,48 @@ def test_dreamreasoner_single_block_chunk_still_needs_no_mask():
     prefill_calls = fake_model.calls[:1]
     assert len(prefill_calls) == 1
     assert prefill_calls[0]["attention_mask"] is None
+
+
+def test_dreamreasoner_base_matches_2026_07_27_full_mask_prefill(monkeypatch):
+    """The base benchmark must retain commit 6dfd132's exact prefill path."""
+    import dllm_bench.models.dreamreasoner as dreamreasoner_module
+
+    monkeypatch.setattr(dreamreasoner_module, "_PREFILL_CHUNK_BLOCKS", 2)
+    block_length = 4
+    prompt_blocks = 6
+    logits = torch.zeros(1, block_length, VOCAB_SIZE)
+    step_config = DiffusionStepConfig(
+        gen_length=block_length,
+        block_length=block_length,
+        steps_per_block=4,
+        extra={
+            "remasking_strategy": "low_confidence_static",
+            "mask_token_id": 99,
+            "execution_path": "default",
+        },
+    )
+    adapter = DreamReasonerAdapter("unused-checkpoint", step_config, config_name="test")
+    fake_model = _FakeLogitsModel(logits)
+    adapter._model = fake_model
+    adapter._tokenizer = _FakeTokenizer(prompt_blocks * block_length)
+    adapter._device = "cpu"
+
+    adapter._run_denoising("prompt", step_config)
+
+    prefill_call = fake_model.calls[0]
+    prefill_length = prompt_blocks * block_length
+    assert prefill_call["shape"] == (1, prefill_length)
+    assert prefill_call["store_kv"] is True
+    assert prefill_call["attention_mask"].shape == (
+        1,
+        prefill_length,
+        prefill_length,
+    )
+    # The generated block also receives the same baseline mask slice.
+    first_denoising_call = fake_model.calls[1]
+    assert first_denoising_call["attention_mask"].shape == (
+        1,
+        block_length,
+        prefill_length + block_length,
+    )
+    assert "bounded_chunked_prefill_mask" not in adapter.inference_optimizations

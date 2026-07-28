@@ -1,4 +1,5 @@
 import json
+import zipfile
 
 import pytest
 
@@ -12,7 +13,12 @@ from dllm_bench.datasets.hellobench import (
     seq_rep_n,
 )
 from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample, extract_code
-from dllm_bench.datasets.ruler import RulerDataset, RulerReference, position_robustness
+from dllm_bench.datasets.ruler import (
+    RulerDataset,
+    RulerReference,
+    generate_ruler_bank,
+    position_robustness,
+)
 from dllm_bench.datasets.structeval_t import (
     StructEvalSchema,
     StructEvalTDataset,
@@ -21,8 +27,10 @@ from dllm_bench.datasets.structeval_t import (
 from dllm_bench.datasets.sudoku import (
     SudokuDataset,
     SudokuReference,
+    _load_official_test_samples as _load_official_sudoku_test_samples,
     classify_difficulty,
     group_by_difficulty,
+    naked_single_rounds,
     parse_grid,
 )
 from dllm_bench.interfaces import (
@@ -297,6 +305,7 @@ def _blank_copy(grid, positions):
 def test_classify_difficulty_easy_when_one_cell_blank():
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     assert classify_difficulty(puzzle) == "easy"
+    assert naked_single_rounds(puzzle) == 1
 
 
 def test_parse_grid_from_spaced_text():
@@ -314,11 +323,23 @@ def test_sudoku_score_correct_solution():
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
-    text = "\n".join(" ".join(str(v) for v in row) for row in _EASY_PUZZLE)
+    text = "".join(str(v) for row in _EASY_PUZZLE for v in row)
     result = ds.score(sample, text)
     assert result.primary_score == 1.0
-    assert result.aux["cell_accuracy"] == 1.0
-    assert result.aux["conflict_rate"] == 0.0
+    assert result.valid is True
+
+
+def test_sudoku_official_score_rejects_non_official_answer_wrapping():
+    ds = SudokuDataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
+    sample = Sample(sample_id="1", prompt="solve", reference=ref)
+    digits = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+
+    result = ds.score(sample, f"Answer:\n{digits}")
+
+    assert result.primary_score == 0.0
+    assert result.valid is False
 
 
 def test_sudoku_score_unparseable_output():
@@ -328,6 +349,31 @@ def test_sudoku_score_unparseable_output():
     result = ds.score(sample, "I don't know the answer.")
     assert result.primary_score == 0.0
     assert result.valid is False
+
+
+def test_load_official_sudoku_split_keeps_raw_sequence_protocol(tmp_path):
+    solution = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+    easy = "0" + solution[1:]
+    hard = "0" * 81
+    archive_path = tmp_path / "sudoku.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr(
+            "sudoku.csv",
+            "quizzes,solutions\n"
+            f"{easy},{solution}\n"
+            f"{easy},{solution}\n"
+            f"{easy},{solution}\n"
+            f"{hard},{solution}\n",
+        )
+
+    samples = _load_official_sudoku_test_samples(
+        archive_path, train_rows=2, test_rows=2
+    )
+
+    assert [sample.prompt for sample in samples] == [easy, hard]
+    assert [sample.meta["source_index"] for sample in samples] == [2, 3]
+    assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
+    assert all(sample.meta["max_new_tokens"] == 82 for sample in samples)
 
 
 def test_group_by_difficulty():
@@ -359,13 +405,22 @@ def test_ruler_score_exact_match():
     assert result.primary_score == 1.0
 
 
+def test_ruler_official_style_prompt_ends_with_answer_prefix():
+    samples = generate_ruler_bank(
+        [256], samples_per_context_window_position=1, max_output_tokens=64
+    )
+
+    assert samples
+    assert all(sample.prompt.endswith("\nAnswer:") for sample in samples)
+
+
 def test_ruler_score_partial_match_for_multi_answer():
     ds = RulerDataset()
     ref = RulerReference(task_type="multi_hop", position="middle", required_answers=["Alice", "Bob"])
     sample = Sample(sample_id="1", prompt="p", reference=ref)
     result = ds.score(sample, "The answer involves Alice.")
-    assert result.primary_score == 0.0
-    assert result.aux["partial_match_rate"] == pytest.approx(0.5)
+    assert result.primary_score == pytest.approx(0.5)
+    assert result.aux["all_answers_match"] == 0.0
 
 
 def test_position_robustness_perfect_when_equal():
