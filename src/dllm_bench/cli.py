@@ -46,6 +46,7 @@ import click
 
 from .hf_cache import configure_default_cache_dir
 from .interfaces import GenerationRequest
+from .models.model_cache import evict_cpu_offloaded_cuda_models
 from .registry import (
     build_dataset,
     build_model_adapter,
@@ -260,7 +261,16 @@ def generate(
                     seed=resolved_seed,
                 )
             )
-            click.echo(f"[{v}] warmup complete")
+            if getattr(adapter, "_cpu_offloaded", False):
+                offloaded_gib = float(
+                    getattr(adapter, "_cpu_offloaded_bytes", 0)
+                ) / (1024 ** 3)
+                click.echo(
+                    f"[{v}] warmup complete; CPU offload active "
+                    f"({offloaded_gib:.2f} GiB of parameters/buffers on CPU)"
+                )
+            else:
+                click.echo(f"[{v}] warmup complete")
 
         def log_progress(event, index, total, sample, generation):
             prefix = f"[{v}] [{index}/{total}] {sample.sample_id}"
@@ -566,6 +576,13 @@ def matrix_command(
         # insurance against a *later*, unrelated-looking job (e.g.
         # HelloBench, this matrix's last one) being the one that actually
         # gets OOM-killed for memory a much earlier job used.
+        if index < len(jobs):
+            evicted_offloaded = evict_cpu_offloaded_cuda_models()
+            if evicted_offloaded:
+                click.echo(
+                    "CPU-offloaded model cache cleared at dataset boundary; "
+                    "the next dataset will attempt full-GPU placement independently"
+                )
         gc.collect()
     if stage == "all":
         ctx.invoke(report, run_paths=(), output_root=output_root, dataset_name=None)

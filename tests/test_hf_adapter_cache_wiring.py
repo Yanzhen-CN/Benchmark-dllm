@@ -12,6 +12,7 @@ import pytest
 transformers = pytest.importorskip("transformers")
 torch = pytest.importorskip("torch")
 
+import dllm_bench.models.dreamreasoner as dreamreasoner_module
 from dllm_bench.models import model_cache
 from dllm_bench.models.diffusiongemma import DiffusionGemmaAdapter
 from dllm_bench.models.dreamreasoner import DreamReasonerAdapter
@@ -157,6 +158,12 @@ def test_dreamreasoner_reload_with_cpu_offload_switches_to_device_map_auto(monke
     _, model_calls = _install_counting_fakes(
         monkeypatch, transformers.AutoModelForCausalLM
     )
+    max_memory = {0: 12 * 1024**3, "cpu": 64 * 1024**3}
+    monkeypatch.setattr(
+        dreamreasoner_module,
+        "cpu_offload_max_memory",
+        lambda device: max_memory,
+    )
     adapter = DreamReasonerAdapter(
         "dreamreasoner-checkpoint",
         DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
@@ -167,7 +174,12 @@ def test_dreamreasoner_reload_with_cpu_offload_switches_to_device_map_auto(monke
     assert adapter._reload_with_cpu_offload() is True
     assert model_calls["kwargs"] == [
         {"trust_remote_code": True, "torch_dtype": torch.bfloat16, "low_cpu_mem_usage": True},
-        {"trust_remote_code": True, "torch_dtype": torch.bfloat16, "device_map": "auto"},
+        {
+            "trust_remote_code": True,
+            "torch_dtype": torch.bfloat16,
+            "device_map": "auto",
+            "max_memory": max_memory,
+        },
     ]
 
 

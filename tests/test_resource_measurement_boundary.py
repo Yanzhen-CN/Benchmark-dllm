@@ -1,6 +1,8 @@
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+import pytest
+
 import dllm_bench.models.base as base_module
 from dllm_bench.interfaces import GenerationRequest, GenerationResult, RunStatus
 from dllm_bench.models.base import BaseModelAdapter
@@ -242,6 +244,38 @@ def test_generate_escalates_to_cpu_offload_after_a_second_oom(monkeypatch):
     assert result.extra["cpu_offloaded"] is True
     assert result.extra["cpu_offloaded_bytes"] == 123_456
     assert result.extra["cpu_offloaded_gib"] == 123_456 / (1024 ** 3)
+
+
+def test_untimed_warmup_uses_the_same_cpu_offload_recovery(monkeypatch):
+    release_calls = []
+    monkeypatch.setattr(
+        base_module, "_release_cuda_cache", lambda: release_calls.append(1)
+    )
+    adapter = _OOMTwiceThenSucceedWithOffloadAdapter(supports_offload=True)
+
+    adapter.warmup_generation(
+        GenerationRequest(prompt="long context", max_new_tokens=8, seed=42)
+    )
+
+    assert adapter.generate_core_calls == 3
+    assert adapter.reload_calls == 1
+    # One release at warmup start, one after its first failed attempt. The
+    # second failure reloads the model through the offload helper instead.
+    assert release_calls == [1, 1]
+    assert adapter._cpu_offloaded is True
+
+
+def test_untimed_warmup_still_raises_when_offload_is_unavailable(monkeypatch):
+    monkeypatch.setattr(base_module, "_release_cuda_cache", lambda: None)
+    adapter = _OOMTwiceThenSucceedWithOffloadAdapter(supports_offload=False)
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        adapter.warmup_generation(
+            GenerationRequest(prompt="long context", max_new_tokens=8, seed=42)
+        )
+
+    assert adapter.generate_core_calls == 2
+    assert adapter.reload_calls == 1
 
 
 def test_generate_gives_up_as_oom_when_adapter_cannot_reload_with_offload(monkeypatch):

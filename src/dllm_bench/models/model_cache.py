@@ -23,6 +23,12 @@ from typing import Any
 
 _CACHE: dict[tuple[str, str], Any] = {}
 
+# CPU offload is only reached after a real capacity OOM. Limit model weights
+# to half of the selected GPU so long-context KV/activation memory has actual
+# headroom; plain `device_map="auto"` only fits weights and can put the whole
+# checkpoint back on GPU, immediately reproducing the same runtime OOM.
+CPU_OFFLOAD_GPU_MEMORY_FRACTION = 0.50
+
 
 def get_or_load(model_name_or_path: str, device: str, loader: Callable[[], Any]) -> Any:
     key = (model_name_or_path, device)
@@ -78,6 +84,50 @@ def reload_with_offload(
     return get_or_load(model_name_or_path, device, offload_loader)
 
 
+def cpu_offload_max_memory(
+    device: str,
+    *,
+    gpu_fraction: float = CPU_OFFLOAD_GPU_MEMORY_FRACTION,
+    detected_max_memory: dict[Any, int] | None = None,
+) -> dict[Any, int] | None:
+    """Build an Accelerate `max_memory` map with generation headroom.
+
+    Returns ``None`` for non-CUDA execution. Only the selected logical GPU
+    and CPU are exposed, preventing an automatic multi-GPU placement from
+    silently changing this benchmark's single-device measurement protocol.
+    """
+    if not 0 < gpu_fraction < 1:
+        raise ValueError("gpu_fraction must be between 0 and 1")
+
+    import torch
+
+    if not torch.cuda.is_available():
+        return None
+    resolved = torch.device(device)
+    if resolved.type != "cuda":
+        return None
+    gpu_index = resolved.index
+    if gpu_index is None:
+        gpu_index = torch.cuda.current_device()
+
+    if detected_max_memory is None:
+        from accelerate.utils import get_max_memory
+
+        detected_max_memory = get_max_memory()
+
+    total_bytes = int(torch.cuda.get_device_properties(gpu_index).total_memory)
+    gpu_budget = int(total_bytes * gpu_fraction)
+    detected_gpu_budget = detected_max_memory.get(gpu_index)
+    if detected_gpu_budget is not None:
+        gpu_budget = min(gpu_budget, int(detected_gpu_budget))
+
+    limits: dict[Any, int] = {gpu_index: gpu_budget}
+    cpu_budget = detected_max_memory.get("cpu")
+    if cpu_budget is not None:
+        limits["cpu"] = int(cpu_budget)
+    return limits
+
+
 def offloaded_parameter_bytes(model: Any) -> int:
     """Sum of parameter+buffer bytes resident on CPU, once
     `accelerate`'s `device_map="auto"` has moved part of a model to CPU —
@@ -96,3 +146,36 @@ def offloaded_parameter_bytes(model: Any) -> int:
         if tensor.device.type == "cpu":
             total += tensor.numel() * tensor.element_size()
     return total
+
+
+def evict_cpu_offloaded_cuda_models() -> int:
+    """Drop CPU-offloaded CUDA cache entries at a dataset boundary.
+
+    Best/Fast still share the same placement within one dataset sweep. The
+    next dataset must start from its own all-GPU attempt, otherwise a RULER
+    OOM would silently force a later, smaller dataset to inherit slower CPU
+    placement even if it fits entirely on GPU.
+    """
+    keys_to_evict: list[tuple[str, str]] = []
+    for key, cached in _CACHE.items():
+        if not str(key[1]).startswith("cuda"):
+            continue
+        try:
+            model = cached[1]
+        except (TypeError, IndexError):
+            continue
+        if offloaded_parameter_bytes(model) > 0:
+            keys_to_evict.append(key)
+
+    for key in keys_to_evict:
+        _CACHE.pop(key, None)
+    if keys_to_evict:
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+    return len(keys_to_evict)

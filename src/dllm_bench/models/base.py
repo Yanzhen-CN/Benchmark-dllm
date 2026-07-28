@@ -89,6 +89,32 @@ class BaseModelAdapter(ABC):
         must carry the same flag."""
         return False
 
+    def _recover_from_oom(self, exc: Exception, attempt: int, seed: int) -> bool:
+        """Apply the shared two-step CUDA OOM recovery policy.
+
+        Attempt 0 clears allocator cache; attempt 1 reloads with CPU
+        offload. Both formal generation and the untimed warmup call this so
+        an OOM cannot terminate the process before the formal path gets a
+        chance to recover.
+        """
+        if not _looks_like_oom(exc):
+            return False
+
+        # A traceback can retain the failed forward's local tensors. Drop it
+        # before cache release or model reloading so the allocator and
+        # Accelerate see the real amount of free VRAM.
+        exc.__traceback__ = None
+        if attempt == 0:
+            _release_cuda_cache()
+        elif attempt == 1:
+            if not self._reload_with_cpu_offload():
+                return False
+        else:
+            return False
+
+        _seed_everything(seed)
+        return True
+
     def generate(self, request: GenerationRequest) -> GenerationResult:
         _seed_everything(request.seed)
         attempt = 0
@@ -110,33 +136,9 @@ class BaseModelAdapter(ABC):
             except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure -> Run Status
                 measurement.stop()
                 self._active_measurement = None
-                if _looks_like_oom(exc) and attempt == 0:
-                    # First retry: just a freshly-cleared CUDA cache — see
-                    # `_release_cuda_cache`'s docstring for the accumulated
-                    # -fragmentation pattern this recovers from, cheaply and
-                    # with no effect on any sample that never needed it.
-                    # An exception traceback can retain the failed forward's
-                    # local tensors. Release it before empty_cache(), or the
-                    # allocator cannot actually reclaim those live blocks.
-                    exc.__traceback__ = None
-                    _release_cuda_cache()
-                    _seed_everything(request.seed)
+                if self._recover_from_oom(exc, attempt, request.seed):
                     attempt += 1
                     continue
-                if _looks_like_oom(exc) and attempt == 1:
-                    # The reload must also happen after the failed forward's
-                    # traceback releases its tensor references; otherwise
-                    # device_map="auto" sees artificially low free VRAM.
-                    exc.__traceback__ = None
-                    if self._reload_with_cpu_offload():
-                        # Cache-clearing alone didn't fix it — a real capacity
-                        # ceiling, not fragmentation. Escalate to the expensive
-                        # fix (reload with part of the model on CPU) only now,
-                        # and only because this specific sample proved it's
-                        # actually needed.
-                        _seed_everything(request.seed)
-                        attempt += 1
-                        continue
                 status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
                 return GenerationResult(
                     request=request,
@@ -177,14 +179,23 @@ class BaseModelAdapter(ABC):
         return handle
 
     def warmup_generation(self, request: GenerationRequest) -> None:
-        """Run a short untimed generation to initialize kernels/caches."""
+        """Run a short untimed generation with formal-path OOM recovery."""
         _seed_everything(request.seed)
         _release_cuda_cache()
         self._active_measurement = None
         previous = getattr(self, "_suppress_trace_instrumentation", False)
         self._suppress_trace_instrumentation = True
+        attempt = 0
         try:
-            self._generate_core(request)
+            while True:
+                try:
+                    self._generate_core(request)
+                    break
+                except Exception as exc:  # noqa: BLE001 - warmup must share OOM policy
+                    if self._recover_from_oom(exc, attempt, request.seed):
+                        attempt += 1
+                        continue
+                    raise
         finally:
             self._suppress_trace_instrumentation = previous
 

@@ -27,7 +27,12 @@ from typing import Any
 
 from ..interfaces import GenerationRequest, GenerationResult, RunStatus, TraceStep
 from .base import BaseModelAdapter
-from .model_cache import get_or_load, offloaded_parameter_bytes, reload_with_offload
+from .model_cache import (
+    cpu_offload_max_memory,
+    get_or_load,
+    offloaded_parameter_bytes,
+    reload_with_offload,
+)
 
 
 @dataclass
@@ -106,6 +111,9 @@ class HFDiffusionAdapter(BaseModelAdapter):
         kwargs: dict = dict(trust_remote_code=True, torch_dtype=torch.bfloat16)
         if device_map_auto:
             kwargs["device_map"] = "auto"
+            max_memory = cpu_offload_max_memory(device)
+            if max_memory is not None:
+                kwargs["max_memory"] = max_memory
         else:
             kwargs["low_cpu_mem_usage"] = True
         model = AutoModel.from_pretrained(self._model_name, **kwargs)

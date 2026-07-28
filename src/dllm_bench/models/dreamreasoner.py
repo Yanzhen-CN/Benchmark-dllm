@@ -115,7 +115,12 @@ import math
 
 from ..interfaces import PositionState, TraceStep
 from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
-from .model_cache import get_or_load, offloaded_parameter_bytes, reload_with_offload
+from .model_cache import (
+    cpu_offload_max_memory,
+    get_or_load,
+    offloaded_parameter_bytes,
+    reload_with_offload,
+)
 from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
@@ -184,6 +189,9 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         kwargs: dict = dict(trust_remote_code=True, torch_dtype=torch.bfloat16)
         if device_map_auto:
             kwargs["device_map"] = "auto"
+            max_memory = cpu_offload_max_memory(device)
+            if max_memory is not None:
+                kwargs["max_memory"] = max_memory
         else:
             kwargs["low_cpu_mem_usage"] = True
         model = AutoModelForCausalLM.from_pretrained(self._model_name, **kwargs)

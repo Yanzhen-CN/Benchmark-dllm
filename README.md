@@ -384,14 +384,22 @@ the 8B-class checkpoints do not transiently become default-precision models
 that exhaust a 24 GiB device. `inference_dtype` is persisted in each run's
 `_meta.json` for reproducibility.
 
-If a local HF model still reaches a genuine capacity OOM after one
-cache-cleared retry, the runner may reload it with Accelerate CPU offload.
+If a local HF model still reaches a genuine capacity OOM during warmup or a
+formal sample after one cache-cleared retry, the runner reloads it with
+Accelerate CPU offload. The selected GPU's model-weight budget is capped at
+50% of physical VRAM so KV cache and activations retain real headroom;
+unbounded `device_map="auto"` can otherwise put every weight back on GPU and
+repeat the same runtime OOM.
 Every affected sample records `extra.cpu_offloaded=true` plus the actual
 CPU-resident parameter/buffer amount as `cpu_offloaded_bytes` and
 `cpu_offloaded_gib`; the dataset `_meta.json` records the same placement after
 the lazy load has completed. Such samples keep valid task-quality results, but
 their time/TPS/SPS, GPU-only energy, and peak-VRAM values must be compared as a
 separate CPU-offloaded execution class rather than mixed with fully-GPU runs.
+Best/Fast share the recovered placement inside one dataset sweep. At the next
+dataset boundary, only an offloaded cache entry is discarded so that the next
+dataset independently attempts full-GPU placement; ordinary fully-GPU weights
+remain cached across datasets.
 
 Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in
