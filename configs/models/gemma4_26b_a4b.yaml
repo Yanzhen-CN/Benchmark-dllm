@@ -1,0 +1,14 @@
+# Same-scale autoregressive reference for DiffusionGemma. Both checkpoints use
+# the Gemma 4 26B-A4B MoE scale (25.2B total, 3.8B active) and should be run on
+# the same single A100/H100 80GB GPU in BF16 for a clean decoding comparison.
+# If Hugging Face prompts for repository access, accept the model terms and
+# export a read-capable HF_TOKEN before running prepare_model.py.
+model: gemma4_26b_a4b
+max_context_tokens: 262144
+configs:
+  ar-baseline:
+    adapter: dllm_bench.models.gemma4_ar.Gemma4ARAdapter
+    init_kwargs:
+      model_name_or_path: google/gemma-4-26B-A4B-it
+      capture_trace: true
+      enable_thinking: false

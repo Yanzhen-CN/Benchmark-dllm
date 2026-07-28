@@ -110,7 +110,10 @@ class HFDiffusionAdapter(BaseModelAdapter):
 
     @abstractmethod
     def _run_denoising(
-        self, prompt: str, step_config: DiffusionStepConfig
+        self,
+        prompt: str,
+        step_config: DiffusionStepConfig,
+        target_input_tokens: int | None = None,
     ) -> tuple[str, list[TraceStep], int]:
         """Run the full denoising/unmasking schedule for one sample.
 
@@ -145,7 +148,15 @@ class HFDiffusionAdapter(BaseModelAdapter):
             steps_per_block=request.config.get("steps_per_block", self._step_config.steps_per_block),
             extra=extra,
         )
-        output_text, trace, final_valid_length = self._run_denoising(request.prompt, step_config)
+        self._last_input_tokens = None
+        output_text, trace, final_valid_length = self._run_denoising(
+            request.prompt,
+            step_config,
+            target_input_tokens=request.config.get("target_input_tokens"),
+        )
+        result_extra = {}
+        if self._last_input_tokens is not None:
+            result_extra["input_tokens"] = self._last_input_tokens
         return GenerationResult(
             request=request,
             output_text=output_text,
@@ -155,4 +166,5 @@ class HFDiffusionAdapter(BaseModelAdapter):
                 getattr(self, "_last_num_forward_passes", len(trace))
             ),
             final_valid_length=final_valid_length,
+            extra=result_extra,
         )

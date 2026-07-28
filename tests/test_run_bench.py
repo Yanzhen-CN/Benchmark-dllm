@@ -8,9 +8,10 @@ import run_bench
 def test_default_dry_run_selects_every_matrix_model(capsys):
     assert run_bench.main(["--dry-run"]) == 0
     output = capsys.readouterr().out
-    assert "Models: qwen3_4b, illada, dreamreasoner, w1, diffusiongemma" in output
+    assert "Models: qwen3_4b, illada, dreamreasoner, w1, diffusiongemma, gemma4_26b_a4b" in output
     assert "venv_scripts\\illada.py run" in output or "venv_scripts/illada.py run" in output
     assert "venv_scripts\\diffusiongemma.py run" in output or "venv_scripts/diffusiongemma.py run" in output
+    assert "venv_scripts\\gemma4_26b_a4b.py run" in output or "venv_scripts/gemma4_26b_a4b.py run" in output
 
 
 def test_model_flag_filters_to_one_model(capsys):
@@ -74,11 +75,5 @@ def test_diffusiongemma_is_the_public_name():
     assert "dg" not in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)
 
 
-def test_dg_comparison_matrix_dispatches_the_matched_pair(capsys):
-    assert run_bench.main([
-        "--dry-run", "--matrix", "configs/experiments/dg_comparison.yaml"
-    ]) == 0
-    output = capsys.readouterr().out
-    assert "diffusiongemma.py run" in output
-    assert "gemma4_26b.py run" in output
-    assert "qwen3_4b.py run" not in output
+def test_same_scale_gemma_ar_reference_is_public():
+    assert "gemma4_26b_a4b" in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)

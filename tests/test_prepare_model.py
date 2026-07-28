@@ -101,7 +101,14 @@ def test_prepare_model_rejects_variant_and_variants_together(tmp_path):
 def test_prepare_model_defaults_to_all_matrix_models_via_isolated_scripts(tmp_path):
     result = _run(["--dry-run"], cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    for model in ("qwen3_4b", "illada", "dreamreasoner", "w1", "diffusiongemma"):
+    for model in (
+        "qwen3_4b",
+        "illada",
+        "dreamreasoner",
+        "w1",
+        "diffusiongemma",
+        "gemma4_26b_a4b",
+    ):
         assert f"{model}.py prepare" in result.stdout
 
 

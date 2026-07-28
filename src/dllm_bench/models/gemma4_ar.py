@@ -1,15 +1,10 @@
-"""Architecture-matched autoregressive control for DiffusionGemma.
+"""Gemma 4 26B-A4B autoregressive reference for DiffusionGemma.
 
-``google/gemma-4-26B-A4B-it`` and DiffusionGemma share the same 25.2B-total /
-3.8B-active MoE scale.  This adapter follows the official Transformers recipe:
-``AutoProcessor``, ``AutoModelForMultimodalLM``, BF16 from the checkpoint, the
-checkpoint's shipped sampling configuration, and thinking disabled in the chat
-template.  The benchmark is text-only even though the checkpoint is multimodal.
-
-AR trace rows are reconstructed from the completed token sequence after the
-measured generation window.  This is exact for autoregressive decoding (one new
-token commits per forward) and avoids retaining a full 262K-vocabulary logits
-tensor for every generated token.
+The two checkpoints share the same 25.2B-total/3.8B-active MoE scale. This
+text-only adapter uses the official multimodal processor/model classes in
+native BF16 and stays fully on the selected GPU. AR trace rows are rebuilt
+from the completed token sequence after measurement, avoiding retention of a
+full 262K-vocabulary logits tensor for every generated token.
 """
 
 from __future__ import annotations
@@ -17,6 +12,7 @@ from __future__ import annotations
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
 from .model_cache import get_or_load
+from .prompting import tokenize_instruction_prompt
 
 DEFAULT_GEMMA4_CHECKPOINT = "google/gemma-4-26B-A4B-it"
 
@@ -32,7 +28,7 @@ class Gemma4ARAdapter(BaseModelAdapter):
         capture_trace: bool = True,
         enable_thinking: bool = False,
     ) -> None:
-        self.name = "gemma4_26b"
+        self.name = "gemma4_26b_a4b"
         self.config_name = config_name
         self.supports_trace = capture_trace
         self.natively_measures_resources = False
@@ -40,6 +36,7 @@ class Gemma4ARAdapter(BaseModelAdapter):
         self._device = device
         self._capture_trace = capture_trace
         self._enable_thinking = enable_thinking
+        self._inference_dtype = "bfloat16"
         self._model = None
         self._processor = None
 
@@ -57,11 +54,14 @@ class Gemma4ARAdapter(BaseModelAdapter):
         self._processor, self._model = get_or_load(self._model_name, device, _load)
 
     def _load_model_and_processor(self, device: str):
+        import torch
         from transformers import AutoModelForMultimodalLM, AutoProcessor
 
         processor = AutoProcessor.from_pretrained(self._model_name)
         model = AutoModelForMultimodalLM.from_pretrained(
-            self._model_name, dtype="auto"
+            self._model_name,
+            dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
         )
         model.to(device)
         model.eval()
@@ -71,14 +71,13 @@ class Gemma4ARAdapter(BaseModelAdapter):
         self._ensure_loaded()
         import torch
 
-        encoded = self._processor.apply_chat_template(
-            [{"role": "user", "content": request.prompt}],
-            tokenize=True,
-            add_generation_prompt=True,
-            enable_thinking=self._enable_thinking,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self._device)
+        encoded = tokenize_instruction_prompt(
+            self._processor,
+            request.prompt,
+            device=self._device,
+            chat_template_kwargs={"enable_thinking": self._enable_thinking},
+            target_input_tokens=request.config.get("target_input_tokens"),
+        )
         prompt_len = encoded["input_ids"].shape[1]
 
         self._start_measurement()
@@ -102,6 +101,7 @@ class Gemma4ARAdapter(BaseModelAdapter):
             trace=trace,
             num_forward_passes=len(generated_ids),
             final_valid_length=len(generated_ids),
+            extra={"input_tokens": int(prompt_len)},
         )
 
 

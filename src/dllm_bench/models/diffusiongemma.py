@@ -33,6 +33,7 @@ import math
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
 from .model_cache import get_or_load
+from .prompting import tokenize_instruction_prompt
 
 DEFAULT_DIFFUSIONGEMMA_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
 DEFAULT_MAX_DENOISING_STEPS = 48
@@ -129,16 +130,14 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         # the arguments below — no `self` parameter here on purpose.
         self._model._prepare_sampler = wrapped_prepare_sampler
         try:
-            # The official instruction checkpoint expects a user message
-            # rendered through its own chat template, including the assistant
-            # generation prompt and all model-specific special tokens.
-            encoded = self._processor.apply_chat_template(
-                [{"role": "user", "content": request.prompt}],
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
-            ).to(self._device)
+            # The official checkpoint uses AutoProcessor.apply_chat_template;
+            # the shared helper also applies RULER's post-template token cap.
+            encoded = tokenize_instruction_prompt(
+                self._processor,
+                request.prompt,
+                device=self._device,
+                target_input_tokens=request.config.get("target_input_tokens"),
+            )
             prompt_len = encoded["input_ids"].shape[1]
             self._start_measurement()
             with torch.inference_mode():
@@ -167,6 +166,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             trace=trace,
             num_forward_passes=forward_count,
             final_valid_length=len(generated_ids),
+            extra={"input_tokens": int(prompt_len)},
         )
 
 

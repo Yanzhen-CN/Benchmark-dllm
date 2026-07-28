@@ -31,6 +31,22 @@ class _PlainTokenizer:
         return _MovableBatch(input_ids="ids")
 
 
+class _Shape:
+    def __init__(self, length):
+        self.shape = (1, length)
+
+
+class _LengthTokenizer:
+    def __init__(self):
+        self.prompts = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        prompt = messages[0]["content"]
+        self.prompts.append(prompt)
+        # Two tokens stand in for checkpoint chat-template overhead.
+        return _MovableBatch(input_ids=_Shape(len(prompt.split()) + 2))
+
+
 def test_instruction_prompt_uses_checkpoint_chat_template():
     tokenizer = _ChatTokenizer()
 
@@ -60,3 +76,27 @@ def test_instruction_prompt_falls_back_for_minimal_test_tokenizer():
 
     assert tokenizer.calls == [("prompt", {"return_tensors": "pt"})]
     assert encoded.device == "cpu"
+
+
+def test_ruler_prompt_is_fitted_after_chat_template_tokenization():
+    tokenizer = _LengthTokenizer()
+    prompt = (
+        "background background background background\n"
+        "The hidden access code is R123.\n"
+        "background background background background\n\n"
+        "What is the hidden access code?"
+    )
+
+    encoded = tokenize_instruction_prompt(
+        tokenizer,
+        prompt,
+        device="cpu",
+        target_input_tokens=17,
+    )
+
+    fitted = tokenizer.prompts[-1]
+    assert encoded["input_ids"].shape[-1] <= 17
+    assert "The hidden access code is R123." in fitted
+    assert "What is the hidden access code?" in fitted
+    before, after = fitted.split("The hidden access code is R123.")
+    assert abs(before.count("background") - after.count("background")) <= 1

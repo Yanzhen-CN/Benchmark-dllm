@@ -15,7 +15,13 @@ torch = pytest.importorskip("torch")
 
 from dllm_bench.interfaces import PositionState
 from dllm_bench.models.hf_diffusion import DiffusionStepConfig
-from dllm_bench.models.illada import MASK_ID, IlladaAdapter, _add_gumbel_noise, _transfer_schedule
+from dllm_bench.models.illada import (
+    MASK_ID,
+    IlladaAdapter,
+    _add_gumbel_noise,
+    _selected_token_probabilities,
+    _transfer_schedule,
+)
 
 VOCAB_SIZE = 10
 
@@ -39,6 +45,15 @@ def test_gumbel_noise_perturbs_at_nonzero_temperature():
     logits = torch.zeros(1, 3, VOCAB_SIZE)
     perturbed = _add_gumbel_noise(logits, 1.0)
     assert not torch.equal(perturbed, logits)
+
+
+def test_selected_token_probabilities_match_full_softmax():
+    logits = torch.randn(2, 5, VOCAB_SIZE)
+    token_ids = torch.randint(0, VOCAB_SIZE, (2, 5))
+
+    expected = torch.softmax(logits, dim=-1).gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
+
+    assert torch.allclose(_selected_token_probabilities(logits, token_ids), expected)
 
 
 class _FakeLogitsModel:

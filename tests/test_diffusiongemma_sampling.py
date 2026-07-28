@@ -197,12 +197,17 @@ def _make_diffusiongemma_adapter(raise_after_first_step: bool = False) -> Diffus
 
 def test_diffusiongemma_generate_core_builds_correct_trace_and_output():
     adapter = _make_diffusiongemma_adapter()
-    request = GenerationRequest(prompt="hi", max_new_tokens=4)
+    request = GenerationRequest(
+        prompt="hi",
+        max_new_tokens=4,
+        config={"target_input_tokens": 8},
+    )
 
     result = adapter._generate_core(request)
 
     assert result.output_text == "[20]"  # _RecordingTokenizer.decode returns f"[{ids[0]}]"
     assert result.final_valid_length == 4
+    assert result.extra["input_tokens"] == 2
     assert len(result.trace) == 2
     assert result.trace[0].committed_positions == [0, 2]
     assert result.trace[1].committed_positions == [0, 1, 2, 3]

@@ -1,7 +1,7 @@
 # dLLM Benchmark
 
 Benchmark harness for diffusion LLMs (iLLaDA, DreamReasoner, W1, DiffusionGemma) vs
-AR controls (Qwen3-4B and the DG-matched Gemma 4 26B A4B), implementing the design in
+AR references (Qwen3-4B and the same-scale Gemma 4 26B-A4B), implementing the design in
 `dLLM_benchmark_设计文档.md`: task quality, long-context robustness,
 resource cost, and generation-process analysis (trace, parallelism,
 commit-order, certainty).
@@ -10,8 +10,8 @@ commit-order, certainty).
 
 The framework (unified model interface, all Part 3/4 metric math, all six formal
 dataset scorers, resource measurement plumbing, the 3-stage pipeline, and
-report/visualization generation) is fully implemented and unit-tested (255
-tests, see [Testing](#testing)). A pure-Python mock model backend
+report/visualization generation) is fully implemented and unit-tested (see
+[Testing](#testing)). A pure-Python mock model backend
 (`models/mock.py`) exercises the entire pipeline end-to-end without a GPU.
 
 On top of that, every **local** model's real sampling loop is implemented —
@@ -21,6 +21,7 @@ not just interface stubs:
 | --- | --- | --- |
 | iLLaDA | **Real, ported sampler** (`models/illada.py`) | `iLLaDAtest`'s reference `generate.py` — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
 | DiffusionGemma | **Real** (`models/diffusiongemma.py`) | Verified against the upstream `DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` implementation. Trace capture wraps `accept_canvas` through `_prepare_sampler`. Tests live in `tests/test_diffusiongemma_sampling.py`. |
+| Gemma 4 26B-A4B AR | **Real** (`models/gemma4_ar.py`) | Official `AutoProcessor` + `AutoModelForMultimodalLM` path in native BF16. It matches DiffusionGemma's 25.2B-total/3.8B-active MoE scale and reuses the common AR generation/trace protocol. |
 | DreamReasoner | **Real, ported sampler** (`models/dreamreasoner.py`) | GitHub's `DreamLM/DreamReasoner` repo (the design doc's own link) ships only a README + assets, no python — so verified instead by fetching the real `generation_utils.py`/`modeling_dream.py`/`config.json` from the `Dream-org/DreamReasoner-8B` HF repo directly. Confirmed from that source (not assumed): `block_diffusion_generate` returns only `sequences`/`nfe`, no per-step history at all (unlike regular Dream-7B's `output_history`), so this adapter ports the real `_denoise_current_block`/`_select_transfer_index` loop itself (like iLLaDA) rather than calling the model's own convenience method; default `block_length`=`config.block_size`=32; default per-block `denoising_steps`=`block_length` unless `remasking_strategy='low_confidence_static'`; the library's own default remasking strategy (`low_confidence_dynamic`) is already confidence-based, so — unlike regular Dream, where the library default was overridden — no override is applied; `mask_token_id`=`config.mask_token_id`=151669, shipped directly; the real default path uses a prefix KV cache (ported faithfully, since it directly affects real Time/Energy/Compute cost, not just trace fidelity); never revises (same structural reason as iLLaDA). This is a genuinely different, independently trained model from regular Dream-7B (`Dream-org/Dream-v0-Instruct-7B`) — not a config variant of it — and the design doc's own model roster (section 5) no longer includes regular Dream at all, so that adapter/config/tests were removed rather than kept alongside this one. Tests in `tests/test_dreamreasoner_sampling.py`. |
 
 What's still open, and why:
@@ -60,7 +61,7 @@ src/dllm_bench/
                      # loaded-weights cache), hf_ar.py (Qwen3-4B),
                      # hf_diffusion.py (iLLaDA/DreamReasoner shared base + DiffusionStepConfig),
                      # illada.py, dreamreasoner.py (each model's real sampler — see Status),
-                     # diffusiongemma.py, w1_api.py, mock.py
+                     # diffusiongemma.py, gemma4_ar.py, w1_api.py, mock.py
   datasets/         # base.py + gsm8k/mbpp/structeval_t/sudoku/ruler/hellobench
   resource/         # timing.py/energy.py/compute.py/vram.py (Appendix B protocol)
   metrics/          # quality_resource.py/long_context.py (Part 3),
@@ -116,7 +117,7 @@ python setup_venv.py                   # every model declared in the matrix
 python setup_venv.py -m illada         # only .venvs/illada
 python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
 python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
-python setup_venv.py --matrix configs/experiments/dg_comparison.yaml
+python setup_venv.py -m gemma4_26b_a4b # only .venvs/gemma4_26b_a4b
 ```
 
 `setup_venv.py` is only a dispatcher. It calls
@@ -134,7 +135,7 @@ Every model has one public script with the same four actions:
 | --- | --- |
 | `setup` | Create or update the model-specific virtualenv |
 | `check` | Validate dependencies and construct every configured adapter |
-| `prepare` | Download the checkpoint without loading it into RAM/GPU |
+| `prepare` | Download the checkpoint without loading it or generating samples |
 | `run` | Internal compatibility action used by the top-level dispatcher |
 
 Available entry points and environments:
@@ -145,7 +146,7 @@ Available entry points and environments:
 | iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
-| Gemma 4 26B A4B AR | `venv_scripts/gemma4_26b.py` | `.venvs/gemma4_26b` |
+| Gemma 4 26B-A4B AR | `venv_scripts/gemma4_26b_a4b.py` | `.venvs/gemma4_26b_a4b` |
 | W1 | `venv_scripts/w1.py` | `.venvs/w1` |
 | Local non-model stages | `venv_scripts/root.py` | `.venvs/root` |
 
@@ -158,16 +159,42 @@ python venv_scripts/qwen3_4b.py prepare
 python run_model.py -m qwen3_4b
 ```
 
-Architecture-matched DiffusionGemma comparison (run sequentially on the same
-physical A100 80GB; it is intentionally separate from `full_matrix.yaml`):
+### A100 Gemma 4 Pair
+
+Use the same A100 80GB in native BF16 for the Gemma 4 AR vs DiffusionGemma
+comparison. A100 40GB cannot hold either roughly 50GB BF16 checkpoint entirely
+on GPU. If Hugging Face requests model access, accept the repository terms and
+export a read-capable `HF_TOKEN` first.
 
 ```bash
-python setup_venv.py --matrix configs/experiments/dg_comparison.yaml
-python prepare_model.py --matrix configs/experiments/dg_comparison.yaml
-python run_model.py --matrix configs/experiments/dg_comparison.yaml \
-  --output-root output/dg_comparison --no-measure-compute
+cd /workspace/dllm
+export HF_TOKEN=hf_your_read_token
+
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
+python setup_venv.py -m gemma4_26b_a4b -m diffusiongemma --cuda-index cu124
+python prepare_model.py -m gemma4_26b_a4b -m diffusiongemma
+
+# One-sample generation checks, run sequentially on the same GPU.
+.venvs/gemma4_26b_a4b/bin/python -m dllm_bench.cli generate \
+  --model-config configs/models/gemma4_26b_a4b.yaml \
+  --variant ar-baseline \
+  --dataset-config configs/datasets/gsm8k.yaml \
+  --demo --n-samples 1 --max-new-tokens 64 \
+  --output-root output/a100_pair_check --no-resume
+
+.venvs/diffusiongemma/bin/python -m dllm_bench.cli generate \
+  --model-config configs/models/diffusiongemma.yaml \
+  --variant official \
+  --dataset-config configs/datasets/gsm8k.yaml \
+  --demo --n-samples 1 --max-new-tokens 64 \
+  --output-root output/a100_pair_check --no-resume
 ```
 
+For formal comparisons, keep GPU type, precision, dataset sample set, output
+caps, trace policy, and compute-profiling flag identical. Do not quantize or
+CPU-offload only one side. A longest-window RULER OOM remains a valid capacity
+finding rather than a reason to silently change one model's execution class.
 `run_model.py` creates the environment automatically when it is missing, then
 launches the model's generation rows with that venv's Python executable. It does
 not depend on shell activation. Override settings with environment variables:
@@ -453,7 +480,11 @@ maximum point. If those are identical, the common samples are reused rather
 than duplicated. Each context-window point contains 30 samples: 10 at each of
 front/middle/back, balanced so that NIAH, multi-hop, and aggregation also have
 10 samples each. RULER keeps 64 tokens inside the total model window for its
-short answer; the input target is therefore `context_window - 64`.
+short answer; the input target is therefore `context_window - 64`. The
+prepared filler is fitted again after the selected model's chat template and
+tokenizer are applied, so the actual encoded input does not exceed that
+target. Local HF model records include the observed count in
+`extra.input_tokens`; W1 remains dependent on the external API's tokenizer.
 
 HelloBench is the separate long-output axis. Its short-prompt 2K- and 4K-word
 samples carry per-sample generation caps of 3072 and 6144 tokens respectively,

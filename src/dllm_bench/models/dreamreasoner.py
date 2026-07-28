@@ -206,7 +206,10 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         )
 
     def _run_denoising(
-        self, prompt: str, step_config: DiffusionStepConfig
+        self,
+        prompt: str,
+        step_config: DiffusionStepConfig,
+        target_input_tokens: int | None = None,
     ) -> tuple[str, list[TraceStep], int]:
         import torch
         import torch.nn.functional as F
@@ -229,9 +232,13 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
 
         device = self._device
         input_ids = tokenize_instruction_prompt(
-            self._tokenizer, prompt, device=device
+            self._tokenizer,
+            prompt,
+            device=device,
+            target_input_tokens=target_input_tokens,
         )["input_ids"]
         prompt_len = input_ids.shape[1]
+        self._last_input_tokens = int(prompt_len)
         self._start_measurement()
 
         num_blocks = max(1, math.ceil((prompt_len + gen_length) / block_length))

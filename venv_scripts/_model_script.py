@@ -43,9 +43,9 @@ PROFILES: Mapping[str, ModelProfile] = {
         "diffusiongemma", "diffusiongemma", "configs/models/diffusiongemma.yaml",
         "dev,diffusiongemma,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
     ),
-    "gemma4_26b": ModelProfile(
-        "gemma4_26b", "gemma4_26b", "configs/models/gemma4_26b.yaml",
-        "dev,hf,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
+    "gemma4_26b_a4b": ModelProfile(
+        "gemma4_26b_a4b", "gemma4_26b_a4b", "configs/models/gemma4_26b_a4b.yaml",
+        "dev,gemma4,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
     ),
     "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
 }
@@ -340,7 +340,7 @@ def check_environment(profile: ModelProfile, python: Path) -> None:
     run([python, "-c", code], env=model_environment(profile))
     if profile.model_id == "diffusiongemma":
         run([python, "-c", "from transformers import DiffusionGemmaForBlockDiffusion; print('DiffusionGemma class OK')"])
-    elif profile.model_id == "gemma4_26b":
+    elif profile.model_id == "gemma4_26b_a4b":
         run([python, "-c", "from transformers import AutoModelForMultimodalLM; print('Gemma 4 class OK')"])
 
 

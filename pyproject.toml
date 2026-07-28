@@ -27,6 +27,10 @@ diffusiongemma = [
     "torch>=2.1",
     "transformers>=5.13.0",
 ]
+gemma4 = [
+    "torch>=2.1",
+    "transformers>=5.13.0",
+]
 api = [
     "requests>=2.31",
 ]
