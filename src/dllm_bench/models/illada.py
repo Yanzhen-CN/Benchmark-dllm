@@ -132,6 +132,7 @@ class IlladaAdapter(HFDiffusionAdapter):
                 global_step += 1
 
         self._stop_measurement()
+        self._last_num_forward_passes = global_step
         final_ids = x[0, prompt_len : prompt_len + gen_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
         return output_text, trace, len(final_ids)

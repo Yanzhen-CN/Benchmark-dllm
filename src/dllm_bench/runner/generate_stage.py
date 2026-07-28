@@ -39,6 +39,7 @@ def _validate_required_metrics(
     generation: GenerationResult,
     *,
     require_compute: bool,
+    require_trace: bool,
 ) -> None:
     if generation.status.value != "success":
         return
@@ -52,7 +53,7 @@ def _validate_required_metrics(
             missing.append("peak_vram_gb")
         if require_compute and generation.compute_tflops is None:
             missing.append("compute_tflops")
-    if adapter.supports_trace and not generation.trace:
+    if require_trace and adapter.supports_trace and not generation.trace:
         missing.append("trace")
     if missing:
         raise RuntimeError(
@@ -70,6 +71,7 @@ def run_generation(
     extra_config: dict | None = None,
     measure_compute: bool = False,
     require_all_metrics: bool = False,
+    capture_trace: bool = True,
     seed: int = DEFAULT_SEED,
     resume: bool = True,
     progress: GenerationProgress | None = None,
@@ -102,6 +104,7 @@ def run_generation(
                         "measurement_protocol": MEASUREMENT_PROTOCOL,
                         "measure_compute": measure_compute,
                         "require_all_metrics": require_all_metrics,
+                        "trace_scope": "all_samples" if capture_trace else "none",
                         "energy_backend": "nvml-total-energy",
                     },
                 ),
@@ -131,10 +134,12 @@ def run_generation(
             raise ValueError(
                 f"sample {sample.sample_id} has invalid max_new_tokens={sample_max_new_tokens}"
             )
+        request_config = dict(extra_config or {})
+        request_config["capture_trace"] = capture_trace
         request = GenerationRequest(
             prompt=sample.prompt,
             max_new_tokens=sample_max_new_tokens,
-            config=dict(extra_config or {}),
+            config=request_config,
             sample_id=sample.sample_id,
             seed=seed,
         )
@@ -143,7 +148,12 @@ def run_generation(
         generation = adapter.generate(request)
 
         if require_all_metrics:
-            _validate_required_metrics(adapter, generation, require_compute=False)
+            _validate_required_metrics(
+                adapter,
+                generation,
+                require_compute=False,
+                require_trace=capture_trace,
+            )
 
         save_generation_result(generation, sample_path)
         if measure_compute and generation.status.value == "success":
@@ -166,7 +176,12 @@ def run_generation(
                 compute_handle.tflops if compute_handle.available else None
             )
         if require_all_metrics:
-            _validate_required_metrics(adapter, generation, require_compute=True)
+            _validate_required_metrics(
+                adapter,
+                generation,
+                require_compute=True,
+                require_trace=capture_trace,
+            )
         save_generation_result(generation, sample_path)
 
     return GenerateStageSummary(

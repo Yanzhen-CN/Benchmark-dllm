@@ -206,6 +206,14 @@ def generate(
     resume: bool,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
+    dataset_settings = load_yaml(dataset_config)
+    trace_scope = str(dataset_settings.get("trace_scope", "all_samples"))
+    if trace_scope not in {"all_samples", "none"}:
+        raise click.UsageError(
+            f"unsupported trace_scope={trace_scope!r} in {dataset_config}; "
+            "use 'all_samples' or 'none'"
+        )
+    capture_trace = trace_scope == "all_samples"
     dataset = build_dataset(dataset_config)
     samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed)
 
@@ -306,14 +314,16 @@ def generate(
                     adapter, dataset.name, samples, max_new_tokens,
                     out_dir=out_dir, measure_compute=measure_compute,
                     require_all_metrics=require_all_metrics, seed=resolved_seed,
-                    resume=resume, progress=bar_progress,
+                    capture_trace=capture_trace, resume=resume,
+                    progress=bar_progress,
                 )
         else:
             summary = run_generation(
                 adapter, dataset.name, samples, max_new_tokens,
                 out_dir=out_dir, measure_compute=measure_compute,
                 require_all_metrics=require_all_metrics, seed=resolved_seed,
-                resume=resume, progress=log_progress,
+                capture_trace=capture_trace, resume=resume,
+                progress=log_progress,
             )
         click.echo(f"[{v}] generated={summary.generated} skipped={summary.skipped} total={summary.total} -> {out_dir}")
 

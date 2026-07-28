@@ -84,14 +84,19 @@ class W1ApiAdapter:
 
         text = data.get("text", "")
         timing = _extract_self_reported_timing(data)
-        trace = _parse_trace(data["trace"]) if self.supports_trace and "trace" in data else []
+        capture_trace = request.config.get("capture_trace", True)
+        trace = (
+            _parse_trace(data["trace"])
+            if capture_trace and self.supports_trace and "trace" in data
+            else []
+        )
 
         return GenerationResult(
             request=request,
             output_text=text,
             status=RunStatus.SUCCESS,
             trace=trace,
-            num_forward_passes=len(trace),
+            num_forward_passes=data.get("num_forward_passes", len(trace)),
             final_valid_length=data.get("output_length", len(text.split())),
             timing=timing,
             energy_joules=None,

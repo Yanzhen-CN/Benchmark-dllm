@@ -83,6 +83,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         steps = request.config.get("steps", self._default_steps) or gen_length
 
         captured_steps: list[dict] = []
+        forward_count = 0
         original_prepare_sampler = self._model._prepare_sampler
 
         def wrapped_prepare_sampler(generation_config):
@@ -90,6 +91,8 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             original_accept_canvas = sampler.accept_canvas
 
             def wrapped_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step):
+                nonlocal forward_count
+                forward_count += 1
                 accepted_canvas = original_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step)
                 if self._trace_instrumentation_enabled():
                     with self._exclude_from_measurement():
@@ -148,7 +151,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             output_text=output_text,
             status=RunStatus.SUCCESS,
             trace=trace,
-            num_forward_passes=len(trace),
+            num_forward_passes=forward_count,
             final_valid_length=len(generated_ids),
         )
 

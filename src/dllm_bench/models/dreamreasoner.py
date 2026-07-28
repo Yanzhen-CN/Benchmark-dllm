@@ -358,6 +358,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             x[:, block_start:block_end] = cur_x
 
         self._stop_measurement()
+        self._last_num_forward_passes = global_step
         output_length = min(total_length, prompt_len + gen_length)
         final_ids = x[0, prompt_len:output_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)

@@ -3,6 +3,7 @@ generate-on-one-machine / score-on-another split."""
 
 from __future__ import annotations
 
+import json
 import re
 from types import SimpleNamespace
 
@@ -200,6 +201,28 @@ def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):
     assert first.request.max_new_tokens == 7
     assert second.request.max_new_tokens == 13
     assert (out_dir / "_meta.json").exists()
+
+
+def test_run_generation_can_disable_trace_without_losing_forward_count(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
+    sample = build_demo_samples("gsm8k", n=1)[0]
+    out_dir = tmp_path / "model_output"
+
+    run_generation(
+        adapter,
+        "hellobench",
+        [sample],
+        max_new_tokens=16,
+        out_dir=out_dir,
+        capture_trace=False,
+    )
+
+    generation = load_generation_result(out_dir / f"{sample.sample_id}.json")
+    assert generation.trace == []
+    assert generation.num_forward_passes == 2
+    assert generation.request.config["capture_trace"] is False
+    meta = json.loads((out_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["run_metadata"]["trace_scope"] == "none"
 
 
 def test_run_generation_resumes_and_skips_existing_samples(tmp_path):

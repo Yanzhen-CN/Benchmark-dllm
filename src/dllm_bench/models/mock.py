@@ -90,18 +90,19 @@ class MockDiffusionAdapter(BaseModelAdapter):
             decoded = " ".join(
                 tokens[p] if p in committed else MASK_PLACEHOLDER for p in range(n)
             )
-            trace.append(
-                TraceStep(
-                    forward_index=step_index,
-                    token_ids=token_ids,
-                    position_states=position_states,
-                    committed_positions=sorted(chunk),
-                    decoded_text=decoded,
-                    entropy_by_position=entropy_by_position or None,
-                    top1_confidence_by_position=top1_by_position or None,
-                    token_texts=token_texts,
+            if self._trace_instrumentation_enabled():
+                trace.append(
+                    TraceStep(
+                        forward_index=step_index,
+                        token_ids=token_ids,
+                        position_states=position_states,
+                        committed_positions=sorted(chunk),
+                        decoded_text=decoded,
+                        entropy_by_position=entropy_by_position or None,
+                        top1_confidence_by_position=top1_by_position or None,
+                        token_texts=token_texts,
+                    )
                 )
-            )
 
         return GenerationResult(
             request=request,

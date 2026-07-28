@@ -11,6 +11,10 @@ output_profiles:
   - target_words: 4000
     max_new_tokens: 6144
 seed: 42
+# Task 2 evaluates final long-output quality and resources only. Persisting a
+# full per-forward, per-position trace for 2K/4K-word outputs is prohibitively
+# large and is not used by the HelloBench score or retention calculation.
+trace_scope: none
 # NOTE: HelloEval is an LLM-judge rubric in the real benchmark. Without a
 # judge_fn wired in, HelloBenchDataset falls back to a repetition+length
 # heuristic that is NOT the real metric (see dllm_bench/datasets/hellobench.py).

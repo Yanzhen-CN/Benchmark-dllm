@@ -74,7 +74,15 @@ class BaseModelAdapter(ABC):
             try:
                 if not self.deferred_measurement:
                     measurement.start()
-                result = self._generate_core(request)
+                previous_trace_suppression = getattr(
+                    self, "_suppress_trace_instrumentation", False
+                )
+                if request.config.get("capture_trace") is False:
+                    self._suppress_trace_instrumentation = True
+                try:
+                    result = self._generate_core(request)
+                finally:
+                    self._suppress_trace_instrumentation = previous_trace_suppression
             except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure -> Run Status
                 measurement.stop()
                 self._active_measurement = None

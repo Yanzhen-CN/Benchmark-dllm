@@ -417,7 +417,10 @@ samples carry per-sample generation caps of 3072 and 6144 tokens respectively,
 so they do not inherit the matrix-wide 256-token fallback.
 
 Resource measurements reuse the formal task samples. Generation history is
-captured and persisted for every sample whenever the model adapter exposes it.
+captured and persisted for every sample whenever the model adapter exposes it,
+except HelloBench: its 2K/4K long-output runs set `trace_scope: none` because
+Task 2 uses final quality and resource metrics, while a full per-forward,
+per-position trace would add very large observation and storage overhead.
 `--n-representative` is applied only by the visualization stage to choose
 which persisted traces receive per-sample plots; it never limits generation,
 trace persistence, or dataset-level trace aggregation. Process/strategy

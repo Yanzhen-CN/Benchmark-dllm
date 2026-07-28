@@ -146,6 +146,8 @@ class HFDiffusionAdapter(BaseModelAdapter):
             output_text=output_text,
             status=RunStatus.SUCCESS,
             trace=trace,
-            num_forward_passes=len(trace),
+            num_forward_passes=int(
+                getattr(self, "_last_num_forward_passes", len(trace))
+            ),
             final_valid_length=final_valid_length,
         )
