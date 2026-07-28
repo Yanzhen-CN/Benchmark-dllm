@@ -1,7 +1,7 @@
 # dLLM Benchmark
 
 Benchmark harness for diffusion LLMs (iLLaDA, DreamReasoner, W1, DiffusionGemma) vs
-an AR baseline (Qwen3-4B), implementing the design in
+AR controls (Qwen3-4B and the DG-matched Gemma 4 26B A4B), implementing the design in
 `dLLM_benchmark_设计文档.md`: task quality, long-context robustness,
 resource cost, and generation-process analysis (trace, parallelism,
 commit-order, certainty).
@@ -116,6 +116,7 @@ python setup_venv.py                   # every model declared in the matrix
 python setup_venv.py -m illada         # only .venvs/illada
 python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
 python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
+python setup_venv.py --matrix configs/experiments/dg_comparison.yaml
 ```
 
 `setup_venv.py` is only a dispatcher. It calls
@@ -133,7 +134,7 @@ Every model has one public script with the same four actions:
 | --- | --- |
 | `setup` | Create or update the model-specific virtualenv |
 | `check` | Validate dependencies and construct every configured adapter |
-| `prepare` | Download and load the checkpoint without generating samples |
+| `prepare` | Download the checkpoint without loading it into RAM/GPU |
 | `run` | Internal compatibility action used by the top-level dispatcher |
 
 Available entry points and environments:
@@ -144,6 +145,7 @@ Available entry points and environments:
 | iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
+| Gemma 4 26B A4B AR | `venv_scripts/gemma4_26b.py` | `.venvs/gemma4_26b` |
 | W1 | `venv_scripts/w1.py` | `.venvs/w1` |
 | Local non-model stages | `venv_scripts/root.py` | `.venvs/root` |
 
@@ -154,6 +156,16 @@ python venv_scripts/qwen3_4b.py setup
 python venv_scripts/qwen3_4b.py check
 python venv_scripts/qwen3_4b.py prepare
 python run_model.py -m qwen3_4b
+```
+
+Architecture-matched DiffusionGemma comparison (run sequentially on the same
+physical A100 80GB; it is intentionally separate from `full_matrix.yaml`):
+
+```bash
+python setup_venv.py --matrix configs/experiments/dg_comparison.yaml
+python prepare_model.py --matrix configs/experiments/dg_comparison.yaml
+python run_model.py --matrix configs/experiments/dg_comparison.yaml \
+  --output-root output/dg_comparison --no-measure-compute
 ```
 
 `run_model.py` creates the environment automatically when it is missing, then
@@ -385,25 +397,13 @@ the 8B-class checkpoints do not transiently become default-precision models
 that exhaust a 24 GiB device. `inference_dtype` is persisted in each run's
 `_meta.json` for reproducibility.
 
-If a local HF model still reaches a genuine capacity OOM during warmup or a
-formal sample after one cache-cleared retry, the runner reloads it with
-Accelerate CPU offload. The selected GPU's model-weight budget is capped at
-50% of physical VRAM so KV cache and activations retain real headroom;
-unbounded `device_map="auto"` can otherwise put every weight back on GPU and
-repeat the same runtime OOM. DreamReasoner's measured 8K RULER path needs more
-headroom on the formal 23.52-GiB GPU, so its first fallback uses 25%; if that
-placement still OOMs at a longer context, it reloads once more at 10% before
-reporting failure.
-Every affected sample records `extra.cpu_offloaded=true` plus the actual
-CPU-resident parameter/buffer amount as `cpu_offloaded_bytes` and
-`cpu_offloaded_gib`; the dataset `_meta.json` records the same placement after
-the lazy load has completed. Such samples keep valid task-quality results, but
-their time/TPS/SPS, GPU-only energy, and peak-VRAM values must be compared as a
-separate CPU-offloaded execution class rather than mixed with fully-GPU runs.
-Best/Fast share the recovered placement inside one dataset sweep. At the next
-dataset boundary, only an offloaded cache entry is discarded so that the next
-dataset independently attempts full-GPU placement; ordinary fully-GPU weights
-remain cached across datasets.
+Local HF models stay fully on the selected GPU. The runner does not retry an
+OOM by reloading weights, changing placement, or silently switching to CPU
+offload, because that would change the execution class and invalidate direct
+time/energy/VRAM comparisons. A formal-sample OOM is persisted with
+`status=oom`; an untimed-warmup OOM stops the job with the original CUDA
+exception so implementation problems are not mislabeled as capacity results.
+Best/Fast still share the one normally loaded checkpoint within the process.
 
 Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in

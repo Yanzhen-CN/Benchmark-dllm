@@ -66,110 +66,41 @@ class BaseModelAdapter(ABC):
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         """Run one sample. Must not itself measure timing/energy/VRAM."""
 
-    def _reload_with_cpu_offload(self) -> bool:
-        """Attempt recovery from a genuine (non-fragmentation) capacity OOM
-        by reloading this adapter's model with part of it offloaded to CPU
-        (`accelerate`'s `device_map="auto"`). Returns whether this adapter
-        knows how to do that and the reload succeeded — default: no (API
-        -backed and mock adapters have no local model to reload at all).
-
-        Deliberately reactive, not opt-in-by-default: every model stays
-        100%-GPU (fully comparable to every other model's Time/Energy/
-        Compute) unless a real OOM proves it doesn't fit, and only then for
-        that one model+config from then on — see `generate()`'s retry
-        escalation. A successful reload should set `self._cpu_offloaded =
-        True` and, if measurable, `self._cpu_offloaded_bytes` (how many
-        parameter/buffer bytes ended up off-GPU — see
-        `model_cache.offloaded_parameter_bytes`), so `generate()` can stamp
-        both into every subsequent result's `extra` for this adapter: once
-        offloaded, *every* later sample genuinely runs through the
-        partially-CPU-resident model (every forward pass reaches every
-        layer), not just whichever sample first triggered it, so their
-        Time/Energy/Compute are equally not comparable to a 100%-GPU run and
-        must carry the same flag."""
-        return False
-
-    def _reload_with_more_cpu_offload(self) -> bool:
-        """Optionally retry an already-offloaded model with a lower GPU
-        weight budget. Only adapters with a demonstrated need implement it."""
-        return False
-
-    def _recover_from_oom(self, exc: Exception, attempt: int, seed: int) -> bool:
-        """Apply the shared two-step CUDA OOM recovery policy.
-
-        Attempt 0 clears allocator cache; attempt 1 reloads with CPU
-        offload. Both formal generation and the untimed warmup call this so
-        an OOM cannot terminate the process before the formal path gets a
-        chance to recover.
-        """
-        if not _looks_like_oom(exc):
-            return False
-
-        # A traceback can retain the failed forward's local tensors. Drop it
-        # before cache release or model reloading so the allocator and
-        # Accelerate see the real amount of free VRAM.
-        exc.__traceback__ = None
-        if attempt == 0:
-            _release_cuda_cache()
-        elif attempt == 1:
-            if not self._reload_with_cpu_offload():
-                return False
-        elif attempt == 2:
-            if not self._reload_with_more_cpu_offload():
-                return False
-        else:
-            return False
-
-        _seed_everything(seed)
-        return True
-
     def generate(self, request: GenerationRequest) -> GenerationResult:
         _seed_everything(request.seed)
-        attempt = 0
-        while True:
-            measurement = _SampleMeasurement()
-            self._active_measurement = measurement
+        measurement = _SampleMeasurement()
+        self._active_measurement = measurement
+        try:
+            if not self.deferred_measurement:
+                measurement.start()
+            previous_trace_suppression = getattr(
+                self, "_suppress_trace_instrumentation", False
+            )
+            if request.config.get("capture_trace") is False:
+                self._suppress_trace_instrumentation = True
             try:
-                if not self.deferred_measurement:
-                    measurement.start()
-                previous_trace_suppression = getattr(
-                    self, "_suppress_trace_instrumentation", False
-                )
-                if request.config.get("capture_trace") is False:
-                    self._suppress_trace_instrumentation = True
-                try:
-                    result = self._generate_core(request)
-                finally:
-                    self._suppress_trace_instrumentation = previous_trace_suppression
-            except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure -> Run Status
-                measurement.stop()
-                self._active_measurement = None
-                if self._recover_from_oom(exc, attempt, request.seed):
-                    attempt += 1
-                    continue
-                status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
-                return GenerationResult(
-                    request=request,
-                    output_text="",
-                    status=status,
-                    error_message=str(exc),
-                )
-            else:
-                measurement.stop()
-                self._active_measurement = None
-                result.timing = TimingResult(
-                    wall_clock_seconds=measurement.wall_clock_seconds or 0.0,
-                    source="measured",
-                )
-                result.energy_joules = measurement.energy_joules
-                result.peak_vram_gb = measurement.peak_vram_gb
-                if getattr(self, "_cpu_offloaded", False):
-                    result.extra["cpu_offloaded"] = True
-                    offloaded_bytes = getattr(self, "_cpu_offloaded_bytes", None)
-                    if offloaded_bytes is not None:
-                        result.extra["cpu_offloaded_bytes"] = offloaded_bytes
-                        result.extra["cpu_offloaded_gib"] = offloaded_bytes / (1024 ** 3)
-                return result
+                result = self._generate_core(request)
+            finally:
+                self._suppress_trace_instrumentation = previous_trace_suppression
+        except Exception as exc:  # noqa: BLE001 - failure is persisted per sample
+            status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
+            return GenerationResult(
+                request=request,
+                output_text="",
+                status=status,
+                error_message=str(exc),
+            )
+        finally:
+            measurement.stop()
+            self._active_measurement = None
+
+        result.timing = TimingResult(
+            wall_clock_seconds=measurement.wall_clock_seconds or 0.0,
+            source="measured",
+        )
+        result.energy_joules = measurement.energy_joules
+        result.peak_vram_gb = measurement.peak_vram_gb
+        return result
 
     def profile_compute(self, request: GenerationRequest) -> ComputeHandle:
         """Separate profiling replay for ComputePerSample (Appendix B): run the
@@ -187,23 +118,13 @@ class BaseModelAdapter(ABC):
         return handle
 
     def warmup_generation(self, request: GenerationRequest) -> None:
-        """Run a short untimed generation with formal-path OOM recovery."""
+        """Run a short untimed generation to initialize kernels/caches."""
         _seed_everything(request.seed)
-        _release_cuda_cache()
         self._active_measurement = None
         previous = getattr(self, "_suppress_trace_instrumentation", False)
         self._suppress_trace_instrumentation = True
-        attempt = 0
         try:
-            while True:
-                try:
-                    self._generate_core(request)
-                    break
-                except Exception as exc:  # noqa: BLE001 - warmup must share OOM policy
-                    if self._recover_from_oom(exc, attempt, request.seed):
-                        attempt += 1
-                        continue
-                    raise
+            self._generate_core(request)
         finally:
             self._suppress_trace_instrumentation = previous
 
@@ -303,47 +224,6 @@ def _seed_everything(seed: int) -> None:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
-    except ImportError:
-        pass
-
-
-def _release_cuda_cache() -> None:
-    """Return PyTorch's cached-but-currently-unused CUDA blocks to the driver.
-
-    A long sweep (a dataset's full sample count, times however many diffusion
-    steps each sample takes) allocates and frees many similarly-but-not
-    identically-shaped tensors in one long-lived process — exactly the
-    pattern that fragments PyTorch's caching allocator over time. Observed in
-    practice: a model's `best` variant (more steps per sample, so more
-    allocations) can run an entire dataset's worth of samples successfully,
-    and the very next variant (`fast`, fewer steps — strictly less GPU work
-    per sample) OOMs on its very first sample, in the same process right
-    after `best` finishes. That ordering only makes sense as accumulated
-    fragmentation, not `fast` itself being more expensive.
-
-    Deliberately NOT called before every sample: `generate()` only calls this
-    on a retry after an actual OOM, timing just the retried attempt (the
-    failed one is discarded, like a warmup call). Clearing the cache
-    unconditionally would force the next allocation back to a cold, slow
-    `cudaMalloc` *inside* the timed window even for a sample that was never
-    going to have a problem, quietly inflating every single Time-per-Sample
-    measurement rather than just the rare one that actually needed it.
-    `warmup_generation` calls this unconditionally instead, since warmup is
-    never timed at all — a good place to catch the best->fast fragmentation
-    case specifically, at zero measurement cost."""
-    import gc
-
-    # A GPU tensor kept alive by a reference cycle (rather than a simple,
-    # immediately-decremented refcount) can outlive the Python scope that
-    # created it until a GC pass actually runs. Forcing one first means
-    # `empty_cache()` below sees the fullest possible picture of what's
-    # actually free before it decides what to hand back to the driver.
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
     except ImportError:
         pass
 

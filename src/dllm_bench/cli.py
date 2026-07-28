@@ -39,15 +39,12 @@ so pass matching source/count/seed values to every stage.
 
 from __future__ import annotations
 
-import gc
 from pathlib import Path
 
 import click
 
 from .hf_cache import configure_default_cache_dir
 from .interfaces import GenerationRequest
-from .models.base import _looks_like_oom
-from .models.model_cache import evict_cpu_offloaded_cuda_models
 from .registry import (
     build_dataset,
     build_model_adapter,
@@ -262,16 +259,7 @@ def generate(
                     seed=resolved_seed,
                 )
             )
-            if getattr(adapter, "_cpu_offloaded", False):
-                offloaded_gib = float(
-                    getattr(adapter, "_cpu_offloaded_bytes", 0)
-                ) / (1024 ** 3)
-                click.echo(
-                    f"[{v}] warmup complete; CPU offload active "
-                    f"({offloaded_gib:.2f} GiB of parameters/buffers on CPU)"
-                )
-            else:
-                click.echo(f"[{v}] warmup complete")
+            click.echo(f"[{v}] warmup complete")
 
         def log_progress(event, index, total, sample, generation):
             prefix = f"[{v}] [{index}/{total}] {sample.sample_id}"
@@ -554,63 +542,18 @@ def matrix_command(
             output_root=output_root,
         )
         click.echo(f"[{index}/{len(jobs)}] {job.model_config.name} x {job.dataset_config.name}")
-        try:
-            if stage in {"generate", "all"}:
-                ctx.invoke(
-                    generate, **common, max_new_tokens=job.max_new_tokens,
-                    measure_compute=measure_compute,
-                    require_all_metrics=require_all_metrics, resume=resume,
-                )
-            if stage in {"score", "all"}:
-                ctx.invoke(score, **common, resume=resume)
-            if stage in {"visualize", "all"}:
-                ctx.invoke(
-                    visualize, **common, n_representative=n_representative, sample_ids=None,
-                )
-        except Exception as exc:  # noqa: BLE001 - only OOM is swallowed, see below
-            # A model's own worst-case sample (e.g. DreamReasoner's untimed
-            # warmup at RULER's full 32768-token window, see
-            # `models/dreamreasoner.py`) can hit a genuine capacity OOM that
-            # survives every CPU-offload escalation `_recover_from_oom`
-            # (models/base.py) has to offer — `warmup_generation` then
-            # deliberately re-raises rather than silently pretending the
-            # sample ran (see its docstring/tests). Left uncaught here, that
-            # one finding would abort every *other* still-queued job in this
-            # matrix (e.g. HelloBench right after RULER) even though they
-            # have nothing to do with RULER's long-context ceiling. Only an
-            # OOM-shaped failure is swallowed and logged as a per-job finding
-            # — any other exception (a real bug, not a capacity ceiling)
-            # still aborts the whole run, since it likely affects every job.
-            if not _looks_like_oom(exc):
-                raise
-            click.echo(
-                f"[{index}/{len(jobs)}] {job.model_config.name} x {job.dataset_config.name}: "
-                f"unrecoverable CUDA OOM even after full CPU offload — {exc}. "
-                "Recording this as a genuine capacity finding for this model x "
-                "dataset pair and continuing with the remaining queued jobs "
-                "(already-completed samples from this job are unaffected; "
-                "rerun with --resume to retry it on its own later).",
-                err=True,
+        if stage in {"generate", "all"}:
+            ctx.invoke(
+                generate, **common, max_new_tokens=job.max_new_tokens,
+                measure_compute=measure_compute,
+                require_all_metrics=require_all_metrics, resume=resume,
             )
-        # Every job in this loop runs in the same long-lived process. A
-        # dataset whose prepared sample bank holds very large individual
-        # records (RULER's spans up to a 262144-token context window) can
-        # leave Python's own allocator holding onto a lot of memory even
-        # after every reference to those samples is gone — freed memory
-        # isn't always handed back to the OS immediately. Forcing a
-        # collection between jobs (not relying on "eventually") is the same
-        # idea as clearing the CUDA cache between GPU samples: cheap
-        # insurance against a *later*, unrelated-looking job (e.g.
-        # HelloBench, this matrix's last one) being the one that actually
-        # gets OOM-killed for memory a much earlier job used.
-        if index < len(jobs):
-            evicted_offloaded = evict_cpu_offloaded_cuda_models()
-            if evicted_offloaded:
-                click.echo(
-                    "CPU-offloaded model cache cleared at dataset boundary; "
-                    "the next dataset will attempt full-GPU placement independently"
-                )
-        gc.collect()
+        if stage in {"score", "all"}:
+            ctx.invoke(score, **common, resume=resume)
+        if stage in {"visualize", "all"}:
+            ctx.invoke(
+                visualize, **common, n_representative=n_representative, sample_ids=None,
+            )
     if stage == "all":
         ctx.invoke(report, run_paths=(), output_root=output_root, dataset_name=None)
 

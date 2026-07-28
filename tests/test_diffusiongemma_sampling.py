@@ -130,8 +130,12 @@ class _FakeEncoded(dict):
 class _FakeProcessor:
     def __init__(self):
         self.tokenizer = _RecordingTokenizer()
+        self.messages = None
+        self.template_kwargs = None
 
-    def __call__(self, text, return_tensors="pt"):
+    def apply_chat_template(self, messages, **kwargs):
+        self.messages = messages
+        self.template_kwargs = kwargs
         return _FakeEncoded(input_ids=torch.tensor([[1, 2]]), attention_mask=torch.tensor([[1, 1]]))
 
 
@@ -202,6 +206,13 @@ def test_diffusiongemma_generate_core_builds_correct_trace_and_output():
     assert len(result.trace) == 2
     assert result.trace[0].committed_positions == [0, 2]
     assert result.trace[1].committed_positions == [0, 1, 2, 3]
+    assert adapter._processor.messages == [{"role": "user", "content": "hi"}]
+    assert adapter._processor.template_kwargs == {
+        "tokenize": True,
+        "add_generation_prompt": True,
+        "return_dict": True,
+        "return_tensors": "pt",
+    }
 
 
 def test_diffusiongemma_prepare_sampler_is_restored_after_successful_generate():

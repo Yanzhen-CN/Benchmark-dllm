@@ -17,12 +17,7 @@ import math
 
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
-from .model_cache import (
-    cpu_offload_max_memory,
-    get_or_load,
-    offloaded_parameter_bytes,
-    reload_with_offload,
-)
+from .model_cache import get_or_load
 from .prompting import tokenize_instruction_prompt
 
 
@@ -57,63 +52,21 @@ class QwenARAdapter(BaseModelAdapter):
         self._device = device
 
         def _load():
-            return self._load_model_and_tokenizer(device, device_map_auto=False)
+            return self._load_model_and_tokenizer(device)
 
         # Shared across every config that points at this same checkpoint —
         # Qwen3-4B only has one config today, but this keeps the pattern
         # consistent with the diffusion adapters, which do have Best/Fast.
-        # This can be a cache *hit* on a model already reloaded with
-        # offloading after an OOM elsewhere (see `_reload_with_cpu_offload`)
-        # — check the actual model, don't assume a fresh, 100%-GPU load.
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
 
-    def _load_model_and_tokenizer(self, device: str, *, device_map_auto: bool):
+    def _load_model_and_tokenizer(self, device: str):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(self._model_name)
-        kwargs: dict = {}
-        if device_map_auto:
-            kwargs["device_map"] = "auto"
-            max_memory = cpu_offload_max_memory(device)
-            if max_memory is not None:
-                kwargs["max_memory"] = max_memory
-        model = AutoModelForCausalLM.from_pretrained(self._model_name, **kwargs)
-        if not device_map_auto:
-            model.to(device)
+        model = AutoModelForCausalLM.from_pretrained(self._model_name)
+        model.to(device)
         model.eval()
         return tokenizer, model
-
-    def _reload_with_cpu_offload(self) -> bool:
-        """See `models/base.py`'s `BaseModelAdapter._reload_with_cpu_offload`
-        docstring — this only ever runs reactively, after a genuine capacity
-        OOM neither a plain retry nor a cache-cleared one could recover
-        from. Qwen3-4B is small enough that this is not expected to trigger
-        in practice, but the same recovery path is available to every model
-        in this benchmark rather than being special-cased to just the
-        diffusion models that happened to need it first."""
-        if getattr(self, "_cpu_offloaded", False):
-            return True
-        if self._model is None:
-            return False
-
-        def _load_with_offload():
-            return self._load_model_and_tokenizer(self._device, device_map_auto=True)
-
-        def _release_current() -> None:
-            self._model = None
-            self._tokenizer = None
-
-        self._tokenizer, self._model = reload_with_offload(
-            self._model_name,
-            self._device,
-            _load_with_offload,
-            release_current=_release_current,
-        )
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
-        return True
 
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         self._ensure_loaded()

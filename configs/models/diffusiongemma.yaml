@@ -17,12 +17,12 @@
 # path. `python prepare_model.py --model-config configs/models/diffusiongemma.yaml`
 # downloads that snapshot ahead of time without loading it into RAM/GPU.
 #
-# `steps` (max_denoising_steps) has no design-doc-specified value for DiffusionGemma
-# (Appendix D.4 just says "shipped sampler and recommended parameters", and
-# DiffusionGemma is excluded from the Best/Fast steps=1024/512 framework since it's a
-# large-model reference, not a same-scale comparison — section 5). Left
-# unset here so it falls back to gen_length (1 denoising step per generated
-# token) unless overridden per experiment.
+# DiffusionGemma is excluded from the Best/Fast steps=1024/512 framework
+# because it is a large-model reference rather than a same-scale comparison.
+# Its one `official` variant uses the checkpoint's shipped Entropy Bound
+# sampler and Google's recommended maximum of 48 denoising steps per canvas.
+# The checkpoint generation config supplies temperature 0.8 -> 0.4, entropy
+# bound 0.1, confidence 0.005, and stability threshold 1.
 model: diffusiongemma
 max_context_tokens: 262144
 configs:
@@ -30,4 +30,4 @@ configs:
     adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
     init_kwargs:
       model_name_or_path: google/diffusiongemma-26B-A4B-it
-      steps: null
+      steps: 48

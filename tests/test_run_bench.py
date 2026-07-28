@@ -72,3 +72,13 @@ def test_model_and_dataset_flags_accept_space_separated_names(monkeypatch):
 def test_diffusiongemma_is_the_public_name():
     assert "diffusiongemma" in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)
     assert "dg" not in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)
+
+
+def test_dg_comparison_matrix_dispatches_the_matched_pair(capsys):
+    assert run_bench.main([
+        "--dry-run", "--matrix", "configs/experiments/dg_comparison.yaml"
+    ]) == 0
+    output = capsys.readouterr().out
+    assert "diffusiongemma.py run" in output
+    assert "gemma4_26b.py run" in output
+    assert "qwen3_4b.py run" not in output

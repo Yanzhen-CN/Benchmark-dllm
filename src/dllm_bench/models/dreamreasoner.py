@@ -115,12 +115,7 @@ import math
 
 from ..interfaces import PositionState, TraceStep
 from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
-from .model_cache import (
-    cpu_offload_max_memory,
-    get_or_load,
-    offloaded_parameter_bytes,
-    reload_with_offload,
-)
+from .model_cache import get_or_load
 from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
@@ -139,15 +134,6 @@ MASK_DISPLAY = "▢"
 # full-sequence square mask.
 _PREFILL_CHUNK_BLOCKS = 32
 
-# Empirical capacity boundary on the formal 23.52-GiB device: Accelerate's
-# generic 50% weight budget still left only 875.81 MiB free while an 8192-token
-# RULER warmup needed one more 1.16-GiB allocation. DreamReasoner therefore
-# starts its reactive fallback at 25%; if that still cannot cover a larger
-# context, one final 10% placement is available before reporting a real OOM.
-_CPU_OFFLOAD_GPU_MEMORY_FRACTION = 0.25
-_AGGRESSIVE_CPU_OFFLOAD_GPU_MEMORY_FRACTION = 0.10
-
-
 class DreamReasonerAdapter(HFDiffusionAdapter):
     """Appendix D.2. Best: block_length=32, steps_per_block=32 (1 token/step,
     the library's own default step count for one block). Fast: block_length=32,
@@ -164,8 +150,6 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         device: str | None = None,
     ) -> None:
         super().__init__(model_name_or_path, step_config, name="dreamreasoner", config_name=config_name, device=device)
-        self._cpu_offloaded = False
-        self._cpu_offload_gpu_memory_fraction = _CPU_OFFLOAD_GPU_MEMORY_FRACTION
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -176,22 +160,11 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         self._device = device
 
         def _load():
-            return self._load_model_and_tokenizer(device, device_map_auto=False)
+            return self._load_model_and_tokenizer(device)
 
-        # This can be a cache *hit* on a model a sibling variant (e.g. `best`,
-        # if `fast` is what's loading here) already reloaded with offloading
-        # after its own OOM (see `_reload_with_cpu_offload`) — check the
-        # actual model, don't assume a fresh, 100%-GPU load.
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
-        cached_fraction = getattr(
-            self._model, "_dllm_cpu_offload_gpu_memory_fraction", None
-        )
-        if cached_fraction is not None:
-            self._cpu_offload_gpu_memory_fraction = float(cached_fraction)
 
-    def _load_model_and_tokenizer(self, device: str, *, device_map_auto: bool):
+    def _load_model_and_tokenizer(self, device: str):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -200,100 +173,15 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         # AutoModel for the same class, but this adapter doesn't rely on
         # that alias).
         tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
-        kwargs: dict = dict(trust_remote_code=True, torch_dtype=torch.bfloat16)
-        if device_map_auto:
-            kwargs["device_map"] = "auto"
-            max_memory = cpu_offload_max_memory(
-                device,
-                gpu_fraction=self._cpu_offload_gpu_memory_fraction,
-            )
-            if max_memory is not None:
-                kwargs["max_memory"] = max_memory
-        else:
-            kwargs["low_cpu_mem_usage"] = True
-        model = AutoModelForCausalLM.from_pretrained(self._model_name, **kwargs)
-        if not device_map_auto:
-            model.to(device)
+        model = AutoModelForCausalLM.from_pretrained(
+            self._model_name,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+        )
+        model.to(device)
         model.eval()
         return tokenizer, model
-
-    def _reload_with_cpu_offload(self) -> bool:
-        """GPU-only by default (matches every other model in this benchmark)
-        — this only ever runs reactively, after `models/base.py`'s
-        `generate()` has already tried a plain retry and a cache-cleared
-        retry and *still* hit a real CUDA OOM. At RULER's own advertised max
-        context (32768) this model's weights + KV cache alone leave almost
-        no headroom on a 24 GiB GPU — confirmed from a real OOM ("23.00 GiB
-        is allocated... 38.45 MiB reserved but unallocated": no fragmentation
-        slack, a genuine capacity ceiling the mask/prefill-chunk fixes
-        elsewhere in this file can't do anything further about). Falling
-        back to `device_map="auto"` here lets `accelerate` offload part of
-        the model to CPU so the sample can still *complete* with a real
-        accuracy/quality score (task correctness is unaffected — same
-        computation, just some of it on CPU) — see
-        `models/base.py`'s `_reload_with_cpu_offload` docstring for how
-        `self._cpu_offloaded`/`self._cpu_offloaded_bytes` get surfaced into
-        every affected sample's own result, not just a single per-run flag.
-        `model_cache.reload_with_offload` replaces the *shared* cache entry,
-        so `fast` (if `best` is the one that actually hit the OOM) sees the
-        already-offloaded model on its own next `_ensure_loaded()` call
-        instead of separately hitting the same OOM itself. Run RULER as its
-        own filtered invocation (`--dataset ruler`) to keep this from
-        leaking into an otherwise-clean dataset that never needed it —
-        once triggered, this stays offloaded for the rest of this process."""
-        if self._cpu_offloaded:
-            return True  # already offloaded from an earlier sample
-        if self._model is None:
-            return False  # never loaded at all yet — not this method's job
-
-        return self._reload_with_cpu_offload_fraction(
-            _CPU_OFFLOAD_GPU_MEMORY_FRACTION
-        )
-
-    def _reload_with_more_cpu_offload(self) -> bool:
-        """Escalate once if the normal DreamReasoner CPU placement still OOMs."""
-        if self._model is None:
-            return False
-        if (
-            self._cpu_offload_gpu_memory_fraction
-            <= _AGGRESSIVE_CPU_OFFLOAD_GPU_MEMORY_FRACTION
-        ):
-            return False
-        return self._reload_with_cpu_offload_fraction(
-            _AGGRESSIVE_CPU_OFFLOAD_GPU_MEMORY_FRACTION
-        )
-
-    def _reload_with_cpu_offload_fraction(self, gpu_fraction: float) -> bool:
-        self._cpu_offload_gpu_memory_fraction = gpu_fraction
-
-        def _load_with_offload():
-            return self._load_model_and_tokenizer(self._device, device_map_auto=True)
-
-        def _release_current() -> None:
-            self._model = None
-            self._tokenizer = None
-
-        self._tokenizer, self._model = reload_with_offload(
-            self._model_name,
-            self._device,
-            _load_with_offload,
-            release_current=_release_current,
-        )
-        # Evicting the old (100%-GPU) copy before this reload frees its
-        # memory first, so it's possible `device_map="auto"` finds enough
-        # room to place everything back on the GPU after all — only flag
-        # this run as offloaded if real parameter/buffer bytes actually
-        # ended up off-GPU, not just because `device_map="auto"` was asked
-        # for. Either way, the reload itself succeeded, so the caller should
-        # still retry.
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
-        setattr(
-            self._model,
-            "_dllm_cpu_offload_gpu_memory_fraction",
-            gpu_fraction,
-        )
-        return True
 
     def _resolve_mask_token_id(self, step_config: DiffusionStepConfig) -> int:
         candidates = (

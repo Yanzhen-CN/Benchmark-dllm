@@ -32,14 +32,10 @@ import math
 
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
-from .model_cache import (
-    cpu_offload_max_memory,
-    get_or_load,
-    offloaded_parameter_bytes,
-    reload_with_offload,
-)
+from .model_cache import get_or_load
 
 DEFAULT_DIFFUSIONGEMMA_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
+DEFAULT_MAX_DENOISING_STEPS = 48
 
 
 class DiffusionGemmaAdapter(BaseModelAdapter):
@@ -50,7 +46,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         model_name_or_path: str = DEFAULT_DIFFUSIONGEMMA_CHECKPOINT,
         device: str | None = None,
         config_name: str = "official",
-        steps: int | None = None,
+        steps: int | None = DEFAULT_MAX_DENOISING_STEPS,
     ) -> None:
         self.name = "diffusiongemma"
         self.config_name = config_name
@@ -71,68 +67,30 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         self._device = device
 
         def _load():
-            return self._load_model_and_processor(device, device_map_auto=False)
+            # ``dtype="auto"`` reads the checkpoint's BF16 dtype instead of
+            # materializing this 25.2B model as FP32. Placement stays fully
+            # on the selected GPU so resource measurements remain comparable.
+            return self._load_model_and_processor(device)
 
-        # This can be a cache *hit* on a model already reloaded with
-        # offloading after an OOM elsewhere (see `_reload_with_cpu_offload`)
-        # — check the actual model, don't assume a fresh, 100%-GPU load.
-        # DG is by far the largest model in this benchmark (26B-A4B MoE,
-        # explicitly a large-model reference rather than a same-scale
-        # comparison point per the design doc), so this is the adapter most
-        # likely to actually need this path in practice.
         self._processor, self._model = get_or_load(self._model_name, device, _load)
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
 
-    def _load_model_and_processor(self, device: str, *, device_map_auto: bool):
+    def _load_model_and_processor(self, device: str):
         from transformers import AutoProcessor, DiffusionGemmaForBlockDiffusion
 
         processor = AutoProcessor.from_pretrained(self._model_name)
-        kwargs: dict = {}
-        if device_map_auto:
-            kwargs["device_map"] = "auto"
-            max_memory = cpu_offload_max_memory(device)
-            if max_memory is not None:
-                kwargs["max_memory"] = max_memory
-        model = DiffusionGemmaForBlockDiffusion.from_pretrained(self._model_name, **kwargs)
-        if not device_map_auto:
-            model.to(device)
+        model = DiffusionGemmaForBlockDiffusion.from_pretrained(
+            self._model_name, dtype="auto"
+        )
+        model.to(device)
         model.eval()
         return processor, model
-
-    def _reload_with_cpu_offload(self) -> bool:
-        """See `models/base.py`'s `BaseModelAdapter._reload_with_cpu_offload`
-        docstring — this only ever runs reactively, after a genuine capacity
-        OOM neither a plain retry nor a cache-cleared one could recover
-        from."""
-        if getattr(self, "_cpu_offloaded", False):
-            return True
-        if self._model is None:
-            return False
-
-        def _load_with_offload():
-            return self._load_model_and_processor(self._device, device_map_auto=True)
-
-        def _release_current() -> None:
-            self._model = None
-            self._processor = None
-
-        self._processor, self._model = reload_with_offload(
-            self._model_name,
-            self._device,
-            _load_with_offload,
-            release_current=_release_current,
-        )
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
-        return True
 
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         self._ensure_loaded()
         import torch
 
         gen_length = request.max_new_tokens
-        steps = request.config.get("steps", self._default_steps) or gen_length
+        steps = request.config.get("steps", self._default_steps) or DEFAULT_MAX_DENOISING_STEPS
 
         captured_steps: list[dict] = []
         forward_count = 0
@@ -171,12 +129,16 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         # the arguments below — no `self` parameter here on purpose.
         self._model._prepare_sampler = wrapped_prepare_sampler
         try:
-            # NOTE: this encode call is the standard AutoProcessor text
-            # pattern, inferred rather than directly quoted from the reference
-            # run.py (which builds its batch differently, from a
-            # pre-tokenized sample file) — confirm against the real
-            # processor before formal runs.
-            encoded = self._processor(text=request.prompt, return_tensors="pt").to(self._device)
+            # The official instruction checkpoint expects a user message
+            # rendered through its own chat template, including the assistant
+            # generation prompt and all model-specific special tokens.
+            encoded = self._processor.apply_chat_template(
+                [{"role": "user", "content": request.prompt}],
+                tokenize=True,
+                add_generation_prompt=True,
+                return_dict=True,
+                return_tensors="pt",
+            ).to(self._device)
             prompt_len = encoded["input_ids"].shape[1]
             self._start_measurement()
             with torch.inference_mode():

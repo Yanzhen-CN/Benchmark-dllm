@@ -38,3 +38,14 @@ def test_matrix_can_filter_task2_datasets_for_selected_models():
     assert len(jobs) == 4
     assert {job.model_name for job in jobs} == {"illada", "dreamreasoner"}
     assert {job.dataset_config.stem for job in jobs} == {"ruler", "hellobench"}
+
+
+def test_dg_comparison_matrix_is_a_separate_matched_pair():
+    jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "dg_comparison.yaml")
+
+    assert seed == 42
+    assert len(jobs) == 2 * 6
+    assert {job.model_name for job in jobs} == {"diffusiongemma", "gemma4_26b"}
+    assert {job.dataset_config.stem for job in jobs} == {
+        "gsm8k", "mbpp", "structeval_t", "sudoku", "ruler", "hellobench"
+    }

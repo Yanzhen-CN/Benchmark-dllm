@@ -1,0 +1,24 @@
+# Controlled DiffusionGemma-vs-Gemma-4 comparison. Run both sequentially on
+# the same physical A100 80GB. This matrix is intentionally separate from the
+# main full_matrix so adding the 26B AR control does not expand normal runs.
+base_dir: ../..
+
+models:
+  - config: configs/models/diffusiongemma.yaml
+    variants: [official]
+  - config: configs/models/gemma4_26b.yaml
+    variants: [ar-baseline]
+
+datasets:
+  - configs/datasets/gsm8k.yaml
+  - configs/datasets/mbpp.yaml
+  - configs/datasets/structeval_t.yaml
+  - configs/datasets/sudoku.yaml
+  - config: configs/datasets/ruler.yaml
+    max_new_tokens: 64
+  - config: configs/datasets/hellobench.yaml
+    max_new_tokens: 6144
+
+seed: 42
+resource_measurement: reuse_formal_samples
+trace_scope: all_samples

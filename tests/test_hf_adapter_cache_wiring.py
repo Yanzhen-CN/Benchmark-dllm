@@ -12,7 +12,6 @@ import pytest
 transformers = pytest.importorskip("transformers")
 torch = pytest.importorskip("torch")
 
-import dllm_bench.models.dreamreasoner as dreamreasoner_module
 from dllm_bench.models import model_cache
 from dllm_bench.models.diffusiongemma import DiffusionGemmaAdapter
 from dllm_bench.models.dreamreasoner import DreamReasonerAdapter
@@ -26,25 +25,6 @@ def _clear_model_cache():
     model_cache.clear()
     yield
     model_cache.clear()
-
-
-class _FakeOffloadableTensor:
-    """Just enough of the `torch.Tensor` interface for
-    `model_cache.offloaded_parameter_bytes` to work without a real GPU:
-    `.device.type`, `.numel()`, `.element_size()`."""
-
-    def __init__(self, device_type: str, numel: int = 10, element_size: int = 2):
-        from types import SimpleNamespace
-
-        self.device = SimpleNamespace(type=device_type)
-        self._numel = numel
-        self._element_size = element_size
-
-    def numel(self):
-        return self._numel
-
-    def element_size(self):
-        return self._element_size
 
 
 class _FakeHFModel:
@@ -147,219 +127,6 @@ def test_dreamreasoner_loads_in_checkpoint_native_bfloat16(monkeypatch):
         "torch_dtype": torch.bfloat16,
         "low_cpu_mem_usage": True,
     }]
-    # Default path: never flagged as offloaded, since device_map wasn't even used.
-    assert adapter._cpu_offloaded is False
-
-
-def test_dreamreasoner_reload_with_cpu_offload_switches_to_device_map_auto(monkeypatch):
-    """`_reload_with_cpu_offload` only ever runs reactively (from
-    `generate()`'s retry escalation, after a real OOM) — never at ordinary
-    `_ensure_loaded()` time, which stays 100%-GPU (previous test)."""
-    _, model_calls = _install_counting_fakes(
-        monkeypatch, transformers.AutoModelForCausalLM
-    )
-    max_memory = {0: 12 * 1024**3, "cpu": 64 * 1024**3}
-    requested_fractions = []
-
-    def fake_max_memory(device, *, gpu_fraction):
-        requested_fractions.append(gpu_fraction)
-        return max_memory
-
-    monkeypatch.setattr(
-        dreamreasoner_module,
-        "cpu_offload_max_memory",
-        fake_max_memory,
-    )
-    adapter = DreamReasonerAdapter(
-        "dreamreasoner-checkpoint",
-        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
-    )
-    adapter._ensure_loaded()
-
-    assert adapter._reload_with_cpu_offload() is True
-    assert requested_fractions == [0.25]
-    assert model_calls["kwargs"] == [
-        {"trust_remote_code": True, "torch_dtype": torch.bfloat16, "low_cpu_mem_usage": True},
-        {
-            "trust_remote_code": True,
-            "torch_dtype": torch.bfloat16,
-            "device_map": "auto",
-            "max_memory": max_memory,
-        },
-    ]
-
-
-def test_dreamreasoner_can_escalate_to_aggressive_cpu_offload(monkeypatch):
-    _, model_calls = _install_counting_fakes(
-        monkeypatch, transformers.AutoModelForCausalLM
-    )
-    requested_fractions = []
-
-    def fake_max_memory(device, *, gpu_fraction):
-        requested_fractions.append(gpu_fraction)
-        return {0: int(24 * 1024**3 * gpu_fraction), "cpu": 64 * 1024**3}
-
-    monkeypatch.setattr(
-        dreamreasoner_module,
-        "cpu_offload_max_memory",
-        fake_max_memory,
-    )
-    adapter = DreamReasonerAdapter(
-        "dreamreasoner-checkpoint",
-        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
-    )
-    adapter._ensure_loaded()
-
-    assert adapter._reload_with_cpu_offload() is True
-    assert adapter._reload_with_more_cpu_offload() is True
-    assert requested_fractions == [0.25, 0.10]
-    assert model_calls["n"] == 3  # full GPU, 25%, then 10%
-
-
-def test_dreamreasoner_releases_old_model_before_auto_device_placement(monkeypatch):
-    monkeypatch.setattr(
-        transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: object()
-    )
-    load_count = 0
-    adapter = None
-
-    def fake_model_from_pretrained(name, *args, **kwargs):
-        nonlocal load_count
-        load_count += 1
-        if load_count == 2:
-            assert adapter._model is None
-        return _FakeHFModel()
-
-    monkeypatch.setattr(
-        transformers.AutoModelForCausalLM,
-        "from_pretrained",
-        fake_model_from_pretrained,
-    )
-    adapter = DreamReasonerAdapter(
-        "dreamreasoner-checkpoint",
-        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
-    )
-
-    adapter._ensure_loaded()
-    adapter._reload_with_cpu_offload()
-
-    assert load_count == 2
-
-
-def test_dreamreasoner_reload_flags_cpu_offloaded_when_real_bytes_land_on_cpu(monkeypatch):
-    def fake_model_from_pretrained(name, *args, **kwargs):
-        model = _FakeHFModel()
-        model._fake_parameters = [
-            _FakeOffloadableTensor("cuda", numel=100, element_size=2),
-            _FakeOffloadableTensor("cpu", numel=50, element_size=2),
-        ]
-        return model
-
-    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: object())
-    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", fake_model_from_pretrained)
-
-    adapter = DreamReasonerAdapter(
-        "dreamreasoner-checkpoint",
-        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
-    )
-    adapter._ensure_loaded()
-    adapter._reload_with_cpu_offload()
-
-    assert adapter._cpu_offloaded is True
-    assert adapter._cpu_offloaded_bytes == 50 * 2  # only the cpu-resident tensor's bytes
-
-
-def test_offload_measurement_does_not_count_meta_or_disk_placeholders():
-    model = _FakeHFModel()
-    model._fake_parameters = [
-        _FakeOffloadableTensor("cuda", numel=100, element_size=2),
-        _FakeOffloadableTensor("cpu", numel=50, element_size=2),
-        _FakeOffloadableTensor("meta", numel=500, element_size=2),
-    ]
-
-    assert model_cache.offloaded_parameter_bytes(model) == 50 * 2
-
-
-def test_offload_measurement_counts_meta_tensor_assigned_to_cpu_by_accelerate():
-    class NamedFakeModel(_FakeHFModel):
-        hf_device_map = {"model.layers.0": 0, "model.layers.1": "cpu", "lm_head": "disk"}
-
-        def named_parameters(self):
-            return iter([
-                ("model.layers.0.weight", _FakeOffloadableTensor("cuda", 100, 2)),
-                ("model.layers.1.weight", _FakeOffloadableTensor("meta", 50, 2)),
-                ("lm_head.weight", _FakeOffloadableTensor("meta", 500, 2)),
-            ])
-
-        def named_buffers(self):
-            return iter([])
-
-    assert model_cache.offloaded_parameter_bytes(NamedFakeModel()) == 50 * 2
-
-
-def test_dreamreasoner_reload_not_flagged_when_everything_still_lands_on_gpu(monkeypatch):
-    """Evicting the old (100%-GPU) copy before reloading frees its memory
-    first — it's possible `device_map="auto"` then finds enough room to
-    keep everything on the GPU after all. That's a real, valid outcome (the
-    reload still succeeded and the caller should still retry), just not one
-    that should be flagged as offloaded."""
-    def fake_model_from_pretrained(name, *args, **kwargs):
-        model = _FakeHFModel()
-        model._fake_parameters = [_FakeOffloadableTensor("cuda", numel=100, element_size=2)]
-        return model
-
-    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: object())
-    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", fake_model_from_pretrained)
-
-    adapter = DreamReasonerAdapter(
-        "dreamreasoner-checkpoint",
-        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
-    )
-    adapter._ensure_loaded()
-
-    assert adapter._reload_with_cpu_offload() is True
-    assert adapter._cpu_offloaded is False
-
-
-def test_dreamreasoner_fast_inherits_bests_offload_without_hitting_its_own_oom(monkeypatch):
-    """Matches the real CLI flow: `best` runs its entire sample sweep (and
-    any OOM-recovery reload within it) before `fast` is even constructed —
-    `fast`'s *first* `_ensure_loaded()` call should see the already
-    -offloaded shared cache entry directly, no separate OOM/reload of its
-    own required."""
-    def fake_model_from_pretrained(name, *args, **kwargs):
-        model = _FakeHFModel()
-        model._fake_parameters = [_FakeOffloadableTensor("cpu", numel=10, element_size=2)]
-        return model
-
-    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: object())
-    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", fake_model_from_pretrained)
-
-    best = DreamReasonerAdapter(
-        "shared-dreamreasoner-checkpoint",
-        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
-    )
-    best._ensure_loaded()
-    assert best._reload_with_cpu_offload() is True  # simulates best's own OOM+recovery
-    assert best._cpu_offloaded is True
-
-    # Only now does `fast` get constructed and load for the first time —
-    # same order the CLI's variant-sweep loop actually runs in.
-    fast = DreamReasonerAdapter(
-        "shared-dreamreasoner-checkpoint",
-        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=16),
-        config_name="fast",
-    )
-    fast._ensure_loaded()
-
-    assert fast._model is best._model
-    assert fast._cpu_offloaded is True
 
 
 def test_qwen_ar_adapter_uses_shared_cache(monkeypatch):
@@ -389,34 +156,9 @@ def test_diffusiongemma_adapter_uses_shared_cache(monkeypatch):
     second._ensure_loaded()
 
     assert model_calls["n"] == 1
+    assert model_calls["kwargs"] == [{"dtype": "auto"}]
     assert first._model is second._model
     assert first._processor is second._processor
-
-
-def test_qwen_ar_reload_with_cpu_offload_switches_to_device_map_auto(monkeypatch):
-    """The CPU-offload recovery path (see `models/base.py`'s
-    `_reload_with_cpu_offload`) is wired uniformly into every model in this
-    benchmark, not special-cased to just the diffusion models that happened
-    to need it first."""
-    _, model_calls = _install_counting_fakes(monkeypatch, transformers.AutoModelForCausalLM)
-    adapter = QwenARAdapter("qwen-checkpoint")
-    adapter._ensure_loaded()
-
-    assert adapter._reload_with_cpu_offload() is True
-    assert model_calls["kwargs"] == [{}, {"device_map": "auto"}]
-
-
-def test_diffusiongemma_reload_with_cpu_offload_switches_to_device_map_auto(monkeypatch):
-    from transformers import DiffusionGemmaForBlockDiffusion
-
-    _, model_calls = _install_counting_fakes(
-        monkeypatch, DiffusionGemmaForBlockDiffusion, tokenizer_class=transformers.AutoProcessor
-    )
-    adapter = DiffusionGemmaAdapter("diffusiongemma-checkpoint")
-    adapter._ensure_loaded()
-
-    assert adapter._reload_with_cpu_offload() is True
-    assert model_calls["kwargs"] == [{}, {"device_map": "auto"}]
 
 
 def test_illada_warm_uses_the_same_cache_path(monkeypatch):

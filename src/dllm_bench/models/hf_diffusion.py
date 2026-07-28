@@ -27,12 +27,7 @@ from typing import Any
 
 from ..interfaces import GenerationRequest, GenerationResult, RunStatus, TraceStep
 from .base import BaseModelAdapter
-from .model_cache import (
-    cpu_offload_max_memory,
-    get_or_load,
-    offloaded_parameter_bytes,
-    reload_with_offload,
-)
+from .model_cache import get_or_load
 
 
 @dataclass
@@ -83,19 +78,14 @@ class HFDiffusionAdapter(BaseModelAdapter):
         self._device = device
 
         def _load():
-            return self._load_model_and_tokenizer(device, device_map_auto=False)
+            return self._load_model_and_tokenizer(device)
 
         # Best/Fast point at the *same* checkpoint with a different
         # step_config — sharing this load is the whole point of nesting both
-        # under one configs/models/*.yaml file (see README). This can be a
-        # cache *hit* on a model a sibling variant already reloaded with
-        # offloading after its own OOM (see `_reload_with_cpu_offload`) —
-        # check the actual model, don't assume a fresh, 100%-GPU load.
+        # under one configs/models/*.yaml file (see README).
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
 
-    def _load_model_and_tokenizer(self, device: str, *, device_map_auto: bool):
+    def _load_model_and_tokenizer(self, device: str):
         # This default (AutoModel/AutoTokenizer) is iLLaDA's own loading
         # path — a custom `trust_remote_code` model class, confirmed against
         # the reference project's own loading code. DreamReasoner overrides
@@ -108,56 +98,15 @@ class HFDiffusionAdapter(BaseModelAdapter):
         # iLLaDA is released as BF16 and its official model card requires
         # this dtype. Omitting it constructs an unnecessarily large
         # default-precision model that does not fit on a 24 GiB GPU.
-        kwargs: dict = dict(trust_remote_code=True, torch_dtype=torch.bfloat16)
-        if device_map_auto:
-            kwargs["device_map"] = "auto"
-            max_memory = cpu_offload_max_memory(device)
-            if max_memory is not None:
-                kwargs["max_memory"] = max_memory
-        else:
-            kwargs["low_cpu_mem_usage"] = True
-        model = AutoModel.from_pretrained(self._model_name, **kwargs)
-        if not device_map_auto:
-            model.to(device)
+        model = AutoModel.from_pretrained(
+            self._model_name,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+        )
+        model.to(device)
         model.eval()
         return tokenizer, model
-
-    def _reload_with_cpu_offload(self) -> bool:
-        """See `models/base.py`'s `BaseModelAdapter._reload_with_cpu_offload`
-        docstring for when/why this gets called at all (only after a genuine,
-        non-fragmentation capacity OOM). `model_cache.reload_with_offload`
-        evicts and replaces the *shared* cache entry, so a sibling variant
-        (e.g. `fast`, if `best` is the one that actually hit the OOM) that
-        hasn't loaded yet will see the already-offloaded model on its own
-        next `_ensure_loaded()` call instead of hitting the same OOM itself."""
-        if getattr(self, "_cpu_offloaded", False):
-            return True  # already offloaded from an earlier sample; nothing to redo
-        if self._model is None:
-            return False  # never loaded at all yet — not this method's job
-
-        def _load_with_offload():
-            return self._load_model_and_tokenizer(self._device, device_map_auto=True)
-
-        def _release_current() -> None:
-            self._model = None
-            self._tokenizer = None
-
-        self._tokenizer, self._model = reload_with_offload(
-            self._model_name,
-            self._device,
-            _load_with_offload,
-            release_current=_release_current,
-        )
-        # Evicting the old (100%-GPU) copy before this reload frees its
-        # memory first, so it's possible `device_map="auto"` finds enough
-        # room to place everything back on the GPU after all — only flag
-        # this run as offloaded if real parameter/buffer bytes actually
-        # ended up off-GPU, not just because `device_map="auto"` was asked
-        # for. Either way, the reload itself succeeded, so the caller should
-        # still retry.
-        self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
-        self._cpu_offloaded = self._cpu_offloaded_bytes > 0
-        return True
 
     @abstractmethod
     def _run_denoising(

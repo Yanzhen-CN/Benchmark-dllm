@@ -243,14 +243,8 @@ def test_no_demo_auto_prepares_missing_real_dataset_cache(tmp_path, monkeypatch)
     assert "Prepared 1 mbpp samples" in result.output
 
 
-def test_matrix_survives_a_genuine_oom_in_one_job_and_runs_remaining_jobs(tmp_path, monkeypatch):
-    """A model's own worst-case sample (e.g. DreamReasoner's untimed RULER
-    warmup) can hit a capacity OOM that survives every CPU-offload escalation
-    (see `models/base.py`'s `_recover_from_oom` / `warmup_generation`, which
-    deliberately re-raises once recovery is exhausted). `matrix_command`
-    must record that as a per-job finding and still run every other queued
-    job (e.g. HelloBench right after RULER) rather than aborting the whole
-    invocation."""
+def test_matrix_propagates_warmup_oom_and_stops_remaining_jobs(tmp_path, monkeypatch):
+    """A job-level OOM is not swallowed or converted into CPU offload."""
     runner = CliRunner()
     output_root = tmp_path / "output"
     model_config = CONFIGS_DIR / "models" / "mock.yaml"
@@ -288,15 +282,12 @@ def test_matrix_survives_a_genuine_oom_in_one_job_and_runs_remaining_jobs(tmp_pa
             "--demo", "--n-samples", "3",
             "--output-root", str(output_root),
         ],
-        catch_exceptions=False,
     )
 
-    assert result.exit_code == 0, result.output
-    assert calls == [str(gsm8k_config), str(mbpp_config)]
-    assert "unrecoverable CUDA OOM" in result.output
-
-    mbpp_out = output_root / "model_output" / "mock_default" / "mbpp"
-    assert (mbpp_out / "_meta.json").exists()
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)
+    assert "CUDA out of memory" in str(result.exception)
+    assert calls == [str(gsm8k_config)]
 
 
 def test_matrix_still_aborts_on_a_non_oom_failure(tmp_path, monkeypatch):

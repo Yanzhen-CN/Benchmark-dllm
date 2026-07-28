@@ -66,20 +66,6 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
     inference_dtype = getattr(adapter, "_inference_dtype", None)
     if inference_dtype:
         metadata["inference_dtype"] = inference_dtype
-    # Always emit this one explicitly (not only when true): a `_meta.json`
-    # without it would be ambiguous about whether the adapter ever even
-    # checked, versus checked and confirmed a clean 100%-GPU run. See
-    # `BaseModelAdapter._reload_with_cpu_offload` (models/base.py) — this
-    # only ever becomes true reactively, after a real capacity OOM neither a
-    # plain retry nor a cache-cleared one could recover from. Whenever true,
-    # timing/energy/compute are not comparable to any other (fully-GPU)
-    # run's numbers.
-    metadata["cpu_offloaded"] = bool(getattr(adapter, "_cpu_offloaded", False))
-    offloaded_bytes = getattr(adapter, "_cpu_offloaded_bytes", None)
-    if offloaded_bytes is not None:
-        metadata["cpu_offloaded_bytes"] = offloaded_bytes
-        metadata["cpu_offloaded_gib"] = offloaded_bytes / (1024 ** 3)
-
     git_commit = _get_git_commit()
     if git_commit:
         metadata["code_commit"] = git_commit
