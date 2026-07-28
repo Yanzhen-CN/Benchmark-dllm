@@ -132,6 +132,38 @@ def test_dataset_boundary_evicts_only_cpu_offloaded_cuda_models():
     )
 
 
+def test_cpu_offload_bytes_include_meta_tensors_backed_by_cpu_weights_map():
+    class Tensor:
+        def __init__(self, device_type, count):
+            self.device = type("Device", (), {"type": device_type})()
+            self.count = count
+
+        def numel(self):
+            return self.count
+
+        def element_size(self):
+            return 2
+
+    class Model:
+        hf_device_map = {
+            "model.layers.0": 0,
+            "model.layers.1": "cpu",
+            "lm_head": "disk",
+        }
+
+        def named_parameters(self):
+            return iter([
+                ("model.layers.0.weight", Tensor("cuda", 100)),
+                ("model.layers.1.weight", Tensor("meta", 50)),
+                ("lm_head.weight", Tensor("meta", 500)),
+            ])
+
+        def named_buffers(self):
+            return iter([])
+
+    assert model_cache.offloaded_parameter_bytes(Model()) == 100
+
+
 class _FakeLoadingAdapter(BaseModelAdapter):
     """Minimal BaseModelAdapter subclass with an `_ensure_loaded` to verify
     `warm()` dispatches to it (mirrors the real HF adapters' shape

@@ -41,6 +41,16 @@ def test_local_score_dispatches_every_selected_model_without_model_venvs(capsys)
     assert "--model illada" in output
     assert "--model qwen3_4b" in output
     assert "venv_scripts" not in output
+    assert "--resume" in output
+
+
+def test_local_score_can_force_rescoring(capsys):
+    assert local_pipeline.main(
+        "score", ["--dry-run", "-m", "dreamreasoner", "--no-resume"]
+    ) == 0
+    output = capsys.readouterr().out
+    assert "--stage score" in output
+    assert "--no-resume" in output
 
 
 def test_local_visualization_also_builds_report(capsys):

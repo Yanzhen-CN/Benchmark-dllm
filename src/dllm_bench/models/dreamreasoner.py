@@ -139,6 +139,14 @@ MASK_DISPLAY = "▢"
 # full-sequence square mask.
 _PREFILL_CHUNK_BLOCKS = 32
 
+# Empirical capacity boundary on the formal 23.52-GiB device: Accelerate's
+# generic 50% weight budget still left only 875.81 MiB free while an 8192-token
+# RULER warmup needed one more 1.16-GiB allocation. DreamReasoner therefore
+# starts its reactive fallback at 25%; if that still cannot cover a larger
+# context, one final 10% placement is available before reporting a real OOM.
+_CPU_OFFLOAD_GPU_MEMORY_FRACTION = 0.25
+_AGGRESSIVE_CPU_OFFLOAD_GPU_MEMORY_FRACTION = 0.10
+
 
 class DreamReasonerAdapter(HFDiffusionAdapter):
     """Appendix D.2. Best: block_length=32, steps_per_block=32 (1 token/step,
@@ -157,6 +165,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
     ) -> None:
         super().__init__(model_name_or_path, step_config, name="dreamreasoner", config_name=config_name, device=device)
         self._cpu_offloaded = False
+        self._cpu_offload_gpu_memory_fraction = _CPU_OFFLOAD_GPU_MEMORY_FRACTION
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -176,6 +185,11 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
         self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
         self._cpu_offloaded = self._cpu_offloaded_bytes > 0
+        cached_fraction = getattr(
+            self._model, "_dllm_cpu_offload_gpu_memory_fraction", None
+        )
+        if cached_fraction is not None:
+            self._cpu_offload_gpu_memory_fraction = float(cached_fraction)
 
     def _load_model_and_tokenizer(self, device: str, *, device_map_auto: bool):
         import torch
@@ -189,7 +203,10 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         kwargs: dict = dict(trust_remote_code=True, torch_dtype=torch.bfloat16)
         if device_map_auto:
             kwargs["device_map"] = "auto"
-            max_memory = cpu_offload_max_memory(device)
+            max_memory = cpu_offload_max_memory(
+                device,
+                gpu_fraction=self._cpu_offload_gpu_memory_fraction,
+            )
             if max_memory is not None:
                 kwargs["max_memory"] = max_memory
         else:
@@ -229,6 +246,26 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         if self._model is None:
             return False  # never loaded at all yet — not this method's job
 
+        return self._reload_with_cpu_offload_fraction(
+            _CPU_OFFLOAD_GPU_MEMORY_FRACTION
+        )
+
+    def _reload_with_more_cpu_offload(self) -> bool:
+        """Escalate once if the normal DreamReasoner CPU placement still OOMs."""
+        if self._model is None:
+            return False
+        if (
+            self._cpu_offload_gpu_memory_fraction
+            <= _AGGRESSIVE_CPU_OFFLOAD_GPU_MEMORY_FRACTION
+        ):
+            return False
+        return self._reload_with_cpu_offload_fraction(
+            _AGGRESSIVE_CPU_OFFLOAD_GPU_MEMORY_FRACTION
+        )
+
+    def _reload_with_cpu_offload_fraction(self, gpu_fraction: float) -> bool:
+        self._cpu_offload_gpu_memory_fraction = gpu_fraction
+
         def _load_with_offload():
             return self._load_model_and_tokenizer(self._device, device_map_auto=True)
 
@@ -251,6 +288,11 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         # still retry.
         self._cpu_offloaded_bytes = offloaded_parameter_bytes(self._model)
         self._cpu_offloaded = self._cpu_offloaded_bytes > 0
+        setattr(
+            self._model,
+            "_dllm_cpu_offload_gpu_memory_fraction",
+            gpu_fraction,
+        )
         return True
 
     def _resolve_mask_token_id(self, step_config: DiffusionStepConfig) -> int:

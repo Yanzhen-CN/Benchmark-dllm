@@ -32,6 +32,11 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
     parser.set_defaults(real_data=True)
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument("--output-root", default="output")
+    if stage == "score":
+        resume = parser.add_mutually_exclusive_group()
+        resume.add_argument("--resume", dest="resume", action="store_true")
+        resume.add_argument("--no-resume", dest="resume", action="store_false")
+        parser.set_defaults(resume=True)
     if stage == "visualize":
         parser.add_argument("--n-representative", type=int, default=3)
     parser.add_argument("--dry-run", action="store_true")
@@ -69,6 +74,8 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
         ]
         if stage == "visualize":
             command.extend(["--n-representative", str(args.n_representative)])
+        if stage == "score":
+            command.append("--resume" if args.resume else "--no-resume")
         if args.n_samples is not None:
             command.extend(["--n-samples", str(args.n_samples)])
         for value in args.dataset:

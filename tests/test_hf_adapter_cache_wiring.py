@@ -159,10 +159,16 @@ def test_dreamreasoner_reload_with_cpu_offload_switches_to_device_map_auto(monke
         monkeypatch, transformers.AutoModelForCausalLM
     )
     max_memory = {0: 12 * 1024**3, "cpu": 64 * 1024**3}
+    requested_fractions = []
+
+    def fake_max_memory(device, *, gpu_fraction):
+        requested_fractions.append(gpu_fraction)
+        return max_memory
+
     monkeypatch.setattr(
         dreamreasoner_module,
         "cpu_offload_max_memory",
-        lambda device: max_memory,
+        fake_max_memory,
     )
     adapter = DreamReasonerAdapter(
         "dreamreasoner-checkpoint",
@@ -172,6 +178,7 @@ def test_dreamreasoner_reload_with_cpu_offload_switches_to_device_map_auto(monke
     adapter._ensure_loaded()
 
     assert adapter._reload_with_cpu_offload() is True
+    assert requested_fractions == [0.25]
     assert model_calls["kwargs"] == [
         {"trust_remote_code": True, "torch_dtype": torch.bfloat16, "low_cpu_mem_usage": True},
         {
@@ -181,6 +188,34 @@ def test_dreamreasoner_reload_with_cpu_offload_switches_to_device_map_auto(monke
             "max_memory": max_memory,
         },
     ]
+
+
+def test_dreamreasoner_can_escalate_to_aggressive_cpu_offload(monkeypatch):
+    _, model_calls = _install_counting_fakes(
+        monkeypatch, transformers.AutoModelForCausalLM
+    )
+    requested_fractions = []
+
+    def fake_max_memory(device, *, gpu_fraction):
+        requested_fractions.append(gpu_fraction)
+        return {0: int(24 * 1024**3 * gpu_fraction), "cpu": 64 * 1024**3}
+
+    monkeypatch.setattr(
+        dreamreasoner_module,
+        "cpu_offload_max_memory",
+        fake_max_memory,
+    )
+    adapter = DreamReasonerAdapter(
+        "dreamreasoner-checkpoint",
+        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
+        config_name="best",
+    )
+    adapter._ensure_loaded()
+
+    assert adapter._reload_with_cpu_offload() is True
+    assert adapter._reload_with_more_cpu_offload() is True
+    assert requested_fractions == [0.25, 0.10]
+    assert model_calls["n"] == 3  # full GPU, 25%, then 10%
 
 
 def test_dreamreasoner_releases_old_model_before_auto_device_placement(monkeypatch):
@@ -247,6 +282,23 @@ def test_offload_measurement_does_not_count_meta_or_disk_placeholders():
     ]
 
     assert model_cache.offloaded_parameter_bytes(model) == 50 * 2
+
+
+def test_offload_measurement_counts_meta_tensor_assigned_to_cpu_by_accelerate():
+    class NamedFakeModel(_FakeHFModel):
+        hf_device_map = {"model.layers.0": 0, "model.layers.1": "cpu", "lm_head": "disk"}
+
+        def named_parameters(self):
+            return iter([
+                ("model.layers.0.weight", _FakeOffloadableTensor("cuda", 100, 2)),
+                ("model.layers.1.weight", _FakeOffloadableTensor("meta", 50, 2)),
+                ("lm_head.weight", _FakeOffloadableTensor("meta", 500, 2)),
+            ])
+
+        def named_buffers(self):
+            return iter([])
+
+    assert model_cache.offloaded_parameter_bytes(NamedFakeModel()) == 50 * 2
 
 
 def test_dreamreasoner_reload_not_flagged_when_everything_still_lands_on_gpu(monkeypatch):

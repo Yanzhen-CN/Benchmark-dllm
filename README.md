@@ -100,6 +100,7 @@ python run_model.py --list-models
 python run_model.py --dry-run -m illada
 python run_model.py -m illada --n-samples 20
 python run_score.py --dry-run -m illada
+python run_score.py -m dreamreasoner -d ruler hellobench --no-resume  # force re-score; never regenerates model output
 ```
 
 `run_bench.py` remains available for backward-compatible same-machine runs.
@@ -389,7 +390,10 @@ formal sample after one cache-cleared retry, the runner reloads it with
 Accelerate CPU offload. The selected GPU's model-weight budget is capped at
 50% of physical VRAM so KV cache and activations retain real headroom;
 unbounded `device_map="auto"` can otherwise put every weight back on GPU and
-repeat the same runtime OOM.
+repeat the same runtime OOM. DreamReasoner's measured 8K RULER path needs more
+headroom on the formal 23.52-GiB GPU, so its first fallback uses 25%; if that
+placement still OOMs at a longer context, it reloads once more at 10% before
+reporting failure.
 Every affected sample records `extra.cpu_offloaded=true` plus the actual
 CPU-resident parameter/buffer amount as `cpu_offloaded_bytes` and
 `cpu_offloaded_gib`; the dataset `_meta.json` records the same placement after

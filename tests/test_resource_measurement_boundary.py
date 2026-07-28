@@ -232,6 +232,29 @@ class _OOMTwiceThenSucceedWithOffloadAdapter(BaseModelAdapter):
         return True
 
 
+class _OOMThreeTimesThenSucceedWithDeeperOffloadAdapter(
+    _OOMTwiceThenSucceedWithOffloadAdapter
+):
+    def __init__(self):
+        super().__init__(supports_offload=True)
+        self.deeper_reload_calls = 0
+
+    def _generate_core(self, request):
+        self.generate_core_calls += 1
+        if self.generate_core_calls <= 3:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 1.16 GiB")
+        return GenerationResult(
+            request=request,
+            output_text="ok",
+            status=RunStatus.SUCCESS,
+            final_valid_length=1,
+        )
+
+    def _reload_with_more_cpu_offload(self):
+        self.deeper_reload_calls += 1
+        return True
+
+
 def test_generate_escalates_to_cpu_offload_after_a_second_oom(monkeypatch):
     monkeypatch.setattr(base_module, "_release_cuda_cache", lambda: None)
 
@@ -244,6 +267,22 @@ def test_generate_escalates_to_cpu_offload_after_a_second_oom(monkeypatch):
     assert result.extra["cpu_offloaded"] is True
     assert result.extra["cpu_offloaded_bytes"] == 123_456
     assert result.extra["cpu_offloaded_gib"] == 123_456 / (1024 ** 3)
+
+
+def test_generate_can_deepen_cpu_offload_after_the_first_offloaded_retry_ooms(
+    monkeypatch,
+):
+    monkeypatch.setattr(base_module, "_release_cuda_cache", lambda: None)
+    adapter = _OOMThreeTimesThenSucceedWithDeeperOffloadAdapter()
+
+    result = adapter.generate(
+        GenerationRequest(prompt="long context", max_new_tokens=8, seed=42)
+    )
+
+    assert result.status == RunStatus.SUCCESS
+    assert adapter.generate_core_calls == 4
+    assert adapter.reload_calls == 1
+    assert adapter.deeper_reload_calls == 1
 
 
 def test_untimed_warmup_uses_the_same_cpu_offload_recovery(monkeypatch):
@@ -263,6 +302,19 @@ def test_untimed_warmup_uses_the_same_cpu_offload_recovery(monkeypatch):
     # second failure reloads the model through the offload helper instead.
     assert release_calls == [1, 1]
     assert adapter._cpu_offloaded is True
+
+
+def test_untimed_warmup_can_deepen_cpu_offload(monkeypatch):
+    monkeypatch.setattr(base_module, "_release_cuda_cache", lambda: None)
+    adapter = _OOMThreeTimesThenSucceedWithDeeperOffloadAdapter()
+
+    adapter.warmup_generation(
+        GenerationRequest(prompt="long context", max_new_tokens=8, seed=42)
+    )
+
+    assert adapter.generate_core_calls == 4
+    assert adapter.reload_calls == 1
+    assert adapter.deeper_reload_calls == 1
 
 
 def test_untimed_warmup_still_raises_when_offload_is_unavailable(monkeypatch):

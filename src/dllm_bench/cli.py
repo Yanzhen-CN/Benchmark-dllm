@@ -560,7 +560,7 @@ def matrix_command(
                 require_all_metrics=require_all_metrics, resume=resume,
             )
         if stage in {"score", "all"}:
-            ctx.invoke(score, **common, resume=True)
+            ctx.invoke(score, **common, resume=resume)
         if stage in {"visualize", "all"}:
             ctx.invoke(
                 visualize, **common, n_representative=n_representative, sample_ids=None,

@@ -89,6 +89,11 @@ class BaseModelAdapter(ABC):
         must carry the same flag."""
         return False
 
+    def _reload_with_more_cpu_offload(self) -> bool:
+        """Optionally retry an already-offloaded model with a lower GPU
+        weight budget. Only adapters with a demonstrated need implement it."""
+        return False
+
     def _recover_from_oom(self, exc: Exception, attempt: int, seed: int) -> bool:
         """Apply the shared two-step CUDA OOM recovery policy.
 
@@ -108,6 +113,9 @@ class BaseModelAdapter(ABC):
             _release_cuda_cache()
         elif attempt == 1:
             if not self._reload_with_cpu_offload():
+                return False
+        elif attempt == 2:
+            if not self._reload_with_more_cpu_offload():
                 return False
         else:
             return False

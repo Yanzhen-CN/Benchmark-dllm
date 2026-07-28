@@ -129,8 +129,14 @@ def cpu_offload_max_memory(
 
 
 def offloaded_parameter_bytes(model: Any) -> int:
-    """Sum of parameter+buffer bytes resident on CPU, once
-    `accelerate`'s `device_map="auto"` has moved part of a model to CPU —
+    """Sum parameter+buffer bytes assigned to CPU by Accelerate.
+
+    CPU-offloaded tensors can be physically reported as either ``cpu`` or
+    ``meta`` (the latter is backed by Accelerate's CPU weights map and moved
+    into the execution device by hooks). Consult ``hf_device_map`` for those
+    meta tensors rather than incorrectly recording zero CPU bytes.
+
+    Once `accelerate`'s `device_map="auto"` has moved part of a model to CPU,
     a direct, measurable answer to "how much VRAM did this overflow by"
     (design doc: this also incidentally measures each model's real VRAM
     need at its longest tested input, not just whether it fits). Reflects
@@ -138,12 +144,34 @@ def offloaded_parameter_bytes(model: Any) -> int:
     headroom for activations/KV-cache — not a substitute for profiling
     peak memory directly, but a practical, always-available proxy that
     needs no extra instrumentation around the forward pass itself."""
+    device_map = getattr(model, "hf_device_map", {}) or {}
+
+    def assigned_to_cpu(name: str, tensor: Any) -> bool:
+        if tensor.device.type == "cpu":
+            return True
+        if tensor.device.type != "meta":
+            return False
+        best_prefix = None
+        for prefix in device_map:
+            if prefix == "" or name == prefix or name.startswith(f"{prefix}."):
+                if best_prefix is None or len(prefix) > len(best_prefix):
+                    best_prefix = prefix
+        return best_prefix is not None and str(device_map[best_prefix]) == "cpu"
+
+    def named_tensors(named_method: str, plain_method: str):
+        method = getattr(model, named_method, None)
+        if callable(method):
+            yield from method()
+        else:
+            for index, tensor in enumerate(getattr(model, plain_method)()):
+                yield str(index), tensor
+
     total = 0
-    for tensor in model.parameters():
-        if tensor.device.type == "cpu":
+    for name, tensor in named_tensors("named_parameters", "parameters"):
+        if assigned_to_cpu(name, tensor):
             total += tensor.numel() * tensor.element_size()
-    for tensor in model.buffers():
-        if tensor.device.type == "cpu":
+    for name, tensor in named_tensors("named_buffers", "buffers"):
+        if assigned_to_cpu(name, tensor):
             total += tensor.numel() * tensor.element_size()
     return total
 
