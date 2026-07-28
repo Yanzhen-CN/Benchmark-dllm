@@ -10,8 +10,9 @@
       visualization_output/<model>_<config>/<dataset>/
         <sample_id>_*.png / .gif
 
-The run ID is normally ``<model>_<config>``. Qwen's sole ``ar-baseline``
-configuration uses just ``qwen3_4b`` because the suffix is redundant.
+The run ID is normally ``<model>_<config>``. Each Qwen model's sole
+``ar-baseline`` configuration uses just its model name because the suffix is
+redundant.
 Splitting by run ID first, ``<dataset>`` second is what lets
 each model run independently (skip W1 entirely, run iLLaDA without touching
 DreamReasoner's output), lets a dataset resume mid-way (each stage checks per-sample
@@ -29,7 +30,10 @@ SCORE_OUTPUT = "score_output"
 VISUALIZATION_OUTPUT = "visualization_output"
 
 
-_UNSUFFIXED_CONFIGS = {("qwen3_4b", "ar-baseline")}
+_UNSUFFIXED_CONFIGS = {
+    ("qwen3_4b", "ar-baseline"),
+    ("qwen3_8b", "ar-baseline"),
+}
 
 
 def run_id(model_name: str, config_name: str) -> str:

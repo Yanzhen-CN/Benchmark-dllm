@@ -1,0 +1,16 @@
+# Same-scale dense AR reference for the 8B diffusion models. It uses the
+# official Qwen3-8B instruction checkpoint, standard greedy decoding, and the
+# same trace/resource protocol as Qwen3-4B. Output limits remain task-specific.
+#
+# The checkpoint supports 40960 positions in its published config. Thinking is
+# disabled so the task output budget is spent on the answer rather than an
+# optional reasoning preamble.
+model: qwen3_8b
+max_context_tokens: 40960
+configs:
+  ar-baseline:
+    adapter: dllm_bench.models.hf_ar.QwenARAdapter
+    init_kwargs:
+      model_name_or_path: Qwen/Qwen3-8B
+      adapter_name: qwen3_8b
+      enable_thinking: false

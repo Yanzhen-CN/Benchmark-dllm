@@ -6,6 +6,7 @@ venv path, dependency versions, installation and validation.
 
     python setup_venv.py
     python setup_venv.py -m illada
+    python setup_venv.py -m qwen3_8b
     python setup_venv.py -m dreamreasoner -m diffusiongemma
     python setup_venv.py -m gemma4_26b_a4b
     python setup_venv.py --cuda-index cu126

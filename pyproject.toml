@@ -20,7 +20,7 @@ hf = [
 ]
 # DiffusionGemma needs DiffusionGemmaForBlockDiffusion, which
 # is only in transformers>=5.13.0 — a much newer floor than the general `hf`
-# extra above. Split out so Qwen3-4B/iLLaDA/DreamReasoner users aren't forced onto
+# extra above. Split out so Qwen3/iLLaDA/DreamReasoner users aren't forced onto
 # a bleeding-edge transformers just to run the AR baseline or the other
 # diffusion models.
 diffusiongemma = [
