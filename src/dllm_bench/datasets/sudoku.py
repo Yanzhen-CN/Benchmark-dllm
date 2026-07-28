@@ -2,11 +2,13 @@
 
 The paper uses Park's one-million-game dataset, rows 0..99,999 for training
 and rows 100,000..100,999 for testing. This benchmark preserves the official
-81-digit puzzle/solution representation.  Unlike the task-specific models in
-Ye et al., the evaluated checkpoints may reason in free-form text.  We therefore
-use a GSM8K-style ``####`` final-answer marker and score the extracted grid by
-the constraint-validity protocol used for general LMs in Bertolani et al.
-Easy/Hard is a reporting stratum only; it never changes the source puzzle.
+81-digit puzzle/solution representation. The evaluated checkpoint must return
+only the completed 81-digit solution. The scorer tolerates incidental wrappers
+or row formatting, extracts the final complete grid, and checks its legality;
+strict direct-output compliance is retained as a separate diagnostic.
+Blank-cell accuracy, exact reference match, given preservation, completion,
+and constraint satisfaction are retained as diagnostics. Easy/Hard is a
+reporting stratum only; it never changes the source puzzle or score protocol.
 """
 
 from __future__ import annotations
@@ -31,13 +33,13 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
-SUDOKU_PROTOCOL_REVISION = "reasoning-marker-v1"
+SUDOKU_PROTOCOL_REVISION = "direct-prompt-tolerant-parser-v1"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
 SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
 SUDOKU_TRAIN_ROWS = 100_000
 SUDOKU_TEST_ROWS = 1_000
-SUDOKU_MAX_NEW_TOKENS = 512
+SUDOKU_MAX_NEW_TOKENS = 128
 
 _FINAL_ANSWER_MARKER_RE = re.compile(r"(?im)^\s*####\s*")
 _COMPACT_SOLUTION_RE = re.compile(r"(?<![0-9])([1-9]{81})(?![0-9])")
@@ -90,6 +92,13 @@ def parse_grid(text: str) -> Grid | None:
     tokens, few stray letters) and takes the *last* 9 such lines, since a
     reasoning-style response usually states the final grid last.
     """
+    stripped = text.strip()
+    if re.fullmatch(r"[0-9]{81}", stripped):
+        return [
+            [int(stripped[row * 9 + col]) for col in range(9)]
+            for row in range(9)
+        ]
+
     candidate_rows: list[list[str]] = []
     for line in text.splitlines():
         tokens = re.findall(r"[1-9]|[.0_]", line)
@@ -105,6 +114,67 @@ def parse_grid(text: str) -> Grid | None:
     for row_tokens in rows:
         grid.append([0 if tok in _BLANK_TOKENS else int(tok) for tok in row_tokens])
     return grid
+
+
+def _units() -> list[list[tuple[int, int]]]:
+    rows = [[(r, c) for c in range(9)] for r in range(9)]
+    cols = [[(r, c) for r in range(9)] for c in range(9)]
+    boxes = [
+        [(r, c) for r in range(br, br + 3) for c in range(bc, bc + 3)]
+        for br in (0, 3, 6)
+        for bc in (0, 3, 6)
+    ]
+    return rows + cols + boxes
+
+
+_UNITS = _units()
+
+
+def constraint_satisfaction_rate(grid: Grid) -> float:
+    satisfied = 0
+    for unit in _UNITS:
+        values = [grid[r][c] for r, c in unit if grid[r][c] != 0]
+        if len(values) == len(set(values)):
+            satisfied += 1
+    return satisfied / len(_UNITS)
+
+
+def completion_rate(grid: Grid) -> float:
+    filled = sum(1 for row in grid for v in row if v != 0)
+    return filled / 81
+
+
+def cell_accuracy(grid: Grid, solution: Grid) -> float:
+    correct = sum(
+        1 for r in range(9) for c in range(9) if grid[r][c] == solution[r][c]
+    )
+    return correct / 81
+
+
+def blank_cell_accuracy(grid: Grid, puzzle: Grid, solution: Grid) -> float:
+    """Return solution accuracy on cells the model was asked to fill.
+
+    Blanks and wrong digits both receive no credit.  A degenerate puzzle with
+    no blanks falls back to exact-match scoring rather than dividing by zero.
+    """
+    blank_cells = [
+        (r, c) for r in range(9) for c in range(9) if puzzle[r][c] == 0
+    ]
+    if not blank_cells:
+        return 1.0 if grid == solution else 0.0
+    correct = sum(grid[r][c] == solution[r][c] for r, c in blank_cells)
+    return correct / len(blank_cells)
+
+
+def given_preservation_rate(grid: Grid, puzzle: Grid) -> float:
+    """Return the fraction of prompt-supplied cells preserved in the output."""
+    given_cells = [
+        (r, c) for r in range(9) for c in range(9) if puzzle[r][c] != 0
+    ]
+    if not given_cells:
+        return 1.0
+    preserved = sum(grid[r][c] == puzzle[r][c] for r, c in given_cells)
+    return preserved / len(given_cells)
 
 
 @dataclass
@@ -165,19 +235,57 @@ class SudokuDataset(Dataset):
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: SudokuReference = sample.reference
-        prediction, marker_present = extract_final_grid(output_text)
-        valid = prediction is not None
-        constraint_valid = valid and is_valid_solution(prediction, ref.puzzle)
-        reference_exact = valid and prediction == ref.solution
+        prediction = output_text.strip()
+        target = _grid_to_digits(ref.solution)
+        official_format_valid = bool(re.fullmatch(r"[1-9]{81}", prediction))
+        official_exact = 1.0 if prediction == target else 0.0
+        grid, marker_present = extract_final_grid(output_text)
+
+        if grid is None:
+            return ScoreResult(
+                primary_score=0.0,
+                aux={
+                    "official_exact_match_accuracy": official_exact,
+                    "official_format_valid": 0.0,
+                    "exact_solve_rate": 0.0,
+                    "blank_cell_accuracy": 0.0,
+                    "cell_accuracy": 0.0,
+                    "given_preservation_rate": 0.0,
+                    "constraint_satisfaction_rate": 0.0,
+                    "completion_rate": 0.0,
+                    "conflict_rate": 1.0,
+                    "constraint_valid": 0.0,
+                    "reference_exact_match": 0.0,
+                    "answer_marker_present": float(marker_present),
+                },
+                valid=False,
+                complete=False,
+            )
+
+        exact = 1.0 if grid == ref.solution else 0.0
+        partial_credit = blank_cell_accuracy(grid, ref.puzzle, ref.solution)
+        satisfaction = constraint_satisfaction_rate(grid)
+        constraint_valid = is_valid_solution(grid, ref.puzzle)
         return ScoreResult(
-            primary_score=1.0 if constraint_valid else 0.0,
+            primary_score=float(constraint_valid),
             aux={
+                "official_exact_match_accuracy": official_exact,
+                "official_format_valid": float(official_format_valid),
+                "exact_solve_rate": exact,
+                "blank_cell_accuracy": partial_credit,
+                "cell_accuracy": cell_accuracy(grid, ref.solution),
+                "given_preservation_rate": given_preservation_rate(
+                    grid, ref.puzzle
+                ),
+                "constraint_satisfaction_rate": satisfaction,
+                "completion_rate": completion_rate(grid),
+                "conflict_rate": 1.0 - satisfaction,
                 "constraint_valid": float(constraint_valid),
-                "reference_exact_match": float(reference_exact),
+                "reference_exact_match": exact,
                 "answer_marker_present": float(marker_present),
             },
-            valid=valid,
-            complete=valid,
+            valid=True,
+            complete=completion_rate(grid) == 1.0,
         )
 
     def aggregate_records(
@@ -186,6 +294,15 @@ class SudokuDataset(Dataset):
         summary = super().aggregate_records(samples, results)
         for difficulty, group in group_by_difficulty(samples, results).items():
             if group:
+                summary[f"blank_cell_accuracy_{difficulty}"] = (
+                    sum(result.aux["blank_cell_accuracy"] for result in group)
+                    / len(group)
+                )
+                exact_solve_rate = (
+                    sum(result.aux["exact_solve_rate"] for result in group)
+                    / len(group)
+                )
+                summary[f"exact_solve_rate_{difficulty}"] = exact_solve_rate
                 summary[f"accuracy_{difficulty}"] = (
                     sum(result.primary_score for result in group) / len(group)
                 )
@@ -196,7 +313,7 @@ class SudokuDataset(Dataset):
 def group_by_difficulty(
     samples: list[Sample], results: list[ScoreResult]
 ) -> dict[str, list[ScoreResult]]:
-    """Section 1 reports Easy/Hard accuracy separately, not blended."""
+    """Group results for separate Easy/Hard partial and exact metrics."""
     grouped: dict[str, list[ScoreResult]] = {"easy": [], "hard": []}
     for sample, result in zip(samples, results):
         ref: SudokuReference = sample.reference
@@ -250,12 +367,10 @@ def _build_prompt(puzzle_digits: str) -> str:
     return (
         "Directly solve the following 9x9 Sudoku puzzle. The puzzle is given "
         "as an 81-digit row-major string, where 0 represents a blank cell. "
-        "You may reason before answering. End your response with exactly one "
-        "final-answer line in the form `#### <solution>`, where <solution> is "
-        "the completed 81-digit row-major grid using digits 1-9 with no spaces "
-        "or separators.\n"
+        "Return only the completed 81-digit row-major solution using digits "
+        "1-9, with no spaces, separators, answer label, or explanation.\n"
         f"Puzzle: {puzzle_digits}\n"
-        "Solve the puzzle, then provide the marked final answer."
+        "Answer:"
     )
 
 
@@ -411,7 +526,7 @@ def _load_official_test_samples(
                             "source_index": train_rows + test_index,
                             "official_split": "test",
                             "source_input_format": "81_digits_zero_is_blank",
-                            "prompt_protocol": "reasoning_then_gsm8k_style_final_marker",
+                            "prompt_protocol": "direct_81_solution_digits_only",
                             "official_output_format": "81_solution_digits",
                             "max_new_tokens": SUDOKU_MAX_NEW_TOKENS,
                             "difficulty_rule": "naked_single_rounds_le_5_vs_ge_6",

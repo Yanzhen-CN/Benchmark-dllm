@@ -5,7 +5,7 @@
 # every other model for a uniform loader.
 #
 # `model_name_or_path` is an HF Hub repo id — `from_pretrained` downloads it
-# on first use into ./.data/huggingface (see dllm_bench/hf_cache.py), not a local
+# on first use into ./data/huggingface (see dllm_bench/hf_cache.py), not a local
 # path. `python prepare_model.py --model-config configs/models/qwen3_4b.yaml`
 # downloads that snapshot into the cache ahead of time without loading it.
 model: qwen3_4b

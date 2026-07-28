@@ -11,12 +11,19 @@ venv/
 
 # generate/score/visualize pipeline output (model_output/score_output/visualization_output)
 output/
+artifacts/
 .tmp_*/
 *.png
 *.gif
 
+# Versioned technical-report figures.
+!docs/figures/
+!docs/figures/*.png
+
 # Persistent project-local downloads/caches (models, datasets, package wheels)
+# Legacy location; safe to remove after migrating to /data/.
 .data/
+/data/
 # Legacy cache locations from older checkouts.
 .hf_cache/
 .dataset_cache/

@@ -1,8 +1,21 @@
 dataset: sudoku
 dataset_class: dllm_bench.datasets.sudoku.SudokuDataset
-primary_metric: constraint_solution_accuracy
+primary_metric: extracted_solution_constraint_accuracy
 aux_metrics:
-  [reference_exact_match, answer_marker_present, accuracy_easy, accuracy_hard]
+  - reference_exact_match
+  - official_exact_match_accuracy
+  - official_format_valid
+  - exact_solve_rate
+  - blank_cell_accuracy
+  - blank_cell_accuracy_by_difficulty
+  - exact_solve_rate_by_difficulty
+  - cell_accuracy
+  - given_preservation_rate
+  - constraint_satisfaction_rate
+  - completion_rate
+  - conflict_rate
+  - accuracy_easy
+  - accuracy_hard
 sample_size: 100
 difficulty_counts:
   easy: 50
@@ -13,9 +26,12 @@ dataset_kwargs:
   hard_count: 50
   seed: 42
 # Park data split used by Ye et al.: 81-digit puzzle (0 = blank) and reference
-# solution. General instruction checkpoints may reason freely, then submit
-# ``#### <81 digits>`` as in GSM8K. The scorer prefers the last marker and falls
-# back to the last complete grid, then verifies all clues and Sudoku constraints;
-# reference exact match is retained as an audit metric. Rows 100000..100999 are
-# the test split. Easy/Hard is our reporting-only stratum: <=5 versus >=6
-# synchronous naked-single rounds. Preparation freezes the selected 50/50 set.
+# solution. The prompt requires only the continuous 81 solution digits, with no
+# reasoning, label, spaces, or separators. The primary score requires this exact
+# output format, but the scorer tolerantly extracts the final 81 digits or 9-row
+# grid before verifying all clues and Sudoku constraints. Strict direct-format
+# compliance, reference exact match, and blank-cell partial credit remain
+# audit/diagnostic metrics.
+# Rows 100000..100999 are the test split. Easy/Hard is our
+# reporting-only stratum: <=5 versus >=6 synchronous naked-single rounds.
+# Preparation freezes the selected formal 50/50 subset for every model.

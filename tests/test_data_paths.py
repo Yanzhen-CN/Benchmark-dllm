@@ -4,7 +4,7 @@ from dllm_bench.data_paths import REPOSITORY_ROOT, data_root, ensure_data_layout
 def test_data_root_defaults_to_repository_data_directory(monkeypatch):
     monkeypatch.delenv("DLLM_DATA_ROOT", raising=False)
 
-    assert data_root() == REPOSITORY_ROOT / ".data"
+    assert data_root() == REPOSITORY_ROOT / "data"
 
 
 def test_ensure_data_layout_respects_override(tmp_path, monkeypatch):

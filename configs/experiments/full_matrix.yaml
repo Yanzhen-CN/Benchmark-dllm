@@ -4,10 +4,9 @@
 # also be mappings with
 # `config`, `samples_file`, and task-specific `max_new_tokens` fields.
 #
-# Each model config file may declare multiple named variants under
-# `configs:` (see e.g. configs/models/illada.yaml). The `variants` list below
-# declares the formal sampling variants for each model. Optimized execution
-# architectures are separate model entries, not variants of the base model.
+# Each model config file may declare multiple named variants under `configs:`
+# (see e.g. configs/models/illada.yaml). The `variants` list below declares
+# the formal sampling profiles for each model.
 
 base_dir: ../..
 

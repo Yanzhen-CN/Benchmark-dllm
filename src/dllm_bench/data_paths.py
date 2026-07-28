@@ -21,7 +21,7 @@ def data_root() -> Path:
     configured = os.environ.get(DATA_ROOT_ENV)
     if configured:
         return Path(configured).expanduser().resolve()
-    return REPOSITORY_ROOT / ".data"
+    return REPOSITORY_ROOT / "data"
 
 
 def ensure_data_layout(root: str | Path | None = None) -> dict[str, Path]:

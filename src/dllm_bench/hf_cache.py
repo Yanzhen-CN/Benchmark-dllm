@@ -10,7 +10,7 @@ see ``configs/models/*.yaml``'s comments), so where that download lands is
 the only thing to control.
 
 :func:`configure_default_cache_dir` sets ``HF_HOME`` to
-``<repository>/.data/huggingface``
+``<repository>/data/huggingface``
 unless the caller has already set ``HF_HOME``/``HF_HUB_CACHE``/
 ``TRANSFORMERS_CACHE`` themselves (any of those always wins). Must run
 before ``transformers``/``huggingface_hub`` are imported anywhere — both
@@ -39,7 +39,7 @@ def configure_default_cache_dir(base_dir: str | Path | None = None) -> Path:
 
         cache_dir = ensure_data_layout()["huggingface"]
     else:
-        cache_dir = Path(base_dir) / ".data" / "huggingface"
+        cache_dir = Path(base_dir) / "data" / "huggingface"
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(cache_dir)
     return cache_dir

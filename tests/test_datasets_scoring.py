@@ -331,9 +331,16 @@ def test_sudoku_score_correct_solution():
     result = ds.score(sample, text)
     assert result.primary_score == 1.0
     assert result.valid is True
+    assert result.aux["official_exact_match_accuracy"] == 1.0
+    assert result.aux["official_format_valid"] == 1.0
+    assert result.aux["exact_solve_rate"] == 1.0
+    assert result.aux["blank_cell_accuracy"] == 1.0
+    assert result.aux["cell_accuracy"] == 1.0
+    assert result.aux["given_preservation_rate"] == 1.0
+    assert result.aux["conflict_rate"] == 0.0
 
 
-def test_sudoku_score_accepts_reasoning_with_marked_final_answer():
+def test_sudoku_score_tolerates_reasoning_with_marked_final_answer():
     ds = SudokuDataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
@@ -346,9 +353,10 @@ def test_sudoku_score_accepts_reasoning_with_marked_final_answer():
     assert result.valid is True
     assert result.aux["answer_marker_present"] == 1.0
     assert result.aux["reference_exact_match"] == 1.0
+    assert result.aux["blank_cell_accuracy"] == 1.0
 
 
-def test_sudoku_score_falls_back_to_last_complete_grid_without_marker():
+def test_sudoku_score_tolerates_prose_wrapped_complete_grid_without_marker():
     ds = SudokuDataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
@@ -380,12 +388,54 @@ def test_sudoku_constraint_validation_rejects_clue_change():
     assert is_valid_solution(changed, puzzle) is False
 
 
+def test_sudoku_copied_puzzle_gets_no_solving_credit():
+    ds = SudokuDataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0), (0, 1)])
+    sample = Sample(
+        sample_id="1",
+        prompt="solve",
+        reference=SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE),
+    )
+    text = "".join(str(v) for row in puzzle for v in row)
+
+    result = ds.score(sample, text)
+
+    assert result.primary_score == 0.0
+    assert result.aux["blank_cell_accuracy"] == 0.0
+    assert result.aux["given_preservation_rate"] == 1.0
+    assert result.aux["exact_solve_rate"] == 0.0
+    assert result.aux["official_format_valid"] == 0.0
+
+
+def test_sudoku_partial_solution_gets_proportional_credit():
+    ds = SudokuDataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0), (0, 1)])
+    partial = _blank_copy(_EASY_PUZZLE, [(0, 1)])
+    sample = Sample(
+        sample_id="1",
+        prompt="solve",
+        reference=SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE),
+    )
+    text = "".join(str(v) for row in partial for v in row)
+
+    result = ds.score(sample, text)
+
+    assert result.primary_score == 0.0
+    assert result.aux["blank_cell_accuracy"] == 0.5
+    assert result.aux["given_preservation_rate"] == 1.0
+    assert result.aux["exact_solve_rate"] == 0.0
+    assert result.aux["official_format_valid"] == 0.0
+
+
 def test_sudoku_score_unparseable_output():
     ds = SudokuDataset()
     ref = SudokuReference(puzzle=_EASY_PUZZLE, solution=_EASY_PUZZLE)
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
     result = ds.score(sample, "I don't know the answer.")
     assert result.primary_score == 0.0
+    assert result.aux["exact_solve_rate"] == 0.0
+    assert result.aux["blank_cell_accuracy"] == 0.0
+    assert result.aux["given_preservation_rate"] == 0.0
     assert result.valid is False
 
 
@@ -412,10 +462,11 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
         _build_prompt(easy),
         _build_prompt(hard),
     ]
-    assert all("#### <solution>" in sample.prompt for sample in samples)
+    assert all("Return only the completed 81-digit" in sample.prompt for sample in samples)
+    assert all(sample.prompt.endswith("\nAnswer:") for sample in samples)
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
-    assert all(sample.meta["max_new_tokens"] == 512 for sample in samples)
+    assert all(sample.meta["max_new_tokens"] == 128 for sample in samples)
 
 
 def test_sudoku_preparation_freezes_fifty_easy_and_fifty_hard():
@@ -450,6 +501,45 @@ def test_sudoku_preparation_freezes_fifty_easy_and_fifty_hard():
     assert sum(sample.reference.difficulty == "easy" for sample in selected) == 50
     assert sum(sample.reference.difficulty == "hard" for sample in selected) == 50
     assert all(sample.meta["formal_subset"] for sample in selected)
+
+
+def test_sudoku_aggregation_separates_partial_credit_and_exact_solve_rate():
+    ds = SudokuDataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0), (0, 1)])
+    partial = _blank_copy(_EASY_PUZZLE, [(0, 1)])
+    samples = [
+        Sample(
+            sample_id="easy",
+            prompt="solve",
+            reference=SudokuReference(puzzle, _EASY_PUZZLE, "easy"),
+        ),
+        Sample(
+            sample_id="hard",
+            prompt="solve",
+            reference=SudokuReference(puzzle, _EASY_PUZZLE, "hard"),
+        ),
+    ]
+    results = [
+        ds.score(
+            samples[0],
+            "".join(str(v) for row in partial for v in row),
+        ),
+        ds.score(
+            samples[1],
+            "".join(str(v) for row in _EASY_PUZZLE for v in row),
+        ),
+    ]
+
+    summary = ds.aggregate_records(samples, results)
+
+    assert summary["sudoku_score"] == 0.5
+    assert summary["blank_cell_accuracy"] == 0.75
+    assert summary["blank_cell_accuracy_easy"] == 0.5
+    assert summary["blank_cell_accuracy_hard"] == 1.0
+    assert summary["exact_solve_rate_easy"] == 0.0
+    assert summary["exact_solve_rate_hard"] == 1.0
+    assert summary["accuracy_easy"] == summary["exact_solve_rate_easy"]
+    assert summary["accuracy_hard"] == summary["exact_solve_rate_hard"]
 
 
 def test_group_by_difficulty():

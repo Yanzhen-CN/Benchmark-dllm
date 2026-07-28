@@ -31,7 +31,7 @@ def venv_python(directory: Path | None = None) -> Path:
 def ensure_environment() -> Path:
     python = venv_python()
     install_environment = os.environ.copy()
-    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / ".data"))
+    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
     pip_cache = Path(
         os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache")
     ).expanduser().resolve()

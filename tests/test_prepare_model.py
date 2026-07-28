@@ -60,7 +60,7 @@ def test_prepare_model_skips_api_backed_adapters(tmp_path):
 def test_prepare_model_uses_repository_data_dir_by_default(tmp_path):
     result = _run(["--model-config", str(CONFIGS_DIR / "models" / "mock.yaml")], cwd=tmp_path)
     assert result.returncode == 0, result.stderr
-    expected = CONFIGS_DIR.parent / ".data" / "huggingface"
+    expected = CONFIGS_DIR.parent / "data" / "huggingface"
     assert str(expected) in result.stdout
     assert expected.exists()
 

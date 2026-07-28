@@ -5,7 +5,7 @@
 #
 # `model_name_or_path` is an HF Hub repo id, NOT a local filesystem path —
 # `from_pretrained` downloads it on first use into the HF cache (see
-# dllm_bench/hf_cache.py: defaults to ./.data/huggingface under the repository
+# dllm_bench/hf_cache.py: defaults to ./data/huggingface under the repository
 # root rather than ~/.cache/huggingface, so it lands on whatever
 # disk/volume the project itself is on). Run `python prepare_model.py
 # --model-config configs/models/illada.yaml` to download that snapshot ahead

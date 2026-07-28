@@ -9,7 +9,7 @@ def test_defaults_to_project_relative_cache_dir(tmp_path, monkeypatch):
 
     result = configure_default_cache_dir(base_dir=tmp_path)
 
-    assert result == tmp_path / ".data" / "huggingface"
+    assert result == tmp_path / "data" / "huggingface"
     assert result.exists()
     assert __import__("os").environ["HF_HOME"] == str(result)
 
@@ -23,7 +23,7 @@ def test_respects_existing_hf_home(tmp_path, monkeypatch):
     result = configure_default_cache_dir(base_dir=tmp_path / "unused")
 
     assert result == existing
-    assert not (tmp_path / "unused" / ".data" / "huggingface").exists()
+    assert not (tmp_path / "unused" / "data" / "huggingface").exists()
 
 
 def test_respects_existing_hf_hub_cache_even_without_hf_home(tmp_path, monkeypatch):

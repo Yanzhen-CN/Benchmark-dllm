@@ -4,7 +4,7 @@ generation — useful for filling the cache before a benchmark run, especially
 on a server where the default HF cache location (``~/.cache/huggingface``)
 would land on local/ephemeral disk instead of the mounted network volume
 (see ``dllm_bench.hf_cache``, which this script points at the repository's
-``.data/huggingface`` directory by default).
+``data/huggingface`` directory by default).
 
 Every model here is loaded via ``from_pretrained(repo_id)`` — `--model-config`
 just needs to point `init_kwargs.model_name_or_path` at the real HF repo ID

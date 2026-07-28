@@ -92,7 +92,7 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
 
     directory = venv_dir(profile)
     base_python = os.environ.get("PYTHON_BIN", sys.executable)
-    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / ".data"))
+    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
     cache_dir = Path(os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache"))
     cache_dir.mkdir(parents=True, exist_ok=True)
     install_env = os.environ.copy()
@@ -186,7 +186,7 @@ def repair_project_installation(profile: ModelProfile, python: Path) -> None:
             flush=True,
         )
         install_env = os.environ.copy()
-        data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / ".data"))
+        data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
         cache_dir = Path(
             os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache")
         )
@@ -276,7 +276,7 @@ def repair_profile_dependencies(
         for name, (installed, required) in mismatches.items()
     )
     print(f"Updating stale {profile.model_id} environment pins: {details}", flush=True)
-    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / ".data"))
+    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
     cache_dir = Path(os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache"))
     cache_dir.mkdir(parents=True, exist_ok=True)
     install_env = os.environ.copy()
