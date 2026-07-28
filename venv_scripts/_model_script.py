@@ -31,6 +31,10 @@ PROFILES: Mapping[str, ModelProfile] = {
         "qwen3_4b", "qwen3_4b", "configs/models/qwen3_4b.yaml",
         "dev,hf,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
     ),
+    "qwen3_8b": ModelProfile(
+        "qwen3_8b", "qwen3_8b", "configs/models/qwen3_8b.yaml",
+        "dev,hf,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
+    ),
     "illada": ModelProfile(
         "illada", "illada", "configs/models/illada.yaml",
         "dev,hf,gpu", "2.6.0", "4.57.1", ("cu118", "cu124", "cu126"),

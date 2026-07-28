@@ -1,7 +1,7 @@
 # dLLM Benchmark
 
 Benchmark harness for diffusion LLMs (iLLaDA, DreamReasoner, W1, DiffusionGemma) vs
-AR references (Qwen3-4B and the same-scale Gemma 4 26B-A4B), implementing the design in
+AR references (Qwen3-4B, Qwen3-8B, and the same-scale Gemma 4 26B-A4B), implementing the design in
 `dLLM_benchmark_设计文档.md`: task quality, long-context robustness,
 resource cost, and generation-process analysis (trace, parallelism,
 commit-order, certainty).
@@ -58,7 +58,7 @@ src/dllm_bench/
   registry.py       # YAML -> instantiated ModelAdapter/Dataset
   hf_cache.py       # project-relative HF cache directory (see below)
   models/           # base.py (resource-measurement wrapper), model_cache.py (shared
-                     # loaded-weights cache), hf_ar.py (Qwen3-4B),
+                     # loaded-weights cache), hf_ar.py (Qwen3-4B/Qwen3-8B),
                      # hf_diffusion.py (iLLaDA/DreamReasoner shared base + DiffusionStepConfig),
                      # illada.py, dreamreasoner.py (each model's real sampler — see Status),
                      # diffusiongemma.py, gemma4_ar.py, w1_api.py, mock.py
@@ -114,6 +114,7 @@ same preparation logic as `prepare_data.py` only when its artifact is absent.
 
 ```bash
 python setup_venv.py                   # every model declared in the matrix
+python setup_venv.py -m qwen3_8b       # only .venvs/qwen3_8b
 python setup_venv.py -m illada         # only .venvs/illada
 python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
 python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
@@ -143,6 +144,7 @@ Available entry points and environments:
 | Model | Script | Environment |
 | --- | --- | --- |
 | Qwen3-4B AR | `venv_scripts/qwen3_4b.py` | `.venvs/qwen3_4b` |
+| Qwen3-8B AR | `venv_scripts/qwen3_8b.py` | `.venvs/qwen3_8b` |
 | iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
@@ -157,6 +159,16 @@ python venv_scripts/qwen3_4b.py setup
 python venv_scripts/qwen3_4b.py check
 python venv_scripts/qwen3_4b.py prepare
 python run_model.py -m qwen3_4b
+```
+
+Qwen3-8B is the dense same-scale AR reference for iLLaDA-8B and
+DreamReasoner-8B. It uses the same greedy, non-thinking protocol as Qwen3-4B:
+
+```bash
+python venv_scripts/qwen3_8b.py setup
+python venv_scripts/qwen3_8b.py check
+python venv_scripts/qwen3_8b.py prepare
+python run_model.py -m qwen3_8b -d gsm8k --n-samples 1
 ```
 
 ### A100 Gemma 4 Pair
@@ -437,9 +449,9 @@ attention. This changes only FLOP accounting during the replay; it does not
 replace SDPA with eager attention or alter formal generation.
 
 Output run IDs append a variant only when it distinguishes configurations:
-Qwen writes under `model_output/qwen3_4b/`, while multi-configuration models
-use names such as `illada_best` and `illada_fast`. Local readers still accept
-the legacy `qwen3_4b_ar-baseline` directory.
+Qwen writes under `model_output/qwen3_4b/` and `model_output/qwen3_8b/`, while
+multi-configuration models use names such as `illada_best` and `illada_fast`.
+Local readers still accept the legacy `qwen3_4b_ar-baseline` directory.
 
 Pass `--variant best` to run just one, or `--variants best,fast` to name an
 explicit subset. `score`/`visualize` deterministically reconstruct the same
@@ -525,13 +537,17 @@ output/
     <sample_id>_*.png / .gif
 ```
 
-To run the real AR baseline once `torch`/`transformers` are installed and
-`Qwen/Qwen3-4B` is reachable, just point at its config instead:
+To run either real Qwen AR baseline once `torch`/`transformers` are installed,
+point at its config:
 
 ```bash
 dllm-bench generate --model-config configs/models/qwen3_4b.yaml \
                      --dataset-config configs/datasets/gsm8k.yaml \
                      --no-demo --seed 42 --n-samples 5 --max-new-tokens 512
+
+dllm-bench generate --model-config configs/models/qwen3_8b.yaml \
+                     --dataset-config configs/datasets/gsm8k.yaml \
+                     --demo --seed 42 --n-samples 1 --max-new-tokens 64
 ```
 
 iLLaDA and DiffusionGemma work the same way (`configs/models/illada.yaml`,
@@ -542,7 +558,7 @@ weights yet in this environment (no GPU here) — see the Status table above.
 ## Model checkpoints and caching
 
 Every model here loads via `from_pretrained(repo_id)` — `configs/models/
-*.yaml`'s `model_name_or_path` is an HF Hub repo id (e.g. `Qwen/Qwen3-4B`),
+*.yaml`'s `model_name_or_path` is an HF Hub repo id (e.g. `Qwen/Qwen3-8B`),
 never a local checkpoint path. `from_pretrained` downloads it on first use,
 same as any other HF model.
 
@@ -561,7 +577,7 @@ To download a model snapshot ahead of time instead of lazily mid-benchmark:
 python prepare_model.py
 
 # selected matrix models
-python prepare_model.py -m illada -m qwen3_4b
+python prepare_model.py -m illada -m qwen3_8b
 
 # direct single-config mode inside the current compatible environment
 python prepare_model.py --model-config configs/models/illada.yaml

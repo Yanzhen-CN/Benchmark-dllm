@@ -20,6 +20,7 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
     output = capsys.readouterr().out
     for model in (
         "qwen3_4b",
+        "qwen3_8b",
         "illada",
         "dreamreasoner",
         "w1",
@@ -83,6 +84,13 @@ def test_gemma4_ar_matches_diffusiongemma_runtime():
     diffusion = _model_script.PROFILES["diffusiongemma"]
     assert gemma_ar.torch_version == diffusion.torch_version
     assert gemma_ar.transformers_version == diffusion.transformers_version
+
+
+def test_qwen3_8b_matches_qwen3_4b_runtime():
+    qwen_4b = _model_script.PROFILES["qwen3_4b"]
+    qwen_8b = _model_script.PROFILES["qwen3_8b"]
+    assert qwen_8b.torch_version == qwen_4b.torch_version
+    assert qwen_8b.transformers_version == qwen_4b.transformers_version
 
 
 def test_gpu_profile_env_defaults_expandable_segments(monkeypatch):

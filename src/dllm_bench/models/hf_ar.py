@@ -1,4 +1,4 @@
-"""Qwen3-4B AR baseline (Appendix D.5): official HF checkpoint, standard
+"""Qwen3 AR baselines: official HF checkpoints, standard
 ``generate()`` loop, greedy decoding. As a standard AR model it satisfies the
 "same abstraction interface" requirement with no adapter shim needed —
 ``transformers`` already gives us the standard ``generate()`` call.
@@ -7,7 +7,7 @@ Trace capture treats each decoded token as accepted at its own forward step
 (``ACCEPTED`` from the moment it is emitted, one commit per forward), matching
 Appendix C's "AR decode as a ~1 token/forward parallelism reference" — this
 is what Part 4 compares diffusion models' actual parallelism against, not a
-full trace analysis subject in its own right (section 5 lists Qwen3-4B as
+full trace analysis subject in its own right (section 5 lists Qwen AR as
 "并行度参考" only).
 """
 
@@ -31,8 +31,9 @@ class QwenARAdapter(BaseModelAdapter):
         config_name: str = "ar-baseline",
         capture_trace: bool = True,
         enable_thinking: bool = False,
+        adapter_name: str = "qwen3_4b",
     ) -> None:
-        self.name = "qwen3_4b"
+        self.name = adapter_name
         self.config_name = config_name
         self.supports_trace = capture_trace
         self.natively_measures_resources = False
@@ -55,7 +56,7 @@ class QwenARAdapter(BaseModelAdapter):
             return self._load_model_and_tokenizer(device)
 
         # Shared across every config that points at this same checkpoint —
-        # Qwen3-4B only has one config today, but this keeps the pattern
+        # Each Qwen checkpoint has one config today, but this keeps the pattern
         # consistent with the diffusion adapters, which do have Best/Fast.
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
 
