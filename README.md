@@ -228,17 +228,15 @@ targets are 8128 and `model_max - 64` tokens. If both windows are 8192 (as for
 iLLaDA), the same common point is run once: 30 samples rather than a duplicated
 60. The formal strengthened profile can raise each cell from 10 to 20.
 
-HelloBench is a long-output feasibility case study rather than a statistically
-stable leaderboard: 1 shared sample targets 2K words with
-`max_new_tokens=3072`, and 1 shared sample targets 4K words with
-`max_new_tokens=6144` (2 total per model configuration). These are attached
+HelloBench is a focused long-output diagnostic rather than a full leaderboard
+run: 10 shared samples target 2K words with `max_new_tokens=3072`, and 10
+shared samples target 4K words with `max_new_tokens=6144` (20 total per model
+configuration). These generation caps are attached
 per sample by the runner, so the matrix-wide fallback cannot accidentally
-reduce both groups to 256 tokens. Every model uses the same two deterministic
-samples; any already-generated larger AR run may be retained, but formal
-cross-model comparison uses only this common subset. Per-sample wall-clock,
-output length, TPS, energy, peak VRAM, objective quality, and major-failure
-flags describe feasibility and cost; no population mean, variance, confidence
-interval, or general capability claim is made from one sample per length.
+reduce both groups to 256 tokens. Every model uses the same deterministic
+20-sample subset. Per-sample wall-clock, output length, TPS, energy, peak VRAM,
+objective quality, and major-failure flags describe long-output feasibility
+and cost; the subset is not presented as a full HelloBench leaderboard score.
 Its primary `objective_quality_score` is explicitly not official HelloEval:
 it combines target-length fidelity, Seq-Rep-4, and repeated-segment quality,
 then applies transparent penalties for empty/severely short or long output,
@@ -465,7 +463,7 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 | StructEval-T | 100 |
 | Sudoku | 100 (50 Easy + 50 Hard) |
 | RULER | 10 per context-window x position cell |
-| HelloBench case study | 1 at 2K words + 1 at 4K words (2 total) |
+| HelloBench | 10 at 2K words + 10 at 4K words (20 total) |
 
 MBPP's primary metric is official pass@1: one candidate passes only when all
 official tests pass, and the dataset score is the mean pass rate. Its

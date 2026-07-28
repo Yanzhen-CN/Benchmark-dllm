@@ -121,6 +121,8 @@ class HFDiffusionAdapter(BaseModelAdapter):
         """
 
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
+        import torch
+
         self._ensure_loaded()
         # max_new_tokens is always a hard cap. Dream's formal 1024-token
         # schedule is scaled down proportionally for shorter task/smoke runs;
@@ -149,11 +151,19 @@ class HFDiffusionAdapter(BaseModelAdapter):
             extra=extra,
         )
         self._last_input_tokens = None
-        output_text, trace, final_valid_length = self._run_denoising(
-            request.prompt,
-            step_config,
-            target_input_tokens=request.config.get("target_input_tokens"),
-        )
+        # ``model.eval()`` only switches evaluation-time module behaviour; it
+        # does not disable autograd.  In particular, DreamReasoner's cached
+        # long-context prefill can otherwise retain the full forward graph
+        # through every denoising step and exhaust even an 80 GiB GPU.
+        # Enforce inference semantics at the shared production boundary so
+        # every HF diffusion backend (including warmup/profile replays) gets
+        # the same bounded-memory behaviour.
+        with torch.inference_mode():
+            output_text, trace, final_valid_length = self._run_denoising(
+                request.prompt,
+                step_config,
+                target_input_tokens=request.config.get("target_input_tokens"),
+            )
         result_extra = {}
         if self._last_input_tokens is not None:
             result_extra["input_tokens"] = self._last_input_tokens
