@@ -380,4 +380,3 @@ def test_dreamreasoner_base_matches_2026_07_27_full_mask_prefill():
         block_length,
         prefill_length + block_length,
     )
-    assert adapter.trace_source == "ported_official_loop"

@@ -189,43 +189,6 @@ def test_illada_two_blocks_run_in_order_and_reset_confidence_scope():
     assert sorted(all_block1_commits) == [2, 3]
 
 
-def test_illada_official_growing_canvas_only_forwards_through_active_block():
-    class _GrowingCanvasModel:
-        def __init__(self):
-            self.shapes = []
-
-        def __call__(self, x, attention_mask=None):
-            self.shapes.append(tuple(x.shape))
-
-            class _Output:
-                pass
-
-            out = _Output()
-            out.logits = torch.zeros(1, x.shape[1], VOCAB_SIZE)
-            return out
-
-    step_config = DiffusionStepConfig(
-        gen_length=4,
-        block_length=2,
-        steps_per_block=2,
-        extra={"canvas_mode": "growing"},
-    )
-    adapter = IlladaAdapter("unused-checkpoint", step_config, config_name="test")
-    model = _GrowingCanvasModel()
-    adapter._model = model
-    adapter._tokenizer = _FakeTokenizer()
-    adapter._device = "cpu"
-
-    _, trace, final_valid_length = adapter._run_denoising("prompt", step_config)
-
-    # prompt=2: block 0 sees 2+2 tokens; block 1 sees 2+4. The fixed-canvas
-    # baseline would feed all 6 tokens in all four forwards.
-    assert model.shapes == [(1, 4), (1, 4), (1, 6), (1, 6)]
-    assert len(trace) == 4
-    assert final_valid_length == 4
-    assert "official_growing_canvas" in adapter.inference_optimizations
-
-
 def test_illada_mask_id_matches_reference_override():
     # iLLaDA overrides LLaDA's default mask_id=126336 with 5 (verified
     # against the reference project's own README/config).

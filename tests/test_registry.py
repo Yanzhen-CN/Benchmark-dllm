@@ -113,23 +113,10 @@ def test_illada_variants_carry_distinct_steps_per_block():
     fast = build_model_adapter(
         CONFIGS_DIR / "models" / "illada.yaml", variant="fast"
     )
-    optimized_best = build_model_adapter(
-        CONFIGS_DIR / "models" / "illada_optimized.yaml", variant="best"
-    )
-    optimized_fast = build_model_adapter(
-        CONFIGS_DIR / "models" / "illada_optimized.yaml", variant="fast"
-    )
     assert best._step_config.steps_per_block == 32
     assert fast._step_config.steps_per_block == 16
-    assert optimized_best._step_config.steps_per_block == 32
-    assert optimized_fast._step_config.steps_per_block == 16
     assert best.execution_path == "default"
-    assert optimized_best.execution_path == "optimized"
-    assert optimized_best.name == "illada_optimized"
-    assert best.sampling_profile == "best"
-    assert optimized_fast.sampling_profile == "fast"
-    assert best._step_config.extra.get("canvas_mode", "fixed") == "fixed"
-    assert optimized_best._step_config.extra["canvas_mode"] == "growing"
+    assert best.sampling_profile is None
 
 
 def test_dreamreasoner_variants_carry_distinct_steps_per_block():
@@ -142,7 +129,7 @@ def test_dreamreasoner_variants_carry_distinct_steps_per_block():
     assert best._step_config.steps_per_block == 32
     assert fast._step_config.steps_per_block == 16
     assert best.execution_path == "default"
-    assert best.sampling_profile == "best"
+    assert best.sampling_profile is None
     assert "greedy_confidence_mode" not in best._step_config.extra
 
 

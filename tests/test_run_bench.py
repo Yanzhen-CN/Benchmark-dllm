@@ -8,7 +8,7 @@ import run_bench
 def test_default_dry_run_selects_every_matrix_model(capsys):
     assert run_bench.main(["--dry-run"]) == 0
     output = capsys.readouterr().out
-    assert "illada, illada_optimized, dreamreasoner" in output
+    assert "illada, dreamreasoner" in output
     assert "venv_scripts\\illada.py run" in output or "venv_scripts/illada.py run" in output
     assert "venv_scripts\\diffusiongemma.py run" in output or "venv_scripts/diffusiongemma.py run" in output
     assert "venv_scripts\\gemma4_26b_a4b.py run" in output or "venv_scripts/gemma4_26b_a4b.py run" in output
@@ -22,12 +22,6 @@ def test_model_flag_filters_to_one_model(capsys):
     assert "illada.py run" in output
     assert "dreamreasoner" not in output
 
-
-def test_optimized_model_is_a_separate_public_model(capsys):
-    assert run_bench.main(["--dry-run", "-m", "illada_optimized"]) == 0
-    output = capsys.readouterr().out
-    assert "Models: illada_optimized" in output
-    assert "illada_optimized.py run" in output
 
 
 def test_model_flag_accepts_comma_separated_names(capsys):
@@ -70,9 +64,9 @@ def test_variant_flag_is_forwarded_to_the_selected_model(monkeypatch):
     monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
 
     assert run_bench.main([
-        "-m", "illada_optimized", "-v", "fast", "--stage", "generate"
+        "-m", "illada", "-v", "fast", "--stage", "generate"
     ]) == 0
-    assert captured["models"] == ["illada_optimized"]
+    assert captured["models"] == ["illada"]
     assert captured["env_updates"]["MATRIX_VARIANTS"] == "fast"
 
 

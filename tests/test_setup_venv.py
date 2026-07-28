@@ -22,7 +22,6 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "qwen3_4b",
         "qwen3_8b",
         "illada",
-        "illada_optimized",
         "dreamreasoner",
         "w1",
         "diffusiongemma",
@@ -74,21 +73,6 @@ def test_model_venvs_share_one_parent_directory(monkeypatch):
     monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
     profile = _model_script.PROFILES["illada"]
     assert _model_script.venv_dir(profile) == _model_script.REPO_ROOT / ".venvs" / "illada"
-
-
-def test_optimized_models_reuse_their_base_runtime_venvs(monkeypatch):
-    monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
-    assert _model_script.venv_dir(_model_script.PROFILES["illada_optimized"]) == (
-        _model_script.REPO_ROOT / ".venvs" / "illada"
-    )
-
-
-def test_optimized_profile_dispatches_its_own_matrix_model():
-    arguments = _model_script.benchmark_arguments(
-        _model_script.PROFILES["illada_optimized"]
-    )
-    model_index = arguments.index("--model")
-    assert arguments[model_index + 1] == "illada_optimized"
 
 
 def test_model_run_forwards_sampling_variant_filter(monkeypatch):

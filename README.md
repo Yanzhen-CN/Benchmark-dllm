@@ -80,14 +80,13 @@ tests/              # one file per module area; see Testing for the current suit
 ## Main entry points
 
 Use the stage-specific entry points for the normal server/local workflow.
-With no `-m`, each command covers every model and variant declared in
+With no `-m`, each command covers every formal model and variant declared in
 `configs/experiments/full_matrix.yaml`:
 
 ```bash
 # GPU server: generation only
 python run_model.py
 python run_model.py -m illada
-python run_model.py -m illada_optimized
 python run_model.py -m illada dreamreasoner -d ruler hellobench
 
 # Local machine after copying output/model_output/
@@ -102,7 +101,6 @@ python run_model.py --list-models
 python run_model.py --dry-run -m illada
 python run_model.py -m illada --n-samples 20
 python run_model.py -m illada -v fast
-python run_model.py -m illada_optimized -v fast
 python run_model.py -m illada -d hellobench --hellobench-length 2k --n-samples 3
 python run_model.py -m illada -d hellobench --hellobench-length 4k --n-samples 3
 python run_model.py -m illada -d hellobench --hellobench-length 2k --hellobench-length 4k --n-samples 6
@@ -122,16 +120,13 @@ same preparation logic as `prepare_data.py` only when its artifact is absent.
 python setup_venv.py                   # every model declared in the matrix
 python setup_venv.py -m qwen3_8b       # only .venvs/qwen3_8b
 python setup_venv.py -m illada         # only .venvs/illada
-python setup_venv.py -m illada_optimized # reuses .venvs/illada
 python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
 python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
 python setup_venv.py -m gemma4_26b_a4b # only .venvs/gemma4_26b_a4b
 ```
 
 `setup_venv.py` is only a dispatcher. It calls
-`venv_scripts/<model>.py setup`. Optimized architectures reuse their base
-model's venv because the dependency pins and checkpoint family are identical;
-they remain separate benchmark models/configs/outputs. No model packages are installed
+`venv_scripts/<model>.py setup`. No model packages are installed
 into the Python running `setup_venv.py`. Model environments are grouped under
 the single `.venvs/` directory; the root `.venv/` remains the development and
 test environment.
@@ -154,7 +149,6 @@ Available entry points and environments:
 | Qwen3-4B AR | `venv_scripts/qwen3_4b.py` | `.venvs/qwen3_4b` |
 | Qwen3-8B AR | `venv_scripts/qwen3_8b.py` | `.venvs/qwen3_8b` |
 | iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
-| iLLaDA Optimized | `venv_scripts/illada_optimized.py` | `.venvs/illada` |
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
 | Gemma 4 26B-A4B AR | `venv_scripts/gemma4_26b_a4b.py` | `.venvs/gemma4_26b_a4b` |
@@ -355,11 +349,9 @@ instead of one combined "run" — this is what lets you:
 - generate on one machine (e.g. a GPU box) and score/visualize on another —
   only `model_output/` needs to make that trip.
 
-The atomic unit of testing is the **model**, not model+variant. `illada` and
-`illada_optimized` are separate model groups because fixed and growing canvas
-are distinct official execution architectures. DreamReasoner has only one
-model group with `best`/`fast` sampling variants: its trace is observational
-and does not create a second generation architecture. Within one group, weights load once and Best/Fast only change the
+The atomic unit of testing is the **model**, not model+variant. iLLaDA and
+DreamReasoner each have one official-algorithm traced implementation frozen to
+commit `6dfd132`. Within one group, weights load once and Best/Fast only change the
 generation-time sampling config (`models/model_cache.py`). So leaving out
 `--variant`/`--variants` sweeps every variant declared in the file:
 
@@ -451,49 +443,29 @@ the 8B-class checkpoints do not transiently become default-precision models
 that exhaust a 24 GiB device. `inference_dtype` is persisted in each run's
 `_meta.json` for reproducibility.
 
-Both HF diffusion adapters run under `torch.inference_mode()`. Their enabled
-optimizations are persisted in `_meta.json` and every sample JSON under
-`inference_optimizations`, so reported system results identify the execution
-path rather than relying on an undocumented code-state assumption.
+The shared runner does not wrap these adapters in a later-added inference or
+OOM workaround. Each sampler therefore keeps the execution semantics of its
+declared implementation. Enabled upstream execution features are persisted in
+`_meta.json` and each sample JSON under `inference_optimizations`.
 
-The separate `illada_optimized` model uses the official repository's
-[`var_generate`](https://github.com/ML-GSAI/LLaDA/blob/main/generate.py)
-growing-canvas path: only the current and already generated blocks enter each
-forward pass; future output-mask blocks are not repeatedly computed. This is
-an official inference strategy, but it changes the model-visible canvas, so
-quality and resource metrics must both be regenerated and reported.
-The original `illada` model retains the current fixed-canvas implementation.
-Compare `illada_best` with `illada_optimized_best`, or `illada_fast` with
-`illada_optimized_fast`, to isolate the architecture change. The differentiating
-implementation is `models/illada.py`'s `canvas_mode == "growing"` path.
+iLLaDA retains commit `6dfd132`'s fixed-canvas implementation of the official
+sampler. Trace snapshots are copied after each forward and do not participate
+in token selection.
 
 DreamReasoner retains the checkpoint's prefix-KV-cache generation path from
 [`generation_utils.py`](https://huggingface.co/Dream-org/DreamReasoner-8B/blob/main/generation_utils.py).
-The `dreamreasoner` adapter builds the complete block-triangular mask,
+The default `dreamreasoner` adapter is frozen to commit `6dfd132`: it builds the complete block-triangular mask,
 prefills all complete prompt blocks in one forward, passes the corresponding
 mask slice during block denoising, and uses the official full-softmax
 confidence calculation. The official loop is executed in the adapter solely
 to expose trace: token/state snapshots are copied after each forward and
 outside the measurement window, without changing logits, masks, cache state,
-transfer decisions, or final output. A second official-direct model would run
-the same algorithm without trace, so it is intentionally not part of the
-benchmark matrix.
-
-Run the isolated systems ablation on the same idle GPU, without concurrent
-jobs, and write it outside the formal output tree:
-
-```bash
-python run_bench.py --matrix configs/experiments/dllm_optimization_ablation.yaml \
-  --real-data --output-root output_optimization_ablation
-```
-
-The ablation matrix contains matched Best and matched Fast pairs and covers
-RULER plus HelloBench. Compare task quality as a guardrail and report median
-sample latency, energy, and peak VRAM with hardware/software metadata.
+transfer decisions, or final output. The checkpoint convenience method exposes
+sequences and NFE but no history; wrapping it separately would only remove
+trace without introducing a distinct generation strategy, so it is not a
+separate benchmark model.
 
 Each model group shares one loaded checkpoint between its Best/Fast variants.
-The base and optimized groups also share the same on-disk HF checkpoint cache
-and model venv, but run as separate benchmark identities/processes.
 
 Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in
@@ -503,13 +475,11 @@ replace SDPA with eager attention or alter formal generation.
 
 Output run IDs append a variant only when it distinguishes configurations:
 Qwen writes under `model_output/qwen3_4b/` and `model_output/qwen3_8b/`, while
-multi-configuration models use names such as `illada_best`, `illada_fast`, and
-`illada_optimized_fast`.
+multi-configuration models use names such as `illada_best` and `illada_fast`.
 Local readers still accept the legacy `qwen3_4b_ar-baseline` directory.
 
 Pass `--variant best` to a low-level model-config command to run one sampling
-profile. At the public entry point, use `-m illada_optimized` to run the
-official growing-canvas model's Best/Fast pair.
+profile.
 `score`/`visualize` deterministically reconstruct the same
 sample list from `--demo`/`--no-demo`, `--n-samples`, and `--seed`; pass matching
 values to every stage. The official GSM8K loader uses stable source indices as

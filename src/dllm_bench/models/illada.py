@@ -44,12 +44,8 @@ class IlladaAdapter(HFDiffusionAdapter):
         step_config: DiffusionStepConfig,
         config_name: str,
         device: str | None = None,
-        name: str = "illada",
     ) -> None:
-        super().__init__(model_name_or_path, step_config, name=name, config_name=config_name, device=device)
-        canvas_mode = step_config.extra.get("canvas_mode", "fixed")
-        if canvas_mode == "growing":
-            self.inference_optimizations.append("official_growing_canvas")
+        super().__init__(model_name_or_path, step_config, name="illada", config_name=config_name, device=device)
 
     def _run_denoising(
         self,
@@ -64,11 +60,6 @@ class IlladaAdapter(HFDiffusionAdapter):
         steps_per_block = step_config.steps_per_block or 1
         temperature = float(step_config.extra.get("temperature", 0.0))
         remasking = step_config.extra.get("remasking", "low_confidence")
-        canvas_mode = step_config.extra.get("canvas_mode", "fixed")
-        if canvas_mode not in {"fixed", "growing"}:
-            raise ValueError(
-                "iLLaDA step_config.extra['canvas_mode'] must be 'fixed' or 'growing'"
-            )
 
         gen_length = step_config.gen_length
         num_blocks = max(1, math.ceil(gen_length / block_length))
@@ -95,38 +86,28 @@ class IlladaAdapter(HFDiffusionAdapter):
             transfer_schedule = _transfer_schedule(block_mask_count, steps_per_block)
 
             for step_in_block in range(steps_per_block):
-                # ``fixed`` is the frozen 6dfd132 default. ``growing`` is the
-                # upstream ``var_generate`` execution path used only by the
-                # separately named illada_optimized model.
-                model_end = block_end if canvas_mode == "growing" else x.shape[1]
-                active_x = x[:, :model_end]
-                active_attention_mask = attention_mask[:, :model_end]
-                mask_index = active_x == MASK_ID
+                mask_index = x == MASK_ID
                 if not mask_index[:, block_start:block_end].any():
                     break  # block already fully committed (schedule exhausted early)
 
                 with torch.no_grad():
-                    logits = self._model(
-                        active_x, attention_mask=active_attention_mask
-                    ).logits[:, :model_end]
+                    logits = self._model(x, attention_mask=attention_mask).logits
 
                 logits_for_pick = _add_gumbel_noise(logits, temperature)
                 x0 = torch.argmax(logits_for_pick, dim=-1)
                 probs = F.softmax(logits, dim=-1)
                 # Real predicted probability of the picked token — used for the
                 # trace's certainty data regardless of remasking mode.
-                argmax_prob = torch.gather(
-                    probs, dim=-1, index=x0.unsqueeze(-1)
-                ).squeeze(-1)
+                argmax_prob = torch.gather(probs, dim=-1, index=x0.unsqueeze(-1)).squeeze(-1)
 
                 if remasking == "random":
                     selection_score = torch.rand(x0.shape, device=device)
                 else:
                     selection_score = argmax_prob
 
-                x0 = torch.where(mask_index, x0, active_x)
+                x0 = torch.where(mask_index, x0, x)
                 confidence = torch.where(mask_index, selection_score, torch.full_like(selection_score, -math.inf))
-                confidence[:, block_end:] = -math.inf  # future blocks ineligible in fixed mode
+                confidence[:, block_end:] = -math.inf  # future blocks ineligible this step
 
                 remaining_in_block = int(mask_index[:, block_start:block_end].sum().item())
                 k = min(transfer_schedule[step_in_block], remaining_in_block)
@@ -135,17 +116,15 @@ class IlladaAdapter(HFDiffusionAdapter):
                     _, select_index = torch.topk(confidence[0], k=k)
                     transfer_index[0, select_index] = True
 
-                active_x[transfer_index] = x0[transfer_index]
+                x[transfer_index] = x0[transfer_index]
 
                 if self._trace_instrumentation_enabled():
                     with self._exclude_from_measurement():
-                        transfer_index_full = torch.zeros_like(x, dtype=torch.bool)
-                        transfer_index_full[:, :model_end] = transfer_index
                         trace.append(
                             _build_trace_step(
                                 forward_index=global_step,
                                 x=x,
-                                transfer_index=transfer_index_full,
+                                transfer_index=transfer_index,
                                 probs=probs,
                                 argmax_prob=argmax_prob,
                                 prompt_len=prompt_len,
@@ -215,9 +194,8 @@ def _build_trace_step(
 
     vocab_size = probs.shape[-1]
     entropy = -(probs * probs.clamp_min(1e-12).log()).sum(dim=-1)
-    available_gen_length = max(0, min(gen_length, int(probs.shape[1]) - prompt_len))
-    gen_entropy = entropy[0, prompt_len : prompt_len + available_gen_length].tolist()
-    gen_top1 = argmax_prob[0, prompt_len : prompt_len + available_gen_length].tolist()
+    gen_entropy = entropy[0, gen_slice].tolist()
+    gen_top1 = argmax_prob[0, gen_slice].tolist()
 
     token_texts = [
         tokenizer.decode([gen_token_ids[i]]) if position_states[i] == PositionState.ACCEPTED else MASK_DISPLAY
@@ -230,15 +208,7 @@ def _build_trace_step(
         position_states=position_states,
         committed_positions=committed_local,
         decoded_text="".join(token_texts),
-        entropy_by_position={
-            i: gen_entropy[i] / math.log(vocab_size)
-            for i in remaining_positions
-            if i < available_gen_length
-        },
-        top1_confidence_by_position={
-            i: gen_top1[i]
-            for i in remaining_positions
-            if i < available_gen_length
-        },
+        entropy_by_position={i: gen_entropy[i] / math.log(vocab_size) for i in remaining_positions},
+        top1_confidence_by_position={i: gen_top1[i] for i in remaining_positions},
         token_texts=token_texts,
     )

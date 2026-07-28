@@ -16,10 +16,7 @@ class _InferenceProbeAdapter(HFDiffusionAdapter):
             "unused-checkpoint",
             DiffusionStepConfig(
                 gen_length=4,
-                extra={
-                    "execution_path": "optimized",
-                    "sampling_profile": "best",
-                },
+                extra={},
             ),
             name="probe",
             config_name="test",
@@ -60,7 +57,7 @@ def _make_torch_probe() -> ModuleType:
     return probe
 
 
-def test_hf_diffusion_generate_core_enforces_inference_mode(monkeypatch):
+def test_hf_diffusion_generate_core_does_not_add_a_shared_inference_wrapper(monkeypatch):
     torch_probe = _make_torch_probe()
     monkeypatch.setitem(sys.modules, "torch", torch_probe)
     adapter = _InferenceProbeAdapter(torch_probe)
@@ -70,7 +67,6 @@ def test_hf_diffusion_generate_core_enforces_inference_mode(monkeypatch):
     )
 
     assert result.status is RunStatus.SUCCESS
-    assert adapter.grad_enabled is False
-    assert adapter.inference_enabled is True
-    assert result.extra["execution_path"] == "optimized"
-    assert result.extra["sampling_profile"] == "best"
+    assert adapter.grad_enabled is True
+    assert adapter.inference_enabled is False
+    assert result.extra["execution_path"] == "default"
