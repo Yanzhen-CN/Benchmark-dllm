@@ -158,6 +158,20 @@ def test_load_samples_file_reconstructs_the_sudoku_reference_dataclass(tmp_path)
     assert reference.difficulty == "easy"
 
 
+def test_load_samples_file_reconstructs_instructed_sudoku_reference(tmp_path):
+    path = tmp_path / "bank.jsonl"
+    _write(
+        path,
+        '{"prompt": "solve", "reference": {"puzzle": [[0]], '
+        '"solution": [[1]], "difficulty": "hard"}}\n',
+    )
+
+    samples = load_samples_file(path, "sudoku_trace")
+
+    assert isinstance(samples[0].reference, SudokuReference)
+    assert samples[0].reference.difficulty == "hard"
+
+
 def test_load_samples_file_reconstructs_the_mbpp_reference_dataclass(tmp_path):
     path = tmp_path / "bank.jsonl"
     _write(

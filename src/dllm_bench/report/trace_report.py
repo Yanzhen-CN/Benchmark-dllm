@@ -68,17 +68,16 @@ def plot_certainty_curve(trace: list[TraceStep], final_valid_length: int, out_pa
 def _maybe_render_sudoku_gif(
     dataset_name: str, sample: Sample | None, trace: list[TraceStep], out_dir: Path, sample_id: str
 ) -> str | None:
-    if dataset_name != "sudoku" or sample is None or not trace:
+    if dataset_name not in {"sudoku", "sudoku_trace"} or sample is None or not trace:
         return None
-    n_positions = len(trace[-1].position_states)
-    if n_positions != 81:
-        return None  # trace doesn't align to a row-major 9x9 canvas; skip rather than guess
 
     from ..datasets.sudoku import SudokuReference
     from .sudoku_trace_viz import derive_sudoku_frames, render_sudoku_gif
 
     ref: SudokuReference = sample.reference
     frames = derive_sudoku_frames(trace, ref.puzzle, ref.solution)
+    if not frames:
+        return None
     path = out_dir / f"{sample_id}_sudoku.gif"
     render_sudoku_gif(frames, ref.puzzle, ref.solution, path)
     return str(path)
