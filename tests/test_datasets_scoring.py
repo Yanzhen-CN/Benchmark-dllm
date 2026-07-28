@@ -28,6 +28,7 @@ from dllm_bench.datasets.sudoku import (
     SudokuDataset,
     SudokuReference,
     _load_official_test_samples as _load_official_sudoku_test_samples,
+    _select_formal_subset,
     classify_difficulty,
     group_by_difficulty,
     naked_single_rounds,
@@ -374,6 +375,40 @@ def test_load_official_sudoku_split_keeps_raw_sequence_protocol(tmp_path):
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
     assert all(sample.meta["max_new_tokens"] == 82 for sample in samples)
+
+
+def test_sudoku_preparation_freezes_fifty_easy_and_fifty_hard():
+    easy_puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    hard_puzzle = [[0] * 9 for _ in range(9)]
+    official = [
+        Sample(
+            sample_id=f"sudoku-test-easy-{index:03d}",
+            prompt="0" * 81,
+            reference=SudokuReference(easy_puzzle, _EASY_PUZZLE, "easy"),
+        )
+        for index in range(60)
+    ] + [
+        Sample(
+            sample_id=f"sudoku-test-hard-{index:03d}",
+            prompt="0" * 81,
+            reference=SudokuReference(hard_puzzle, _EASY_PUZZLE, "hard"),
+        )
+        for index in range(60)
+    ]
+
+    selected = _select_formal_subset(
+        official, easy_count=50, hard_count=50, seed=42
+    )
+    repeated = _select_formal_subset(
+        list(reversed(official)), easy_count=50, hard_count=50, seed=42
+    )
+
+    assert [sample.sample_id for sample in selected] == [
+        sample.sample_id for sample in repeated
+    ]
+    assert sum(sample.reference.difficulty == "easy" for sample in selected) == 50
+    assert sum(sample.reference.difficulty == "hard" for sample in selected) == 50
+    assert all(sample.meta["formal_subset"] for sample in selected)
 
 
 def test_group_by_difficulty():

@@ -47,8 +47,6 @@ configs:
       steps_per_block: 32
       extra:
         temperature: 0.0
-        execution_path: default
-        sampling_profile: best
   fast:
     adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
     init_kwargs:
@@ -59,5 +57,3 @@ configs:
       steps_per_block: 16
       extra:
         temperature: 0.0
-        execution_path: default
-        sampling_profile: fast

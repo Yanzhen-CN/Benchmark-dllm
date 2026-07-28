@@ -71,10 +71,6 @@ Confirmed facts driving this port (not guessed):
   same as iLLaDA. This means design doc 4.2.6's `ErrorThenCorrect` is
   expected to come out ~0 for this model, same as iLLaDA — a real,
   ported-implementation-driven finding, not a modeling gap in this adapter.
-- The default execution path is frozen to the final 2026-07-27 traced port
-  (commit `6dfd132`). The separately named `dreamreasoner_optimized` model
-  contains no benchmark-authored inference change: it calls the checkpoint's
-  own `block_diffusion_generate` method directly.
 
 This benchmark's own addition (not from source): a full-vocab softmax over
 each step's raw logits, purely to populate `entropy_by_position`/
@@ -103,6 +99,7 @@ from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
 
+
 class DreamReasonerAdapter(HFDiffusionAdapter):
     """Appendix D.2. Best: block_length=32, steps_per_block=32 (1 token/step,
     the library's own default step count for one block). Fast: block_length=32,
@@ -117,47 +114,35 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         step_config: DiffusionStepConfig,
         config_name: str,
         device: str | None = None,
-        name: str = "dreamreasoner",
     ) -> None:
-        super().__init__(model_name_or_path, step_config, name=name, config_name=config_name, device=device)
-        if self.execution_path == "official":
-            self.inference_optimizations.append("official_checkpoint_generator")
-            self.trace_source = "official_api_no_history"
-        else:
-            self.inference_optimizations.append("official_prefix_kv_cache")
-            self.trace_source = "ported_official_loop"
+        super().__init__(model_name_or_path, step_config, name="dreamreasoner", config_name=config_name, device=device)
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
         import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._device = device
 
         def _load():
-            return self._load_model_and_tokenizer(device)
+            # The design doc/README's quick-start explicitly uses
+            # AutoModelForCausalLM (config.json's auto_map also registers
+            # AutoModel for the same class, but this adapter doesn't rely on
+            # that alias).
+            tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
+            model = AutoModelForCausalLM.from_pretrained(
+                self._model_name,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+            )
+            model.to(device)
+            model.eval()
+            return tokenizer, model
 
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
-
-    def _load_model_and_tokenizer(self, device: str):
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        # The design doc/README's quick-start explicitly uses
-        # AutoModelForCausalLM (config.json's auto_map also registers
-        # AutoModel for the same class, but this adapter doesn't rely on
-        # that alias).
-        tokenizer = AutoTokenizer.from_pretrained(self._model_name, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained(
-            self._model_name,
-            trust_remote_code=True,
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True,
-        )
-        model.to(device)
-        model.eval()
-        return tokenizer, model
 
     def _resolve_mask_token_id(self, step_config: DiffusionStepConfig) -> int:
         candidates = (
@@ -181,61 +166,12 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             "different/renamed checkpoint"
         )
 
-    def _run_official_generation(
-        self,
-        prompt: str,
-        step_config: DiffusionStepConfig,
-        target_input_tokens: int | None,
-    ) -> tuple[str, list[TraceStep], int]:
-        """Use the checkpoint's generator directly, without a local rewrite."""
-        input_ids = tokenize_instruction_prompt(
-            self._tokenizer,
-            prompt,
-            device=self._device,
-            target_input_tokens=target_input_tokens,
-        )["input_ids"]
-        prompt_len = int(input_ids.shape[1])
-        self._last_input_tokens = prompt_len
-        self._start_measurement()
-        output = self._model.block_diffusion_generate(
-            input_ids=input_ids,
-            max_new_tokens=step_config.gen_length,
-            block_length=step_config.block_length,
-            denoising_steps=step_config.steps_per_block,
-            temperature=float(step_config.extra.get("temperature", 0.0)),
-            top_k=int(step_config.extra.get("top_k", 0)),
-            top_p=float(step_config.extra.get("top_p", 1.0)),
-            remasking_strategy=step_config.extra.get(
-                "remasking_strategy", "low_confidence_dynamic"
-            ),
-            confidence_threshold=float(
-                step_config.extra.get("confidence_threshold", 0.9)
-            ),
-            eb_threshold=step_config.extra.get("eb_threshold", 0.35),
-            mask_token_id=self._resolve_mask_token_id(step_config),
-            return_dict_in_generate=True,
-        )
-        self._stop_measurement()
-        self._last_num_forward_passes = int(getattr(output, "nfe", 0) or 0)
-        final_ids = output.sequences[
-            0, prompt_len : prompt_len + step_config.gen_length
-        ].tolist()
-        output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
-        # Official BlockDiffusionOutput contains sequences and NFE but no
-        # per-step history. An empty trace states that boundary honestly.
-        return output_text, [], len(final_ids)
-
     def _run_denoising(
         self,
         prompt: str,
         step_config: DiffusionStepConfig,
         target_input_tokens: int | None = None,
     ) -> tuple[str, list[TraceStep], int]:
-        if self.execution_path == "official":
-            return self._run_official_generation(
-                prompt, step_config, target_input_tokens
-            )
-
         import torch
         import torch.nn.functional as F
         from transformers.cache_utils import DynamicCache
@@ -257,30 +193,24 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
 
         device = self._device
         input_ids = tokenize_instruction_prompt(
-            self._tokenizer,
-            prompt,
-            device=device,
-            target_input_tokens=target_input_tokens,
+            self._tokenizer, prompt, device=device
         )["input_ids"]
         prompt_len = input_ids.shape[1]
-        self._last_input_tokens = int(prompt_len)
         self._start_measurement()
 
         num_blocks = max(1, math.ceil((prompt_len + gen_length) / block_length))
         total_length = num_blocks * block_length
 
+        attention_mask = _build_block_diffusion_attention_mask(num_blocks, block_length, device)
         position_ids = torch.arange(total_length, device=device, dtype=torch.long).unsqueeze(0)
 
         x = torch.full((1, total_length), mask_token_id, dtype=torch.long, device=device)
         x[:, :prompt_len] = input_ids
 
         prefill_blocks = prompt_len // block_length
+        prefill_length = prefill_blocks * block_length
         past_key_values = DynamicCache()
 
-        attention_mask = _build_block_diffusion_attention_mask(
-            num_blocks, block_length, device
-        )
-        prefill_length = prefill_blocks * block_length
         if prefill_length > 0:
             self._model(
                 x[:, :prefill_length],
@@ -299,8 +229,8 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             block_start = num_block * block_length
             block_end = block_start + block_length
             cur_x = x[:, block_start:block_end].clone()
-            cur_pos = position_ids[:, block_start:block_end]
             cur_attn = attention_mask[:, block_start:block_end, :block_end]
+            cur_pos = position_ids[:, block_start:block_end]
 
             for step in range(denoising_steps + 1):
                 mask_index = cur_x == mask_token_id
@@ -329,12 +259,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     store_kv=False,
                 ).logits
 
-                x0, x0_p = _sample_with_temperature_topk_topp(
-                    logits,
-                    temperature,
-                    top_k,
-                    top_p,
-                )
+                x0, x0_p = _sample_with_temperature_topk_topp(logits, temperature, top_k, top_p)
                 x0 = torch.where(mask_index, x0, cur_x)
                 transfer_index = _select_transfer_index(
                     remasking_strategy,
@@ -374,7 +299,6 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             x[:, block_start:block_end] = cur_x
 
         self._stop_measurement()
-        self._last_num_forward_passes = global_step
         output_length = min(total_length, prompt_len + gen_length)
         final_ids = x[0, prompt_len:output_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
@@ -406,12 +330,7 @@ def _top_p_logits(logits, p: float):
     return logits.masked_fill(mask_indices, float("-inf"))
 
 
-def _sample_with_temperature_topk_topp(
-    logits,
-    temperature: float = 1.0,
-    top_k: int = 0,
-    top_p: float = 1.0,
-):
+def _sample_with_temperature_topk_topp(logits, temperature: float = 1.0, top_k: int = 0, top_p: float = 1.0):
     """Ported exactly from the real source. This adjusted distribution (not
     raw-logit softmax) is what confidence-based remasking strategies select
     on — see this module's docstring for why the trace's own entropy/top1
@@ -453,21 +372,12 @@ def _get_num_transfer_tokens(block_length: int, steps: int):
     return num_transfer_tokens
 
 
-def _build_block_diffusion_attention_mask(
-    num_blocks: int,
-    block_length: int,
-    device,
-    batch_size: int = 1,
-):
-    """Exact block-triangular mask used by the 2026-07-27 default path."""
+def _build_block_diffusion_attention_mask(num_blocks: int, block_length: int, device, batch_size: int = 1):
     import torch
 
     block_mask = torch.tril(torch.ones(num_blocks, num_blocks, device=device))
-    return (
-        block_mask.repeat_interleave(block_length, dim=0)
-        .repeat_interleave(block_length, dim=1)
-        .unsqueeze(0)
-        .expand(batch_size, -1, -1)
+    return block_mask.repeat_interleave(block_length, dim=0).repeat_interleave(block_length, dim=1).unsqueeze(0).expand(
+        batch_size, -1, -1
     )
 
 

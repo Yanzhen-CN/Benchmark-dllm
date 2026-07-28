@@ -36,8 +36,6 @@ configs:
       extra:
         temperature: 0.0
         remasking: low_confidence
-        execution_path: default
-        sampling_profile: best
   fast:
     # block_length=32, steps_per_block=16 (2 tokens/step), corresponds to
     # Bertolani et al. Figure 2's steps=512 point.
@@ -51,5 +49,3 @@ configs:
       extra:
         temperature: 0.0
         remasking: low_confidence
-        execution_path: default
-        sampling_profile: fast

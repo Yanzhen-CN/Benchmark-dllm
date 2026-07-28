@@ -58,6 +58,7 @@ class IlladaAdapter(HFDiffusionAdapter):
         target_input_tokens: int | None = None,
     ) -> tuple[str, list[TraceStep], int]:
         import torch
+        import torch.nn.functional as F
 
         block_length = step_config.block_length or step_config.gen_length
         steps_per_block = step_config.steps_per_block or 1
@@ -75,13 +76,9 @@ class IlladaAdapter(HFDiffusionAdapter):
 
         device = self._device
         input_ids = tokenize_instruction_prompt(
-            self._tokenizer,
-            prompt,
-            device=device,
-            target_input_tokens=target_input_tokens,
+            self._tokenizer, prompt, device=device
         )["input_ids"]
         prompt_len = input_ids.shape[1]
-        self._last_input_tokens = int(prompt_len)
         self._start_measurement()
 
         x = torch.full((1, prompt_len + padded_gen_length), MASK_ID, dtype=torch.long, device=device)
@@ -98,12 +95,9 @@ class IlladaAdapter(HFDiffusionAdapter):
             transfer_schedule = _transfer_schedule(block_mask_count, steps_per_block)
 
             for step_in_block in range(steps_per_block):
-                # The official iLLaDA ``var_generate`` path grows the model
-                # canvas one block at a time instead of repeatedly feeding
-                # every future output mask. Keep the full tensor only as the
-                # benchmark's trace canvas; ``model_end`` controls what the
-                # model actually computes, and ``fixed`` remains available
-                # as a clean ablation baseline.
+                # ``fixed`` is the frozen 6dfd132 default. ``growing`` is the
+                # upstream ``var_generate`` execution path used only by the
+                # separately named illada_optimized model.
                 model_end = block_end if canvas_mode == "growing" else x.shape[1]
                 active_x = x[:, :model_end]
                 active_attention_mask = attention_mask[:, :model_end]
@@ -118,9 +112,12 @@ class IlladaAdapter(HFDiffusionAdapter):
 
                 logits_for_pick = _add_gumbel_noise(logits, temperature)
                 x0 = torch.argmax(logits_for_pick, dim=-1)
+                probs = F.softmax(logits, dim=-1)
                 # Real predicted probability of the picked token — used for the
                 # trace's certainty data regardless of remasking mode.
-                argmax_prob = _selected_token_probabilities(logits, x0)
+                argmax_prob = torch.gather(
+                    probs, dim=-1, index=x0.unsqueeze(-1)
+                ).squeeze(-1)
 
                 if remasking == "random":
                     selection_score = torch.rand(x0.shape, device=device)
@@ -149,7 +146,7 @@ class IlladaAdapter(HFDiffusionAdapter):
                                 forward_index=global_step,
                                 x=x,
                                 transfer_index=transfer_index_full,
-                                logits=logits,
+                                probs=probs,
                                 argmax_prob=argmax_prob,
                                 prompt_len=prompt_len,
                                 gen_length=gen_length,
@@ -159,7 +156,6 @@ class IlladaAdapter(HFDiffusionAdapter):
                 global_step += 1
 
         self._stop_measurement()
-        self._last_num_forward_passes = global_step
         final_ids = x[0, prompt_len : prompt_len + gen_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
         return output_text, trace, len(final_ids)
@@ -179,14 +175,6 @@ def _add_gumbel_noise(logits, temperature: float):
     return logits.exp() / gumbel_noise
 
 
-def _selected_token_probabilities(logits, token_ids):
-    """Return softmax probabilities only for selected tokens."""
-    import torch
-
-    selected_logits = torch.gather(logits, dim=-1, index=token_ids.unsqueeze(-1)).squeeze(-1)
-    return torch.exp(selected_logits - torch.logsumexp(logits, dim=-1))
-
-
 def _transfer_schedule(mask_count: int, steps: int) -> list[int]:
     """How many positions to commit at each of `steps` steps within one
     block, spreading `mask_count` as evenly as possible (matches the
@@ -201,7 +189,7 @@ def _build_trace_step(
     forward_index: int,
     x,
     transfer_index,
-    logits,
+    probs,
     argmax_prob,
     prompt_len: int,
     gen_length: int,
@@ -225,21 +213,11 @@ def _build_trace_step(
     ]
     remaining_positions = [i for i, state in enumerate(position_states) if state == PositionState.MASKED]
 
-    vocab_size = logits.shape[-1]
-    available_gen_length = max(
-        0, min(gen_length, int(logits.shape[1]) - prompt_len)
-    )
-    gen_entropy: list[float] = []
-    # Entropy is trace-only and excluded from formal resource measurement.
-    # Chunk it so temporary probabilities stay small at long context.
-    for start in range(prompt_len, prompt_len + available_gen_length, 64):
-        end = min(start + 64, prompt_len + available_gen_length)
-        probs = torch.softmax(logits[:, start:end], dim=-1)
-        entropy = -(probs * probs.clamp_min(1e-12).log()).sum(dim=-1)
-        gen_entropy.extend(entropy[0].tolist())
-    gen_top1 = argmax_prob[
-        0, prompt_len : prompt_len + available_gen_length
-    ].tolist()
+    vocab_size = probs.shape[-1]
+    entropy = -(probs * probs.clamp_min(1e-12).log()).sum(dim=-1)
+    available_gen_length = max(0, min(gen_length, int(probs.shape[1]) - prompt_len))
+    gen_entropy = entropy[0, prompt_len : prompt_len + available_gen_length].tolist()
+    gen_top1 = argmax_prob[0, prompt_len : prompt_len + available_gen_length].tolist()
 
     token_texts = [
         tokenizer.decode([gen_token_ids[i]]) if position_states[i] == PositionState.ACCEPTED else MASK_DISPLAY

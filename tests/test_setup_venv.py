@@ -24,7 +24,6 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "illada",
         "illada_optimized",
         "dreamreasoner",
-        "dreamreasoner_optimized",
         "w1",
         "diffusiongemma",
         "gemma4_26b_a4b",
@@ -82,9 +81,6 @@ def test_optimized_models_reuse_their_base_runtime_venvs(monkeypatch):
     assert _model_script.venv_dir(_model_script.PROFILES["illada_optimized"]) == (
         _model_script.REPO_ROOT / ".venvs" / "illada"
     )
-    assert _model_script.venv_dir(
-        _model_script.PROFILES["dreamreasoner_optimized"]
-    ) == (_model_script.REPO_ROOT / ".venvs" / "dreamreasoner")
 
 
 def test_optimized_profile_dispatches_its_own_matrix_model():

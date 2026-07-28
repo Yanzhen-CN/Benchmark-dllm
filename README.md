@@ -124,7 +124,6 @@ python setup_venv.py -m qwen3_8b       # only .venvs/qwen3_8b
 python setup_venv.py -m illada         # only .venvs/illada
 python setup_venv.py -m illada_optimized # reuses .venvs/illada
 python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
-python setup_venv.py -m dreamreasoner_optimized # reuses .venvs/dreamreasoner
 python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
 python setup_venv.py -m gemma4_26b_a4b # only .venvs/gemma4_26b_a4b
 ```
@@ -157,7 +156,6 @@ Available entry points and environments:
 | iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
 | iLLaDA Optimized | `venv_scripts/illada_optimized.py` | `.venvs/illada` |
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
-| DreamReasoner Optimized | `venv_scripts/dreamreasoner_optimized.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
 | Gemma 4 26B-A4B AR | `venv_scripts/gemma4_26b_a4b.py` | `.venvs/gemma4_26b_a4b` |
 | W1 | `venv_scripts/w1.py` | `.venvs/w1` |
@@ -247,7 +245,9 @@ Ye et al. (ICLR 2025): Park's million-game rows 100000--100999 are the test
 split, the prompt is the raw 81-digit puzzle (`0` = blank), the expected output
 is the raw 81-digit solution, and the score is whole-sequence exact match.
 Easy/Hard is a reporting-only split on this unchanged official test set
-(at most 5 versus at least 6 synchronous naked-single rounds). RULER selects 10 samples for
+(at most 5 versus at least 6 synchronous naked-single rounds). Data preparation
+materializes the seeded formal subset itself (50 Easy + 50 Hard), so every
+model reads the same frozen 100-row prepared file. RULER selects 10 samples for
 each position cell at the shared 8192-token point; NIAH, multi-hop tracing,
 and aggregation are balanced inside those cells. The 64-token answer allowance
 is included in that window, so every RULER prompt targets 8128 tokens. This
@@ -356,9 +356,10 @@ instead of one combined "run" — this is what lets you:
   only `model_output/` needs to make that trip.
 
 The atomic unit of testing is the **model**, not model+variant. `illada` and
-`illada_optimized` are separate model groups, as are `dreamreasoner` and
-`dreamreasoner_optimized`; each group contains its own `best`/`fast` sampling
-variants. Within one group, weights load once and Best/Fast only change the
+`illada_optimized` are separate model groups because fixed and growing canvas
+are distinct official execution architectures. DreamReasoner has only one
+model group with `best`/`fast` sampling variants: its trace is observational
+and does not create a second generation architecture. Within one group, weights load once and Best/Fast only change the
 generation-time sampling config (`models/model_cache.py`). So leaving out
 `--variant`/`--variants` sweeps every variant declared in the file:
 
@@ -468,16 +469,15 @@ implementation is `models/illada.py`'s `canvas_mode == "growing"` path.
 
 DreamReasoner retains the checkpoint's prefix-KV-cache generation path from
 [`generation_utils.py`](https://huggingface.co/Dream-org/DreamReasoner-8B/blob/main/generation_utils.py).
-The original `dreamreasoner` model is frozen to the final 2026-07-27
-implementation (`6dfd132`): it builds the complete block-triangular mask,
+The `dreamreasoner` adapter builds the complete block-triangular mask,
 prefills all complete prompt blocks in one forward, passes the corresponding
 mask slice during block denoising, and uses the official full-softmax
-confidence calculation. The separate `dreamreasoner_optimized` model calls
-the checkpoint's own `block_diffusion_generate` method directly with the
-configured Best/Fast parameters. It contains no benchmark-authored generation
-algorithm or inference optimization. The official result exposes sequences
-and NFE but no per-step history, so its persisted trace is empty and
-`trace_source=official_api_no_history` records that limitation.
+confidence calculation. The official loop is executed in the adapter solely
+to expose trace: token/state snapshots are copied after each forward and
+outside the measurement window, without changing logits, masks, cache state,
+transfer decisions, or final output. A second official-direct model would run
+the same algorithm without trace, so it is intentionally not part of the
+benchmark matrix.
 
 Run the isolated systems ablation on the same idle GPU, without concurrent
 jobs, and write it outside the formal output tree:
@@ -508,8 +508,8 @@ multi-configuration models use names such as `illada_best`, `illada_fast`, and
 Local readers still accept the legacy `qwen3_4b_ar-baseline` directory.
 
 Pass `--variant best` to a low-level model-config command to run one sampling
-profile. At the public entry point, use `-m illada_optimized` or
-`-m dreamreasoner_optimized` to run the optimized model's Best/Fast pair.
+profile. At the public entry point, use `-m illada_optimized` to run the
+official growing-canvas model's Best/Fast pair.
 `score`/`visualize` deterministically reconstruct the same
 sample list from `--demo`/`--no-demo`, `--n-samples`, and `--seed`; pass matching
 values to every stage. The official GSM8K loader uses stable source indices as

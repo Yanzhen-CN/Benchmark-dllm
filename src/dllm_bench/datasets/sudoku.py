@@ -12,10 +12,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
+import random
 import re
 import zipfile
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -115,21 +116,32 @@ class SudokuDataset(Dataset):
         self,
         samples: list[Sample] | None = None,
         cache_dir: str | Path | None = None,
+        easy_count: int = 50,
+        hard_count: int = 50,
+        seed: int = 42,
     ) -> None:
         self._samples = list(samples) if samples is not None else None
+        self._easy_count = int(easy_count)
+        self._hard_count = int(hard_count)
+        self._seed = int(seed)
         data_root = Path(cache_dir or ensure_data_layout()["datasets"])
         self._archive_path = (
             data_root / "sudoku" / SUDOKU_SOURCE_REVISION / "bryanpark-sudoku.zip"
         )
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
-        samples = (
-            list(self._samples)
-            if self._samples is not None
-            else _load_official_test_samples(
+        if self._samples is not None:
+            samples = list(self._samples)
+        else:
+            official_test = _load_official_test_samples(
                 _ensure_official_archive(self._archive_path)
             )
-        )
+            samples = _select_formal_subset(
+                official_test,
+                easy_count=self._easy_count,
+                hard_count=self._hard_count,
+                seed=self._seed,
+            )
         return samples[:n] if n is not None else samples
 
     def preparation_signature(self) -> dict[str, object]:
@@ -139,6 +151,9 @@ class SudokuDataset(Dataset):
             "csv_sha256": SUDOKU_CSV_SHA256,
             "test_start": SUDOKU_TRAIN_ROWS,
             "test_rows": SUDOKU_TEST_ROWS,
+            "formal_easy_count": self._easy_count,
+            "formal_hard_count": self._hard_count,
+            "formal_subset_seed": self._seed,
         }
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
@@ -175,6 +190,43 @@ def group_by_difficulty(
         difficulty = ref.difficulty or classify_difficulty(ref.puzzle)
         grouped[difficulty].append(result)
     return grouped
+
+
+def _select_formal_subset(
+    samples: list[Sample], *, easy_count: int, hard_count: int, seed: int
+) -> list[Sample]:
+    if easy_count < 0 or hard_count < 0 or easy_count + hard_count == 0:
+        raise ValueError("formal Sudoku counts must be non-negative and not both zero")
+    rng = random.Random(seed)
+    selected: list[Sample] = []
+    for difficulty, count in (("easy", easy_count), ("hard", hard_count)):
+        group = sorted(
+            (
+                sample
+                for sample in samples
+                if (sample.reference.difficulty or classify_difficulty(sample.reference.puzzle))
+                == difficulty
+            ),
+            key=lambda sample: sample.sample_id,
+        )
+        rng.shuffle(group)
+        if len(group) < count:
+            raise ValueError(
+                f"official Sudoku test split has {len(group)} {difficulty} samples; "
+                f"the formal subset requires {count}"
+            )
+        selected.extend(
+            replace(
+                sample,
+                meta={
+                    **sample.meta,
+                    "formal_subset": True,
+                    "formal_subset_seed": seed,
+                },
+            )
+            for sample in group[:count]
+        )
+    return selected
 
 
 def _grid_to_digits(grid: Grid) -> str:

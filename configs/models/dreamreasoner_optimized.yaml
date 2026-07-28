@@ -1,31 +1,29 @@
-# Direct checkpoint-provided generation path. No benchmark-authored sampler
-# or inference optimization is used here.
+# Official checkpoint-provided generation path. The default
+# dreamreasoner.yaml remains the traced implementation frozen at 6dfd132.
 model: dreamreasoner_optimized
 max_context_tokens: 32768
 configs:
   best:
-    adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
+    adapter: dllm_bench.models.dreamreasoner_optimized.DreamReasonerOptimizedAdapter
     init_kwargs:
       model_name_or_path: Dream-org/DreamReasoner-8B
-      name: dreamreasoner_optimized
     step_config:
       gen_length: null
       block_length: 32
       steps_per_block: 32
       extra:
         temperature: 0.0
-        execution_path: official
+        execution_path: optimized
         sampling_profile: best
   fast:
-    adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
+    adapter: dllm_bench.models.dreamreasoner_optimized.DreamReasonerOptimizedAdapter
     init_kwargs:
       model_name_or_path: Dream-org/DreamReasoner-8B
-      name: dreamreasoner_optimized
     step_config:
       gen_length: null
       block_length: 32
       steps_per_block: 16
       extra:
         temperature: 0.0
-        execution_path: official
+        execution_path: optimized
         sampling_profile: fast

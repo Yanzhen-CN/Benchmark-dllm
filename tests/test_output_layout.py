@@ -22,10 +22,6 @@ def test_qwen_model_output_uses_unsuffixed_canonical_directory(tmp_path):
 def test_dllm_architecture_and_sampling_axes_are_both_in_the_run_id():
     assert run_id("illada", "best") == "illada_best"
     assert run_id("illada_optimized", "fast") == "illada_optimized_fast"
-    assert (
-        run_id("dreamreasoner_optimized", "best")
-        == "dreamreasoner_optimized_best"
-    )
 
 
 def test_qwen_reader_falls_back_to_legacy_suffixed_directory(tmp_path):
