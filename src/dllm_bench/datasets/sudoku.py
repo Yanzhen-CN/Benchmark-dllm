@@ -1,10 +1,12 @@
-"""Official Sudoku protocol from Ye et al. (ICLR 2025).
+"""Sudoku protocol adapted for general instruction checkpoints.
 
 The paper uses Park's one-million-game dataset, rows 0..99,999 for training
-and rows 100,000..100,999 for testing. A puzzle is the raw 81-digit sequence
-(``0`` means blank), the target is the raw 81-digit solution, and accuracy is
-whole-sequence exact match. Easy/Hard is this benchmark's reporting stratum
-only; it never changes the official input, target, or score.
+and rows 100,000..100,999 for testing. This benchmark preserves the official
+81-digit puzzle/solution representation.  Unlike the task-specific models in
+Ye et al., the evaluated checkpoints may reason in free-form text.  We therefore
+use a GSM8K-style ``####`` final-answer marker and score the extracted grid by
+the constraint-validity protocol used for general LMs in Bertolani et al.
+Easy/Hard is a reporting stratum only; it never changes the source puzzle.
 """
 
 from __future__ import annotations
@@ -29,12 +31,16 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
+SUDOKU_PROTOCOL_REVISION = "reasoning-marker-v1"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
 SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
 SUDOKU_TRAIN_ROWS = 100_000
 SUDOKU_TEST_ROWS = 1_000
-SUDOKU_OFFICIAL_MAX_NEW_TOKENS = 82
+SUDOKU_MAX_NEW_TOKENS = 512
+
+_FINAL_ANSWER_MARKER_RE = re.compile(r"(?im)^\s*####\s*")
+_COMPACT_SOLUTION_RE = re.compile(r"(?<![0-9])([1-9]{81})(?![0-9])")
 
 
 def _box_cells(r: int, c: int) -> list[tuple[int, int]]:
@@ -147,6 +153,7 @@ class SudokuDataset(Dataset):
     def preparation_signature(self) -> dict[str, object]:
         return {
             "source_revision": SUDOKU_SOURCE_REVISION,
+            "protocol_revision": SUDOKU_PROTOCOL_REVISION,
             "archive_sha256": SUDOKU_ARCHIVE_SHA256,
             "csv_sha256": SUDOKU_CSV_SHA256,
             "test_start": SUDOKU_TRAIN_ROWS,
@@ -158,11 +165,17 @@ class SudokuDataset(Dataset):
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: SudokuReference = sample.reference
-        prediction = output_text.strip()
-        target = _grid_to_digits(ref.solution)
-        valid = bool(re.fullmatch(r"[1-9]{81}", prediction))
+        prediction, marker_present = extract_final_grid(output_text)
+        valid = prediction is not None
+        constraint_valid = valid and is_valid_solution(prediction, ref.puzzle)
+        reference_exact = valid and prediction == ref.solution
         return ScoreResult(
-            primary_score=1.0 if prediction == target else 0.0,
+            primary_score=1.0 if constraint_valid else 0.0,
+            aux={
+                "constraint_valid": float(constraint_valid),
+                "reference_exact_match": float(reference_exact),
+                "answer_marker_present": float(marker_present),
+            },
             valid=valid,
             complete=valid,
         )
@@ -231,6 +244,64 @@ def _select_formal_subset(
 
 def _grid_to_digits(grid: Grid) -> str:
     return "".join(str(value) for row in grid for value in row)
+
+
+def _build_prompt(puzzle_digits: str) -> str:
+    return (
+        "Directly solve the following 9x9 Sudoku puzzle. The puzzle is given "
+        "as an 81-digit row-major string, where 0 represents a blank cell. "
+        "You may reason before answering. End your response with exactly one "
+        "final-answer line in the form `#### <solution>`, where <solution> is "
+        "the completed 81-digit row-major grid using digits 1-9 with no spaces "
+        "or separators.\n"
+        f"Puzzle: {puzzle_digits}\n"
+        "Solve the puzzle, then provide the marked final answer."
+    )
+
+
+def extract_final_grid(text: str) -> tuple[Grid | None, bool]:
+    """Extract the final Sudoku grid, preferring the last ``####`` marker.
+
+    This mirrors GSM8K's marker-first/fallback-last-answer convention.  If a
+    marker is present, only text after the last marker is considered so digits
+    in the model's reasoning cannot be mistaken for the submitted solution.
+    Without a marker, the last complete compact solution or 9-row grid is used.
+    """
+    markers = list(_FINAL_ANSWER_MARKER_RE.finditer(text))
+    candidate_text = text[markers[-1].end() :] if markers else text
+    compact = _COMPACT_SOLUTION_RE.findall(candidate_text)
+    if compact:
+        digits = compact[-1]
+        return (
+            [[int(digits[row * 9 + col]) for col in range(9)] for row in range(9)],
+            bool(markers),
+        )
+    return parse_grid(candidate_text), bool(markers)
+
+
+def is_valid_solution(grid: Grid, puzzle: Grid) -> bool:
+    """Return whether ``grid`` is a complete legal solution preserving clues."""
+    if len(grid) != 9 or any(len(row) != 9 for row in grid):
+        return False
+    required = set(range(1, 10))
+    if any(set(row) != required for row in grid):
+        return False
+    if any({grid[row][col] for row in range(9)} != required for col in range(9)):
+        return False
+    for box_row in range(0, 9, 3):
+        for box_col in range(0, 9, 3):
+            box = {
+                grid[row][col]
+                for row in range(box_row, box_row + 3)
+                for col in range(box_col, box_col + 3)
+            }
+            if box != required:
+                return False
+    return all(
+        puzzle[row][col] == 0 or grid[row][col] == puzzle[row][col]
+        for row in range(9)
+        for col in range(9)
+    )
 
 
 def _digits_to_grid(value: str, *, row_index: int, field: str) -> Grid:
@@ -331,16 +402,18 @@ def _load_official_test_samples(
                 samples.append(
                     Sample(
                         sample_id=f"sudoku-test-{test_index:04d}",
-                        prompt=puzzle_digits,
+                        prompt=_build_prompt(puzzle_digits),
                         reference=SudokuReference(puzzle, solution, difficulty),
                         meta={
                             "source": "bryanpark/sudoku",
                             "source_revision": SUDOKU_SOURCE_REVISION,
+                            "protocol_revision": SUDOKU_PROTOCOL_REVISION,
                             "source_index": train_rows + test_index,
                             "official_split": "test",
-                            "official_input_format": "81_digits_zero_is_blank",
+                            "source_input_format": "81_digits_zero_is_blank",
+                            "prompt_protocol": "reasoning_then_gsm8k_style_final_marker",
                             "official_output_format": "81_solution_digits",
-                            "max_new_tokens": SUDOKU_OFFICIAL_MAX_NEW_TOKENS,
+                            "max_new_tokens": SUDOKU_MAX_NEW_TOKENS,
                             "difficulty_rule": "naked_single_rounds_le_5_vs_ge_6",
                             "naked_single_rounds": rounds,
                         },

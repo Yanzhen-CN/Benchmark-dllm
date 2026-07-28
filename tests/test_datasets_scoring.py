@@ -27,6 +27,9 @@ from dllm_bench.datasets.structeval_t import (
 from dllm_bench.datasets.sudoku import (
     SudokuDataset,
     SudokuReference,
+    _build_prompt,
+    extract_final_grid,
+    is_valid_solution,
     _load_official_test_samples as _load_official_sudoku_test_samples,
     _select_formal_subset,
     classify_difficulty,
@@ -330,17 +333,51 @@ def test_sudoku_score_correct_solution():
     assert result.valid is True
 
 
-def test_sudoku_official_score_rejects_non_official_answer_wrapping():
+def test_sudoku_score_accepts_reasoning_with_marked_final_answer():
     ds = SudokuDataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
     digits = "".join(str(v) for row in _EASY_PUZZLE for v in row)
 
-    result = ds.score(sample, f"Answer:\n{digits}")
+    result = ds.score(sample, f"I solved it by checking every row.\n#### {digits}")
 
-    assert result.primary_score == 0.0
-    assert result.valid is False
+    assert result.primary_score == 1.0
+    assert result.valid is True
+    assert result.aux["answer_marker_present"] == 1.0
+    assert result.aux["reference_exact_match"] == 1.0
+
+
+def test_sudoku_score_falls_back_to_last_complete_grid_without_marker():
+    ds = SudokuDataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
+    sample = Sample(sample_id="1", prompt="solve", reference=ref)
+    digits = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+
+    result = ds.score(sample, f"Reasoning omitted.\n{digits}")
+
+    assert result.primary_score == 1.0
+    assert result.valid is True
+    assert result.aux["answer_marker_present"] == 0.0
+
+
+def test_sudoku_marker_prevents_reasoning_digits_from_being_scored():
+    digits = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+
+    parsed, marker_present = extract_final_grid(f"Earlier guess {digits}\n#### not finished")
+
+    assert parsed is None
+    assert marker_present is True
+
+
+def test_sudoku_constraint_validation_rejects_clue_change():
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    changed = [row[:] for row in _EASY_PUZZLE]
+    changed[0][1], changed[0][2] = changed[0][2], changed[0][1]
+
+    assert is_valid_solution(_EASY_PUZZLE, puzzle) is True
+    assert is_valid_solution(changed, puzzle) is False
 
 
 def test_sudoku_score_unparseable_output():
@@ -352,7 +389,7 @@ def test_sudoku_score_unparseable_output():
     assert result.valid is False
 
 
-def test_load_official_sudoku_split_keeps_raw_sequence_protocol(tmp_path):
+def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_path):
     solution = "".join(str(v) for row in _EASY_PUZZLE for v in row)
     easy = "0" + solution[1:]
     hard = "0" * 81
@@ -371,10 +408,14 @@ def test_load_official_sudoku_split_keeps_raw_sequence_protocol(tmp_path):
         archive_path, train_rows=2, test_rows=2
     )
 
-    assert [sample.prompt for sample in samples] == [easy, hard]
+    assert [sample.prompt for sample in samples] == [
+        _build_prompt(easy),
+        _build_prompt(hard),
+    ]
+    assert all("#### <solution>" in sample.prompt for sample in samples)
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
-    assert all(sample.meta["max_new_tokens"] == 82 for sample in samples)
+    assert all(sample.meta["max_new_tokens"] == 512 for sample in samples)
 
 
 def test_sudoku_preparation_freezes_fifty_easy_and_fifty_hard():

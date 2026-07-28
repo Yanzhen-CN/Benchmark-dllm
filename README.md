@@ -234,10 +234,15 @@ DATA_SOURCE=real OUTPUT_ROOT=output/formal \
 ```
 
 The default diagnostic suite uses 100 samples for each regular-capability
-dataset. Sudoku is stratified 50 easy / 50 hard. Its source and scoring follow
-Ye et al. (ICLR 2025): Park's million-game rows 100000--100999 are the test
-split, the prompt is the raw 81-digit puzzle (`0` = blank), the expected output
-is the raw 81-digit solution, and the score is whole-sequence exact match.
+dataset. Sudoku is stratified 50 easy / 50 hard. It uses the Park split from
+Ye et al. (ICLR 2025): rows 100000--100999 are the test split and each source
+puzzle is an 81-digit sequence (`0` = blank). Unlike Ye et al.'s task-specific
+models, the evaluated general instruction checkpoints may reason freely. The
+prompt asks them to finish with `#### <81-digit solution>`, following GSM8K's
+marker-first convention. Scoring extracts the last marked answer (or falls back
+to the last complete grid), then checks that it preserves every clue and
+satisfies all row, column, and box constraints. Exact match with the reference
+solution and answer-marker compliance are retained as auxiliary audit metrics.
 Easy/Hard is a reporting-only split on this unchanged official test set
 (at most 5 versus at least 6 synchronous naked-single rounds). Data preparation
 materializes the seeded formal subset itself (50 Easy + 50 Hard), so every

@@ -1,7 +1,8 @@
 dataset: sudoku
 dataset_class: dllm_bench.datasets.sudoku.SudokuDataset
-primary_metric: official_exact_match_accuracy
-aux_metrics: [accuracy_easy, accuracy_hard]
+primary_metric: constraint_solution_accuracy
+aux_metrics:
+  [reference_exact_match, answer_marker_present, accuracy_easy, accuracy_hard]
 sample_size: 100
 difficulty_counts:
   easy: 50
@@ -11,9 +12,10 @@ dataset_kwargs:
   easy_count: 50
   hard_count: 50
   seed: 42
-# Official Ye et al. / Park protocol: raw 81-digit puzzle (0 = blank), raw
-# 81-digit solution, whole-sequence exact-match scoring. Rows 100000..100999
-# of the source million-game file are the official test split. Easy/Hard is
-# our reporting-only stratum on that unchanged split: <=5 versus >=6
-# synchronous naked-single rounds. Preparation materializes and freezes the
-# selected formal 50/50 subset; model runs all consume that same 100-row file.
+# Park data split used by Ye et al.: 81-digit puzzle (0 = blank) and reference
+# solution. General instruction checkpoints may reason freely, then submit
+# ``#### <81 digits>`` as in GSM8K. The scorer prefers the last marker and falls
+# back to the last complete grid, then verifies all clues and Sudoku constraints;
+# reference exact match is retained as an audit metric. Rows 100000..100999 are
+# the test split. Easy/Hard is our reporting-only stratum: <=5 versus >=6
+# synchronous naked-single rounds. Preparation freezes the selected 50/50 set.
