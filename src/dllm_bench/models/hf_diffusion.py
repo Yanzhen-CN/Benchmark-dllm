@@ -176,6 +176,9 @@ class HFDiffusionAdapter(BaseModelAdapter):
             self.inference_optimizations
         )
         result_extra["execution_path"] = self.execution_path
+        trace_source = getattr(self, "trace_source", None)
+        if trace_source is not None:
+            result_extra["trace_source"] = trace_source
         if self.sampling_profile is not None:
             result_extra["sampling_profile"] = self.sampling_profile
         return GenerationResult(

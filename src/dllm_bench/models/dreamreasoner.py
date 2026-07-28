@@ -106,10 +106,6 @@ from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
 
-# Optimized-model setting only. The default model never reads this value.
-# With block_length=32, 32 blocks make one 1024-token prefill chunk.
-_PREFILL_CHUNK_BLOCKS = 32
-
 class DreamReasonerAdapter(HFDiffusionAdapter):
     """Appendix D.2. Best: block_length=32, steps_per_block=32 (1 token/step,
     the library's own default step count for one block). Fast: block_length=32,
@@ -127,11 +123,12 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         name: str = "dreamreasoner",
     ) -> None:
         super().__init__(model_name_or_path, step_config, name=name, config_name=config_name, device=device)
-        self.inference_optimizations.append("official_prefix_kv_cache")
-        if self.execution_path == "optimized":
-            self.inference_optimizations.append("bounded_chunked_prefill_mask")
-        if step_config.extra.get("greedy_confidence_mode", "softmax") == "logsumexp":
-            self.inference_optimizations.append("greedy_logsumexp_confidence")
+        if self.execution_path == "official":
+            self.inference_optimizations.append("official_checkpoint_generator")
+            self.trace_source = "official_api_no_history"
+        else:
+            self.inference_optimizations.append("official_prefix_kv_cache")
+            self.trace_source = "ported_official_loop"
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -187,12 +184,61 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             "different/renamed checkpoint"
         )
 
+    def _run_official_generation(
+        self,
+        prompt: str,
+        step_config: DiffusionStepConfig,
+        target_input_tokens: int | None,
+    ) -> tuple[str, list[TraceStep], int]:
+        """Use the checkpoint's generator directly, without a local rewrite."""
+        input_ids = tokenize_instruction_prompt(
+            self._tokenizer,
+            prompt,
+            device=self._device,
+            target_input_tokens=target_input_tokens,
+        )["input_ids"]
+        prompt_len = int(input_ids.shape[1])
+        self._last_input_tokens = prompt_len
+        self._start_measurement()
+        output = self._model.block_diffusion_generate(
+            input_ids=input_ids,
+            max_new_tokens=step_config.gen_length,
+            block_length=step_config.block_length,
+            denoising_steps=step_config.steps_per_block,
+            temperature=float(step_config.extra.get("temperature", 0.0)),
+            top_k=int(step_config.extra.get("top_k", 0)),
+            top_p=float(step_config.extra.get("top_p", 1.0)),
+            remasking_strategy=step_config.extra.get(
+                "remasking_strategy", "low_confidence_dynamic"
+            ),
+            confidence_threshold=float(
+                step_config.extra.get("confidence_threshold", 0.9)
+            ),
+            eb_threshold=step_config.extra.get("eb_threshold", 0.35),
+            mask_token_id=self._resolve_mask_token_id(step_config),
+            return_dict_in_generate=True,
+        )
+        self._stop_measurement()
+        self._last_num_forward_passes = int(getattr(output, "nfe", 0) or 0)
+        final_ids = output.sequences[
+            0, prompt_len : prompt_len + step_config.gen_length
+        ].tolist()
+        output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
+        # Official BlockDiffusionOutput contains sequences and NFE but no
+        # per-step history. An empty trace states that boundary honestly.
+        return output_text, [], len(final_ids)
+
     def _run_denoising(
         self,
         prompt: str,
         step_config: DiffusionStepConfig,
         target_input_tokens: int | None = None,
     ) -> tuple[str, list[TraceStep], int]:
+        if self.execution_path == "official":
+            return self._run_official_generation(
+                prompt, step_config, target_input_tokens
+            )
+
         import torch
         import torch.nn.functional as F
         from transformers.cache_utils import DynamicCache
