@@ -87,7 +87,18 @@ def dispatch_model_scripts(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("-m", "--model", action="append", default=[], help="Model name; repeat or comma-separate (default: all matrix models)")
+    parser.add_argument(
+        "-m", "--model", action="extend", nargs="+", default=[],
+        help="Model name(s); space-separate, repeat, or comma-separate (default: all matrix models)",
+    )
+    parser.add_argument(
+        "-d",
+        "--dataset",
+        action="extend",
+        nargs="+",
+        default=[],
+        help="Dataset name(s) to run, e.g. -d ruler hellobench (default: all matrix datasets)",
+    )
     parser.add_argument("--matrix", default=str(DEFAULT_MATRIX), help="Experiment matrix YAML")
     parser.add_argument("--venv-scripts-dir", dest="scripts_dir", default=str(DEFAULT_VENV_SCRIPTS_DIR), help="Directory containing per-model Python environment scripts")
     parser.add_argument("--stage", choices=("generate", "score", "visualize", "all"), default="all")
@@ -128,6 +139,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"Matrix: {matrix_path}")
     print(f"Models: {', '.join(selected)}")
+    if args.dataset:
+        print(f"Datasets: {', '.join(args.dataset)}")
     env_updates = {
         "EXPERIMENT_CONFIG": str(matrix_path),
         "DATA_SOURCE": args.data_source,
@@ -137,6 +150,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "REQUIRE_ALL_METRICS": "1" if args.require_all_metrics else "0",
         "RESUME": "1" if args.resume else "0",
     }
+    if args.dataset:
+        env_updates["DATASETS"] = ",".join(
+            dict.fromkeys(
+                part.strip()
+                for value in args.dataset
+                for part in value.split(",")
+                if part.strip()
+            )
+        )
     if args.stage in {"visualize", "all"}:
         env_updates["N_REPRESENTATIVE"] = str(args.n_representative)
     if args.n_samples is not None:

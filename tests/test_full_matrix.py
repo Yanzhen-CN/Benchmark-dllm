@@ -26,3 +26,15 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         "ruler",
         "hellobench",
     }
+
+
+def test_matrix_can_filter_task2_datasets_for_selected_models():
+    jobs, _ = load_matrix_jobs(
+        ROOT / "configs" / "experiments" / "full_matrix.yaml",
+        model_names=["illada", "dreamreasoner"],
+        dataset_names=["ruler", "hellobench"],
+    )
+
+    assert len(jobs) == 4
+    assert {job.model_name for job in jobs} == {"illada", "dreamreasoner"}
+    assert {job.dataset_config.stem for job in jobs} == {"ruler", "hellobench"}

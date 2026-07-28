@@ -86,6 +86,7 @@ With no `-m`, each command covers every model and variant declared in
 # GPU server: generation only
 python run_model.py
 python run_model.py -m illada
+python run_model.py -m illada dreamreasoner -d ruler hellobench
 
 # Local machine after copying output/model_output/
 python run_score.py

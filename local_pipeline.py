@@ -23,7 +23,8 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
             "Model adapters and weights are never loaded."
         )
     )
-    parser.add_argument("-m", "--model", action="append", default=[])
+    parser.add_argument("-m", "--model", action="extend", nargs="+", default=[])
+    parser.add_argument("-d", "--dataset", action="extend", nargs="+", default=[])
     parser.add_argument("--matrix", default=str(DEFAULT_MATRIX))
     data = parser.add_mutually_exclusive_group()
     data.add_argument("--demo", dest="real_data", action="store_false")
@@ -70,6 +71,10 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             command.extend(["--n-representative", str(args.n_representative)])
         if args.n_samples is not None:
             command.extend(["--n-samples", str(args.n_samples)])
+        for value in args.dataset:
+            for dataset_name in value.split(","):
+                if dataset_name.strip():
+                    command.extend(["--dataset", dataset_name.strip()])
         print(f"[{index}/{len(models)}] {model}: {' '.join(command)}", flush=True)
         if not args.dry_run:
             subprocess.run(command, cwd=PROJECT_ROOT, check=True)

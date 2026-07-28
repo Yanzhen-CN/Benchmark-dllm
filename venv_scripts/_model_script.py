@@ -363,6 +363,10 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
         )
     if os.environ.get("N_SAMPLES"):
         arguments.extend(["--n-samples", os.environ["N_SAMPLES"]])
+    if os.environ.get("DATASETS"):
+        for dataset_name in os.environ["DATASETS"].split(","):
+            if dataset_name.strip():
+                arguments.extend(["--dataset", dataset_name.strip()])
     return arguments
 
 

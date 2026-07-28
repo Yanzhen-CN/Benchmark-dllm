@@ -325,17 +325,22 @@ def test_dreamreasoner_default_denoising_steps_falls_back_to_block_length():
     assert len(trace) == 4  # denoising_steps defaulted to block_length=4
 
 
-def test_dreamreasoner_prefill_runs_one_block_at_a_time_with_no_dense_mask():
+def test_dreamreasoner_prefill_never_builds_a_full_sequence_mask(monkeypatch):
     """Regression test for a real OOM: the source's own
     `build_block_diffusion_attention_mask` materializes a dense
     (total_length, total_length) tensor, which is several GB at RULER's
     long-context points (see module docstring) — this adapter must never
-    build or pass one. A multi-block prompt must be prefilled one block at a
-    time (each call shaped (1, block_length), never the whole prompt at
-    once), and no call anywhere should pass a 2D+ attention_mask."""
-    prompt_len = 12  # 3 whole blocks of prompt, block-aligned
-    gen_length = 4
+    build or pass one, no matter how many blocks land in one prefill chunk.
+    A single-block chunk needs no mask at all; a multi-block chunk needs a
+    real one, but bounded to (chunk_length, so-far-cached + chunk_length),
+    never (total_length, total_length)."""
+    import dllm_bench.models.dreamreasoner as dreamreasoner_module
+
+    monkeypatch.setattr(dreamreasoner_module, "_PREFILL_CHUNK_BLOCKS", 2)
+
     block_length = 4
+    prompt_len = 6 * block_length  # 6 whole blocks -> chunks of [2, 2, 2] blocks
+    gen_length = 4
     logits = torch.zeros(1, block_length, VOCAB_SIZE)
     step_config = DiffusionStepConfig(
         gen_length=gen_length,
@@ -351,11 +356,97 @@ def test_dreamreasoner_prefill_runs_one_block_at_a_time_with_no_dense_mask():
 
     adapter._run_denoising("prompt", step_config)
 
-    prefill_calls = fake_model.calls[:3]  # 3 prefill blocks, before any denoising step
+    total_length = prompt_len + gen_length  # gen_length is already block-aligned here
+    prefill_calls = fake_model.calls[:3]  # 6 blocks / 2 per chunk = 3 prefill calls
     assert len(prefill_calls) == 3
-    for call in prefill_calls:
-        assert call["shape"] == (1, block_length)  # never the whole (1, 12) prompt at once
+    for index, call in enumerate(prefill_calls):
+        chunk_length = 2 * block_length  # 2 blocks/chunk
+        assert call["shape"] == (1, chunk_length)  # never the whole prompt at once
         assert call["store_kv"] is True
-    # No call anywhere (prefill, draft, or finalize) ever receives a 2D+
-    # attention_mask — every call in this adapter passes none at all.
-    assert all(call["attention_mask"] is None for call in fake_model.calls)
+        mask = call["attention_mask"]
+        assert mask is not None  # 2 blocks in this chunk -> a real, but bounded, mask
+        already_cached = index * chunk_length
+        assert mask.shape == (1, chunk_length, already_cached + chunk_length)
+        # Regression check: never anywhere close to the source's own
+        # (total_length, total_length) — the actual bug that OOM'd.
+        assert mask.numel() < total_length * total_length
+
+
+def test_dreamreasoner_prefill_chunk_mask_values_are_correct_block_tril():
+    """Verifies the bounded prefill mask's actual values, not just its
+    shape: already-cached columns are unconditionally visible (1), and the
+    chunk's own new columns follow the same block-tril rule the source's
+    full-sequence mask would have enforced (block i sees block j only if
+    j <= i)."""
+    import dllm_bench.models.dreamreasoner as dreamreasoner_module
+
+    chunk_blocks_override = 3
+    block_length = 2
+    prompt_len = 6 * block_length  # 6 blocks, chunked as [3, 3] with chunk size 3
+    gen_length = 2
+    logits = torch.zeros(1, block_length, VOCAB_SIZE)
+    step_config = DiffusionStepConfig(
+        gen_length=gen_length,
+        block_length=block_length,
+        steps_per_block=2,
+        extra={"remasking_strategy": "low_confidence_static", "mask_token_id": 99},
+    )
+    adapter = DreamReasonerAdapter("unused-checkpoint", step_config, config_name="test")
+    fake_model = _FakeLogitsModel(logits)
+    adapter._model = fake_model
+    adapter._tokenizer = _FakeTokenizer(prompt_len)
+    adapter._device = "cpu"
+
+    original_chunk_blocks = dreamreasoner_module._PREFILL_CHUNK_BLOCKS
+    dreamreasoner_module._PREFILL_CHUNK_BLOCKS = chunk_blocks_override
+    try:
+        adapter._run_denoising("prompt", step_config)
+    finally:
+        dreamreasoner_module._PREFILL_CHUNK_BLOCKS = original_chunk_blocks
+
+    first_chunk_mask = fake_model.calls[0]["attention_mask"][0]  # (6, 6): 3 blocks * block_length=2
+    # Block 0 = rows/cols [0,1], block 1 = [2,3], block 2 = [4,5].
+    # Block 0 must not see block 1 or 2; block 1 sees block 0 + itself; block 2 sees everything.
+    expected = torch.tensor([
+        [1., 1., 0., 0., 0., 0.],
+        [1., 1., 0., 0., 0., 0.],
+        [1., 1., 1., 1., 0., 0.],
+        [1., 1., 1., 1., 0., 0.],
+        [1., 1., 1., 1., 1., 1.],
+        [1., 1., 1., 1., 1., 1.],
+    ])
+    assert torch.equal(first_chunk_mask, expected)
+
+    second_chunk_mask = fake_model.calls[1]["attention_mask"][0]  # (6, 12): prior 6 cached + this chunk's 6
+    # The first 6 columns (the already-cached first chunk) are fully visible
+    # to every row here — only the last 6 columns (this chunk's own new
+    # tokens) carry the block-tril restriction, same pattern as above.
+    assert torch.equal(second_chunk_mask[:, :6], torch.ones(6, 6))
+    assert torch.equal(second_chunk_mask[:, 6:], expected)
+
+
+def test_dreamreasoner_single_block_chunk_still_needs_no_mask():
+    """The default _PREFILL_CHUNK_BLOCKS is large enough that a short prompt
+    (fewer blocks than the chunk size) prefills in one single-block-sized
+    chunk — still no mask needed there, same as before chunking existed."""
+    block_length = 4
+    prompt_len = 1 * block_length
+    gen_length = 4
+    logits = torch.zeros(1, block_length, VOCAB_SIZE)
+    step_config = DiffusionStepConfig(
+        gen_length=gen_length,
+        block_length=block_length,
+        steps_per_block=4,
+        extra={"remasking_strategy": "low_confidence_static", "mask_token_id": 99},
+    )
+    adapter = DreamReasonerAdapter("unused-checkpoint", step_config, config_name="test")
+    fake_model = _FakeLogitsModel(logits)
+    adapter._model = fake_model
+    adapter._tokenizer = _FakeTokenizer(prompt_len)
+    adapter._device = "cpu"
+
+    adapter._run_denoising("prompt", step_config)
+
+    prefill_calls = fake_model.calls[:1]
+    assert len(prefill_calls) == 1
+    assert prefill_calls[0]["attention_mask"] is None

@@ -3,17 +3,38 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 from .base import Sample
 
 
-def _records(path: str | Path) -> list[dict[str, Any]]:
+def _jsonl_records(path: Path) -> Iterator[dict[str, Any]]:
+    """Stream one JSON object at a time. A prepared dataset's JSONL (e.g.
+    RULER's, spanning context windows up to 262144 tokens) can hold enough
+    total text that reading the whole file into one string and then
+    `.splitlines()`-ing it (a second full copy, held alongside the first for
+    the rest of the loop) meaningfully raises peak memory during loading —
+    observed contributing to an OOM-kill several jobs later in the same
+    long-running `matrix` process (memory a prior job used isn't always
+    handed back to the OS immediately even once Python's own references are
+    gone). Reading line-by-line means only the current line's text is ever
+    live, and each parsed record can be collected as soon as the caller is
+    done with it instead of outliving the whole file's worth of raw text.
+    """
+    with path.open("r", encoding="utf-8") as source:
+        for line in source:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
+def _records(path: str | Path) -> Iterable[dict[str, Any]]:
     path = Path(path)
-    text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".jsonl":
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
+        return _jsonl_records(path)
+    text = path.read_text(encoding="utf-8")
     data = json.loads(text)
     if isinstance(data, dict):
         data = data.get("samples", data.get("data"))

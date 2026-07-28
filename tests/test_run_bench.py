@@ -33,6 +33,42 @@ def test_unknown_model_has_clear_error():
         run_bench.main(["--dry-run", "-m", "missing"])
 
 
+def test_dataset_flag_accepts_multiple_names(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured["models"] = list(model_names)
+        captured.update(kwargs)
+
+    monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
+
+    assert run_bench.main([
+        "-m", "illada",
+        "-d", "ruler", "hellobench",
+        "--stage", "generate",
+    ]) == 0
+    assert captured["models"] == ["illada"]
+    assert captured["env_updates"]["DATASETS"] == "ruler,hellobench"
+
+
+def test_model_and_dataset_flags_accept_space_separated_names(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured["models"] = list(model_names)
+        captured.update(kwargs)
+
+    monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
+
+    assert run_bench.main([
+        "-m", "illada", "dreamreasoner",
+        "-d", "ruler", "hellobench",
+        "--stage", "generate",
+    ]) == 0
+    assert captured["models"] == ["illada", "dreamreasoner"]
+    assert captured["env_updates"]["DATASETS"] == "ruler,hellobench"
+
+
 def test_diffusiongemma_is_the_public_name():
     assert "diffusiongemma" in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)
     assert "dg" not in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)

@@ -77,18 +77,21 @@ Confirmed facts driving this port (not guessed):
   (up to this model's own 32768-token window, see
   `configs/datasets/ruler.yaml`) that tensor alone is multiple GB, on top of
   the ~16 GiB bf16 model and the KV cache, and was observed to OOM a 24 GiB
-  GPU. This adapter never materializes it: every call this port ever makes
-  only ever needs "attend to everything already in the KV cache plus myself"
-  — which is exactly what passing no `attention_mask` (`None`) already means
-  once prefill itself is done incrementally, one block at a time, rather
-  than in one shot over the whole prompt (see `_run_denoising`). This is a
-  memory-only change — every call still sees exactly the same key/value set
-  it would under the source's explicit block-tril mask (block i can attend
-  to blocks 0..i and nothing after), since blocks are only ever added to the
-  cache in that same 0..i order and nothing later is ever visible to an
-  earlier call. The source's own `build_block_diffusion_attention_mask` is
-  therefore not ported at all — there is no slice of it any call here would
-  ever need that isn't already exactly "no mask".
+  GPU. This adapter never materializes the full version: prefill runs in
+  chunks of up to `_PREFILL_CHUNK_BLOCKS` blocks per call (not the whole
+  prompt in one shot, and not one block per call either — see
+  `_run_denoising`'s prefill comment for why chunking needs a real, but
+  chunk-sized-not-sequence-sized, attention_mask, while a lone block per call
+  needs none at all). Every call — whatever its chunk size — still sees
+  exactly the same key/value set the source's explicit block-tril mask would
+  give it (block i can attend to blocks 0..i and nothing after): already
+  -cached earlier chunks are unconditionally visible (concatenated in by
+  `past_key_values.update`), and only the chunk's own new tokens need the
+  block-tril pattern applied explicitly, since those are the only positions
+  where "block j come later, must stay invisible to block i" could otherwise
+  be violated. The source's own full-sequence
+  `build_block_diffusion_attention_mask` is therefore never ported at all —
+  no call here ever needs a mask bigger than one chunk.
 
 This benchmark's own addition (not from source): a full-vocab softmax over
 each step's raw logits, purely to populate `entropy_by_position`/
@@ -116,6 +119,20 @@ from .model_cache import get_or_load
 from .prompting import tokenize_instruction_prompt
 
 MASK_DISPLAY = "▢"
+
+# How many blocks get prefilled per forward call. Bigger than 1 (unlike the
+# denoising loop, which must do one real block at a time) trades a bounded,
+# still-small attention_mask for far fewer forward calls at long context —
+# see _run_denoising's prefill comment for the exact size/correctness
+# argument. Keep the cap in the same 1024-token problem-size unit used by the
+# benchmark's diffusion comparison: with the checkpoint's block_length=32,
+# 32 blocks make one 1024-token prefill chunk. Shorter benchmark questions
+# naturally use one smaller chunk containing only their actual full blocks;
+# long RULER inputs are split into consecutive 1024-token chunks. At the
+# 32768-token RULER point the largest bounded mask is therefore roughly
+# (1024, 32768), about 128 MiB in float32, rather than the source's multi-GB
+# full-sequence square mask.
+_PREFILL_CHUNK_BLOCKS = 32
 
 
 class DreamReasonerAdapter(HFDiffusionAdapter):
@@ -224,22 +241,47 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         prefill_blocks = prompt_len // block_length
         past_key_values = DynamicCache()
 
-        # Prefill one block at a time (store_kv=True, no attention_mask) —
-        # each call's key/value set is exactly the cache accumulated so far
-        # plus this block's own tokens, which is exactly what the source's
-        # explicit block-tril mask restricts a one-shot prefill call to.
-        # See the module docstring for why this never needs the source's own
-        # dense (total_length, total_length) mask tensor.
-        for prefill_block in range(prefill_blocks):
-            block_start = prefill_block * block_length
-            block_end = block_start + block_length
+        # Prefill in chunks of up to _PREFILL_CHUNK_BLOCKS blocks per call
+        # (store_kv=True) instead of one block per call — fewer, bigger
+        # forward calls means less per-call overhead (kernel launches, cache
+        # bookkeeping) at long context, where the single-block version could
+        # mean 1000+ tiny calls. A chunk spanning more than one block needs a
+        # real (but bounded) attention_mask: within the chunk's own new
+        # tokens, block i must still only see block j<=i (same block-tril
+        # rule as the source's own mask, just scoped to one chunk instead of
+        # the whole sequence) — already-cached earlier chunks are fully
+        # visible to every row (concatenated in by `past_key_values.update`),
+        # so the mask only needs an explicit 0 pattern over the chunk's own
+        # tokens, sized (chunk_length, chunk_length), never
+        # (total_length, total_length). A single-block chunk still needs no
+        # mask at all (nothing "later" to wrongly become visible within it).
+        chunk_index = 0
+        while chunk_index < prefill_blocks:
+            blocks_in_chunk = min(_PREFILL_CHUNK_BLOCKS, prefill_blocks - chunk_index)
+            chunk_start = chunk_index * block_length
+            chunk_length = blocks_in_chunk * block_length
+            chunk_end = chunk_start + chunk_length
+
+            attention_mask = None
+            if blocks_in_chunk > 1:
+                intra_chunk_tril = torch.tril(torch.ones(blocks_in_chunk, blocks_in_chunk, device=device))
+                intra_chunk_mask = intra_chunk_tril.repeat_interleave(block_length, dim=0).repeat_interleave(
+                    block_length, dim=1
+                )
+                if chunk_start > 0:
+                    prefix_visible = torch.ones(chunk_length, chunk_start, device=device)
+                    intra_chunk_mask = torch.cat([prefix_visible, intra_chunk_mask], dim=1)
+                attention_mask = intra_chunk_mask.unsqueeze(0)
+
             self._model(
-                x[:, block_start:block_end],
-                position_ids=position_ids[:, block_start:block_end],
+                x[:, chunk_start:chunk_end],
+                attention_mask=attention_mask,
+                position_ids=position_ids[:, chunk_start:chunk_end],
                 past_key_values=past_key_values,
                 use_cache=True,
                 store_kv=True,
             )
+            chunk_index += blocks_in_chunk
 
         num_transfer_tokens = _get_num_transfer_tokens(block_length, denoising_steps)
         trace: list[TraceStep] = []

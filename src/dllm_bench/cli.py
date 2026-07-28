@@ -39,6 +39,7 @@ so pass matching source/count/seed values to every stage.
 
 from __future__ import annotations
 
+import gc
 from pathlib import Path
 
 import click
@@ -483,6 +484,7 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
 @main.command("matrix")
 @click.option("--experiment-config", required=True, type=click.Path(exists=True))
 @click.option("--model", "model_names", multiple=True, required=True, help="Exactly one model name; run_bench.py dispatches multiple isolated environments")
+@click.option("--dataset", "dataset_names", multiple=True, help="Dataset name to include; repeat to select multiple")
 @click.option("--stage", type=click.Choice(["generate", "score", "visualize", "all"]), default="all", show_default=True)
 @click.option("--demo/--no-demo", default=False, show_default=True, help="Use demo data for every matrix row")
 @click.option("--n-samples", default=None, type=int)
@@ -496,6 +498,7 @@ def matrix_command(
     ctx: click.Context,
     experiment_config: str,
     model_names: tuple[str, ...],
+    dataset_names: tuple[str, ...],
     stage: str,
     demo: bool,
     n_samples: int | None,
@@ -512,7 +515,11 @@ def matrix_command(
             "use run_bench.py for multiple models"
         )
     try:
-        jobs, seed = load_matrix_jobs(experiment_config, model_names=model_names)
+        jobs, seed = load_matrix_jobs(
+            experiment_config,
+            model_names=model_names,
+            dataset_names=dataset_names,
+        )
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
     click.echo(f"Matrix contains {len(jobs)} model x dataset jobs")
@@ -538,6 +545,18 @@ def matrix_command(
             ctx.invoke(
                 visualize, **common, n_representative=n_representative, sample_ids=None,
             )
+        # Every job in this loop runs in the same long-lived process. A
+        # dataset whose prepared sample bank holds very large individual
+        # records (RULER's spans up to a 262144-token context window) can
+        # leave Python's own allocator holding onto a lot of memory even
+        # after every reference to those samples is gone — freed memory
+        # isn't always handed back to the OS immediately. Forcing a
+        # collection between jobs (not relying on "eventually") is the same
+        # idea as clearing the CUDA cache between GPU samples: cheap
+        # insurance against a *later*, unrelated-looking job (e.g.
+        # HelloBench, this matrix's last one) being the one that actually
+        # gets OOM-killed for memory a much earlier job used.
+        gc.collect()
     if stage == "all":
         ctx.invoke(report, run_paths=(), output_root=output_root, dataset_name=None)
 

@@ -35,17 +35,35 @@ def available_matrix_models(path: str | Path) -> list[str]:
 def load_matrix_jobs(
     path: str | Path,
     model_names: Iterable[str] | None = None,
+    dataset_names: Iterable[str] | None = None,
 ) -> tuple[list[MatrixJob], int]:
     path = Path(path).resolve()
     config = load_yaml(path)
     base = _resolve(path.parent, config.get("base_dir", "."))
     requested = set(model_names or [])
+    requested_datasets = set(dataset_names or [])
     available = available_matrix_models(path)
     unknown = requested.difference(available)
     if unknown:
         raise ValueError(
             f"unknown model(s): {', '.join(sorted(unknown))}; "
             f"available: {', '.join(available)}"
+        )
+
+    available_datasets = [
+        str(
+            entry.get("name")
+            or Path(entry["config"]).stem
+        )
+        if isinstance(entry, dict)
+        else Path(entry).stem
+        for entry in config["datasets"]
+    ]
+    unknown_datasets = requested_datasets.difference(available_datasets)
+    if unknown_datasets:
+        raise ValueError(
+            f"unknown dataset(s): {', '.join(sorted(unknown_datasets))}; "
+            f"available: {', '.join(available_datasets)}"
         )
 
     jobs: list[MatrixJob] = []
@@ -57,6 +75,11 @@ def load_matrix_jobs(
         for dataset_entry in config["datasets"]:
             if isinstance(dataset_entry, str):
                 dataset_entry = {"config": dataset_entry}
+            dataset_name = str(
+                dataset_entry.get("name") or Path(dataset_entry["config"]).stem
+            )
+            if requested_datasets and dataset_name not in requested_datasets:
+                continue
             jobs.append(
                 MatrixJob(
                     model_name=model_name,
