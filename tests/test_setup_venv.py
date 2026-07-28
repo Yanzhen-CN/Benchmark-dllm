@@ -35,7 +35,20 @@ def test_setup_venv_supports_separate_dg_comparison_matrix(capsys):
     assert setup_venv.main(["--dry-run", "--matrix", str(matrix)]) == 0
     output = capsys.readouterr().out
     assert "diffusiongemma.py setup" in output
-    assert "gemma4_26b.py setup" in output
+    assert "gemma4_26b_a4b.py setup" in output
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    [
+        Path("configs/experiments/full_matrix.yaml"),
+        Path("configs/experiments/dg_comparison.yaml"),
+    ],
+)
+def test_every_matrix_model_has_an_environment_profile(matrix):
+    for model in setup_venv.matrix_model_names(matrix):
+        assert model in _model_script.PROFILES
+        assert (Path("venv_scripts") / f"{model}.py").is_file()
 
 
 def test_model_run_uses_the_model_venv_python(monkeypatch):
