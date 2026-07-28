@@ -18,7 +18,14 @@ def test_setup_venv_dispatches_selected_model_script(capsys):
 def test_setup_venv_defaults_to_every_matrix_model(capsys):
     assert setup_venv.main(["--dry-run"]) == 0
     output = capsys.readouterr().out
-    for model in ("qwen3_4b", "illada", "dreamreasoner", "w1", "diffusiongemma"):
+    for model in (
+        "qwen3_4b",
+        "illada",
+        "dreamreasoner",
+        "w1",
+        "diffusiongemma",
+        "gemma4_26b_a4b",
+    ):
         assert f"{model}.py setup" in output
 
 
@@ -61,6 +68,13 @@ def test_model_venvs_share_one_parent_directory(monkeypatch):
 
 def test_dreamreasoner_matches_checkpoint_transformers_version():
     assert _model_script.PROFILES["dreamreasoner"].transformers_version == "5.7.0"
+
+
+def test_gemma4_ar_matches_diffusiongemma_runtime():
+    gemma_ar = _model_script.PROFILES["gemma4_26b_a4b"]
+    diffusion = _model_script.PROFILES["diffusiongemma"]
+    assert gemma_ar.torch_version == diffusion.torch_version
+    assert gemma_ar.transformers_version == diffusion.transformers_version
 
 
 def test_gpu_profile_env_defaults_expandable_segments(monkeypatch):
