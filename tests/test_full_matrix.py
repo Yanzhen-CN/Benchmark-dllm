@@ -10,12 +10,14 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "full_matrix.yaml")
 
     assert seed == 42
-    assert len(jobs) == 7 * 6
+    assert len(jobs) == 9 * 6
     assert {job.model_name for job in jobs} == {
         "qwen3_4b",
         "qwen3_8b",
         "illada",
+        "illada_optimized",
         "dreamreasoner",
+        "dreamreasoner_optimized",
         "w1",
         "diffusiongemma",
         "gemma4_26b_a4b",
@@ -36,8 +38,9 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         job for job in jobs
         if job.model_name == "dreamreasoner" and job.dataset_config.stem == "gsm8k"
     )
-    assert illada_job.variants == ("best", "fast", "optimized")
-    assert dream_job.variants == ("best", "fast", "optimized")
+    expected = ("best", "fast")
+    assert illada_job.variants == expected
+    assert dream_job.variants == expected
 
 
 def test_matrix_can_filter_task2_datasets_for_selected_models():

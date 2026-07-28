@@ -1,0 +1,35 @@
+# Optimized execution architecture for iLLaDA. This is a separate benchmark
+# model from illada.yaml; Best/Fast remain sampling profiles within the model.
+model: illada_optimized
+max_context_tokens: 8192
+configs:
+  best:
+    adapter: dllm_bench.models.illada.IlladaAdapter
+    init_kwargs:
+      model_name_or_path: GSAI-ML/iLLaDA-8B-Instruct
+      name: illada_optimized
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 32
+      extra:
+        temperature: 0.0
+        remasking: low_confidence
+        canvas_mode: growing
+        execution_path: optimized
+        sampling_profile: best
+  fast:
+    adapter: dllm_bench.models.illada.IlladaAdapter
+    init_kwargs:
+      model_name_or_path: GSAI-ML/iLLaDA-8B-Instruct
+      name: illada_optimized
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 16
+      extra:
+        temperature: 0.0
+        remasking: low_confidence
+        canvas_mode: growing
+        execution_path: optimized
+        sampling_profile: fast

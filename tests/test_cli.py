@@ -290,6 +290,39 @@ def test_matrix_propagates_warmup_oom_and_stops_remaining_jobs(tmp_path, monkeyp
     assert calls == [str(gsm8k_config)]
 
 
+def test_matrix_variants_option_filters_sampling_profile(tmp_path, monkeypatch):
+    runner = CliRunner()
+    model_config = CONFIGS_DIR / "models" / "mock.yaml"
+    dataset_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
+    experiment_config = tmp_path / "experiment.yaml"
+    experiment_config.write_text(
+        "seed: 42\n"
+        "models:\n"
+        f"  - name: mock\n    config: {model_config}\n"
+        "    variants: [default, fast]\n"
+        "datasets:\n"
+        f"  - config: {dataset_config}\n    max_new_tokens: 16\n"
+    )
+    captured = []
+
+    def fake_generate(**kwargs):
+        captured.append(kwargs["variants"])
+
+    monkeypatch.setattr(cli_module, "generate", fake_generate)
+    result = runner.invoke(
+        main,
+        [
+            "matrix", "--experiment-config", str(experiment_config),
+            "--model", "mock", "--variants", "fast",
+            "--stage", "generate", "--demo",
+            "--output-root", str(tmp_path / "output"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured == ["fast"]
+
+
 def test_matrix_still_aborts_on_a_non_oom_failure(tmp_path, monkeypatch):
     """Only an OOM-shaped failure is swallowed per-job — anything else is
     a real bug likely to affect every job, so it must still abort loudly."""

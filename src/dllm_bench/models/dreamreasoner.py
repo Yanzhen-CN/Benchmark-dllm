@@ -148,8 +148,9 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         step_config: DiffusionStepConfig,
         config_name: str,
         device: str | None = None,
+        name: str = "dreamreasoner",
     ) -> None:
-        super().__init__(model_name_or_path, step_config, name="dreamreasoner", config_name=config_name, device=device)
+        super().__init__(model_name_or_path, step_config, name=name, config_name=config_name, device=device)
         self.inference_optimizations.extend(
             ["official_prefix_kv_cache", "bounded_chunked_prefill_mask"]
         )

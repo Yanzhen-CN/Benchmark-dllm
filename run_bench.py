@@ -108,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--demo", dest="data_source", action="store_const", const="demo", default="demo")
     data.add_argument("--real-data", dest="data_source", action="store_const", const="real")
     parser.add_argument("--n-samples", type=int, default=None)
+    variants = parser.add_mutually_exclusive_group()
+    variants.add_argument(
+        "-v", "--variant",
+        help="Run one sampling variant for every selected model, e.g. fast",
+    )
+    variants.add_argument(
+        "--variants",
+        help="Comma-separated sampling variants, e.g. best,fast",
+    )
     parser.add_argument("--output-root", default="output")
     compute = parser.add_mutually_exclusive_group()
     compute.add_argument("--measure-compute", dest="measure_compute", action="store_true")
@@ -165,6 +174,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         env_updates["N_REPRESENTATIVE"] = str(args.n_representative)
     if args.n_samples is not None:
         env_updates["N_SAMPLES"] = str(args.n_samples)
+    selected_variants = args.variant or args.variants
+    if selected_variants:
+        env_updates["MATRIX_VARIANTS"] = selected_variants
     dispatch_model_scripts(
         selected,
         action="run",

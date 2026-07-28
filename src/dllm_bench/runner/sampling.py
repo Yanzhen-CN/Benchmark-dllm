@@ -69,6 +69,12 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
     inference_optimizations = getattr(adapter, "inference_optimizations", None)
     if inference_optimizations:
         metadata["inference_optimizations"] = list(inference_optimizations)
+    execution_path = getattr(adapter, "execution_path", None)
+    if execution_path:
+        metadata["execution_path"] = execution_path
+    sampling_profile = getattr(adapter, "sampling_profile", None)
+    if sampling_profile:
+        metadata["sampling_profile"] = sampling_profile
     git_commit = _get_git_commit()
     if git_commit:
         metadata["code_commit"] = git_commit

@@ -1,12 +1,13 @@
-# Reference list of the section-5 model x dataset matrix (13 formal configs x
+# Reference list of the section-5 model x dataset matrix (15 formal configs x
 # 6 datasets, including the same-scale DiffusionGemma/Gemma 4 reference pair).
 # This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
 # `config`, `samples_file`, and task-specific `max_new_tokens` fields.
 #
 # Each model config file may declare multiple named variants under
-# `configs:` (see e.g. configs/models/illada.yaml) — `variants: [best, fast]`
-# below lists which ones count as a "formal configuration" for this matrix.
+# `configs:` (see e.g. configs/models/illada.yaml). The `variants` list below
+# declares the formal sampling variants for each model. Optimized execution
+# architectures are separate model entries, not variants of the base model.
 
 base_dir: ../..
 
@@ -16,9 +17,13 @@ models:
   - config: configs/models/qwen3_8b.yaml  # same-scale AR reference for 8B dLLMs
     variants: [ar-baseline]
   - config: configs/models/illada.yaml    # illada-8B
-    variants: [best, fast, optimized]
+    variants: [best, fast]
+  - config: configs/models/illada_optimized.yaml
+    variants: [best, fast]
   - config: configs/models/dreamreasoner.yaml # dream reasoner-8B
-    variants: [best, fast, optimized]
+    variants: [best, fast]
+  - config: configs/models/dreamreasoner_optimized.yaml
+    variants: [best, fast]
   - config: configs/models/w1.yaml  # w1-instruct-4B
     variants: [standard, jump, gidd]  # sampler difference
   - config: configs/models/diffusiongemma.yaml

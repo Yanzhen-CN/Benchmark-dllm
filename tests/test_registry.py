@@ -107,29 +107,55 @@ def test_env_placeholder_left_as_is_when_unset(monkeypatch):
 
 
 def test_illada_variants_carry_distinct_steps_per_block():
-    best = build_model_adapter(CONFIGS_DIR / "models" / "illada.yaml", variant="best")
-    fast = build_model_adapter(CONFIGS_DIR / "models" / "illada.yaml", variant="fast")
-    optimized = build_model_adapter(
-        CONFIGS_DIR / "models" / "illada.yaml", variant="optimized"
+    best = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada.yaml", variant="best"
+    )
+    fast = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada.yaml", variant="fast"
+    )
+    optimized_best = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada_optimized.yaml", variant="best"
+    )
+    optimized_fast = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada_optimized.yaml", variant="fast"
     )
     assert best._step_config.steps_per_block == 32
     assert fast._step_config.steps_per_block == 16
-    assert optimized._step_config.steps_per_block == 32
+    assert optimized_best._step_config.steps_per_block == 32
+    assert optimized_fast._step_config.steps_per_block == 16
+    assert best.execution_path == "default"
+    assert optimized_best.execution_path == "optimized"
+    assert optimized_best.name == "illada_optimized"
+    assert best.sampling_profile == "best"
+    assert optimized_fast.sampling_profile == "fast"
     assert best._step_config.extra.get("canvas_mode", "fixed") == "fixed"
-    assert optimized._step_config.extra["canvas_mode"] == "growing"
+    assert optimized_best._step_config.extra["canvas_mode"] == "growing"
 
 
 def test_dreamreasoner_variants_carry_distinct_steps_per_block():
-    best = build_model_adapter(CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="best")
-    fast = build_model_adapter(CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="fast")
-    optimized = build_model_adapter(
-        CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="optimized"
+    best = build_model_adapter(
+        CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="best"
+    )
+    fast = build_model_adapter(
+        CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="fast"
+    )
+    optimized_best = build_model_adapter(
+        CONFIGS_DIR / "models" / "dreamreasoner_optimized.yaml", variant="best"
+    )
+    optimized_fast = build_model_adapter(
+        CONFIGS_DIR / "models" / "dreamreasoner_optimized.yaml", variant="fast"
     )
     assert best._step_config.steps_per_block == 32
     assert fast._step_config.steps_per_block == 16
-    assert optimized._step_config.steps_per_block == 32
+    assert optimized_best._step_config.steps_per_block == 32
+    assert optimized_fast._step_config.steps_per_block == 16
+    assert best.execution_path == "default"
+    assert optimized_best.execution_path == "optimized"
+    assert optimized_best.name == "dreamreasoner_optimized"
+    assert best.sampling_profile == "best"
+    assert optimized_fast.sampling_profile == "fast"
     assert best._step_config.extra["greedy_confidence_mode"] == "softmax"
-    assert optimized._step_config.extra["greedy_confidence_mode"] == "logsumexp"
+    assert optimized_best._step_config.extra["greedy_confidence_mode"] == "logsumexp"
 
 
 def test_w1_yaml_declares_all_three_configs():

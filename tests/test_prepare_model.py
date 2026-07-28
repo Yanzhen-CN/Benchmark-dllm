@@ -85,7 +85,7 @@ def test_prepare_model_downloads_shared_checkpoint_once_without_building_adapter
     assert calls[0][0] == "GSAI-ML/iLLaDA-8B-Instruct"
     assert calls[0][1] is None
     assert (
-        "[best,fast,optimized] cached: /cached/illada"
+        "[best,fast] cached: /cached/illada"
         in capsys.readouterr().out
     )
 

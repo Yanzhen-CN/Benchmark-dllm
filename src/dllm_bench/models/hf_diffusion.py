@@ -69,6 +69,10 @@ class HFDiffusionAdapter(BaseModelAdapter):
         self._model = None
         self._tokenizer = None
         self.inference_optimizations = ["torch_inference_mode"]
+        self.execution_path = str(
+            step_config.extra.get("execution_path", "default")
+        )
+        self.sampling_profile = step_config.extra.get("sampling_profile")
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -171,6 +175,9 @@ class HFDiffusionAdapter(BaseModelAdapter):
         result_extra["inference_optimizations"] = list(
             self.inference_optimizations
         )
+        result_extra["execution_path"] = self.execution_path
+        if self.sampling_profile is not None:
+            result_extra["sampling_profile"] = self.sampling_profile
         return GenerationResult(
             request=request,
             output_text=output_text,

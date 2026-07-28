@@ -6,9 +6,13 @@ base_dir: ../..
 
 models:
   - config: configs/models/illada.yaml
-    variants: [best, optimized]
+    variants: [best, fast]
+  - config: configs/models/illada_optimized.yaml
+    variants: [best, fast]
   - config: configs/models/dreamreasoner.yaml
-    variants: [best, optimized]
+    variants: [best, fast]
+  - config: configs/models/dreamreasoner_optimized.yaml
+    variants: [best, fast]
 
 datasets:
   - config: configs/datasets/ruler.yaml

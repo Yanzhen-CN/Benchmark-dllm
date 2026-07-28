@@ -44,8 +44,9 @@ class IlladaAdapter(HFDiffusionAdapter):
         step_config: DiffusionStepConfig,
         config_name: str,
         device: str | None = None,
+        name: str = "illada",
     ) -> None:
-        super().__init__(model_name_or_path, step_config, name="illada", config_name=config_name, device=device)
+        super().__init__(model_name_or_path, step_config, name=name, config_name=config_name, device=device)
         canvas_mode = step_config.extra.get("canvas_mode", "fixed")
         if canvas_mode == "growing":
             self.inference_optimizations.append("official_growing_canvas")

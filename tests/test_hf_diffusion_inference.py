@@ -14,7 +14,13 @@ class _InferenceProbeAdapter(HFDiffusionAdapter):
     def __init__(self, torch_probe: ModuleType) -> None:
         super().__init__(
             "unused-checkpoint",
-            DiffusionStepConfig(gen_length=4),
+            DiffusionStepConfig(
+                gen_length=4,
+                extra={
+                    "execution_path": "optimized",
+                    "sampling_profile": "best",
+                },
+            ),
             name="probe",
             config_name="test",
         )
@@ -66,3 +72,5 @@ def test_hf_diffusion_generate_core_enforces_inference_mode(monkeypatch):
     assert result.status is RunStatus.SUCCESS
     assert adapter.grad_enabled is False
     assert adapter.inference_enabled is True
+    assert result.extra["execution_path"] == "optimized"
+    assert result.extra["sampling_profile"] == "best"

@@ -40,8 +40,17 @@ PROFILES: Mapping[str, ModelProfile] = {
         "illada", "illada", "configs/models/illada.yaml",
         "dev,hf,gpu", "2.6.0", "4.57.1", ("cu118", "cu124", "cu126"),
     ),
+    "illada_optimized": ModelProfile(
+        "illada_optimized", "illada", "configs/models/illada_optimized.yaml",
+        "dev,hf,gpu", "2.6.0", "4.57.1", ("cu118", "cu124", "cu126"),
+    ),
     "dreamreasoner": ModelProfile(
         "dreamreasoner", "dreamreasoner", "configs/models/dreamreasoner.yaml",
+        "dev,hf,gpu", "2.5.1", "5.7.0", ("cu118", "cu121", "cu124"),
+    ),
+    "dreamreasoner_optimized": ModelProfile(
+        "dreamreasoner_optimized", "dreamreasoner",
+        "configs/models/dreamreasoner_optimized.yaml",
         "dev,hf,gpu", "2.5.1", "5.7.0", ("cu118", "cu121", "cu124"),
     ),
     "diffusiongemma": ModelProfile(
@@ -400,6 +409,8 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
         for dataset_name in os.environ["DATASETS"].split(","):
             if dataset_name.strip():
                 arguments.extend(["--dataset", dataset_name.strip()])
+    if os.environ.get("MATRIX_VARIANTS"):
+        arguments.extend(["--variants", os.environ["MATRIX_VARIANTS"]])
     return arguments
 
 

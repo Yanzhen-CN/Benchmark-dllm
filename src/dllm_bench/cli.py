@@ -502,6 +502,7 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
 @main.command("matrix")
 @click.option("--experiment-config", required=True, type=click.Path(exists=True))
 @click.option("--model", "model_names", multiple=True, required=True, help="Exactly one model name; run_bench.py dispatches multiple isolated environments")
+@click.option("--variants", "variant_names", default=None, help="Comma-separated variant subset for the selected model")
 @click.option("--dataset", "dataset_names", multiple=True, help="Dataset name to include; repeat to select multiple")
 @click.option("--stage", type=click.Choice(["generate", "score", "visualize", "all"]), default="all", show_default=True)
 @click.option("--demo/--no-demo", default=False, show_default=True, help="Use demo data for every matrix row")
@@ -516,6 +517,7 @@ def matrix_command(
     ctx: click.Context,
     experiment_config: str,
     model_names: tuple[str, ...],
+    variant_names: str | None,
     dataset_names: tuple[str, ...],
     stage: str,
     demo: bool,
@@ -542,7 +544,20 @@ def matrix_command(
         raise click.UsageError(str(exc)) from exc
     click.echo(f"Matrix contains {len(jobs)} model x dataset jobs")
     for index, job in enumerate(jobs, start=1):
-        variants = ",".join(job.variants)
+        selected_variants = job.variants
+        if variant_names:
+            requested_variants = tuple(
+                value.strip() for value in variant_names.split(",") if value.strip()
+            )
+            unknown_variants = set(requested_variants).difference(job.variants)
+            if unknown_variants:
+                raise click.UsageError(
+                    f"unknown variant(s) for {job.model_name}: "
+                    f"{', '.join(sorted(unknown_variants))}; available: "
+                    f"{', '.join(job.variants)}"
+                )
+            selected_variants = requested_variants
+        variants = ",".join(selected_variants)
         samples_file = str(job.samples_file) if job.samples_file else None
         common = dict(
             model_config=str(job.model_config), variant=None, variants=variants,

@@ -8,7 +8,7 @@ import run_bench
 def test_default_dry_run_selects_every_matrix_model(capsys):
     assert run_bench.main(["--dry-run"]) == 0
     output = capsys.readouterr().out
-    assert "Models: qwen3_4b, qwen3_8b, illada, dreamreasoner, w1, diffusiongemma, gemma4_26b_a4b" in output
+    assert "illada, illada_optimized, dreamreasoner, dreamreasoner_optimized" in output
     assert "venv_scripts\\illada.py run" in output or "venv_scripts/illada.py run" in output
     assert "venv_scripts\\diffusiongemma.py run" in output or "venv_scripts/diffusiongemma.py run" in output
     assert "venv_scripts\\gemma4_26b_a4b.py run" in output or "venv_scripts/gemma4_26b_a4b.py run" in output
@@ -21,6 +21,13 @@ def test_model_flag_filters_to_one_model(capsys):
     assert "Models: illada" in output
     assert "illada.py run" in output
     assert "dreamreasoner" not in output
+
+
+def test_optimized_model_is_a_separate_public_model(capsys):
+    assert run_bench.main(["--dry-run", "-m", "illada_optimized"]) == 0
+    output = capsys.readouterr().out
+    assert "Models: illada_optimized" in output
+    assert "illada_optimized.py run" in output
 
 
 def test_model_flag_accepts_comma_separated_names(capsys):
@@ -51,6 +58,30 @@ def test_dataset_flag_accepts_multiple_names(monkeypatch):
     ]) == 0
     assert captured["models"] == ["illada"]
     assert captured["env_updates"]["DATASETS"] == "ruler,hellobench"
+
+
+def test_variant_flag_is_forwarded_to_the_selected_model(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured["models"] = list(model_names)
+        captured.update(kwargs)
+
+    monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
+
+    assert run_bench.main([
+        "-m", "illada_optimized", "-v", "fast", "--stage", "generate"
+    ]) == 0
+    assert captured["models"] == ["illada_optimized"]
+    assert captured["env_updates"]["MATRIX_VARIANTS"] == "fast"
+
+
+def test_variant_and_variants_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        run_bench.main([
+            "--dry-run", "-m", "illada", "--variant", "fast",
+            "--variants", "best,fast",
+        ])
 
 
 def test_model_and_dataset_flags_accept_space_separated_names(monkeypatch):
