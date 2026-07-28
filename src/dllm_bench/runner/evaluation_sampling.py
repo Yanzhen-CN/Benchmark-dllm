@@ -280,7 +280,7 @@ def select_configured_samples(
 
     rng = random.Random(seed)
     dataset_name = dataset_config.get("dataset")
-    if dataset_name == "sudoku":
+    if dataset_name in {"sudoku", "sudoku_trace"}:
         return _select_sudoku(samples, dataset_config, n_samples, rng)
     if dataset_name == "hellobench":
         return _select_hellobench(samples, dataset_config, n_samples, rng)

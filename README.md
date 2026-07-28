@@ -220,6 +220,46 @@ python prepare_model.py -m gemma4_26b_a4b -m diffusiongemma
   --output-root output/a100_pair_check --no-resume
 ```
 
+The separate compact Sudoku trace case study keeps the same frozen 50 Easy +
+50 Hard source rows and semantic scorer as `sudoku`. Unlike the main reasoning
+protocol, it forbids explanation and requests only the final 81 digits, writing
+to its own `sudoku_trace` output/cache namespace. It is included in
+`dg_comparison.yaml`, not the six-task main matrix. After the pair smoke test,
+validate three real puzzles before spending the full 100-sample budget:
+
+```bash
+python run_model.py \
+  --matrix configs/experiments/dg_comparison.yaml \
+  -m diffusiongemma gemma4_26b_a4b \
+  -d sudoku_trace --real-data --n-samples 3 \
+  --output-root output/a100_sudoku_trace_check --no-resume
+
+python run_model.py \
+  --matrix configs/experiments/dg_comparison.yaml \
+  -m diffusiongemma gemma4_26b_a4b \
+  -d sudoku_trace --real-data \
+  --output-root output --resume
+```
+
+The run automatically materializes the new normalized JSONL from the already
+cached Sudoku archive; no explicit `prepare_data.py` rerun or source download
+is needed. Score and visualize the transferred outputs locally:
+
+```bash
+python run_score.py --matrix configs/experiments/dg_comparison.yaml \
+  -m diffusiongemma gemma4_26b_a4b -d sudoku_trace \
+  --output-root output --resume
+python run_visualization.py --matrix configs/experiments/dg_comparison.yaml \
+  -m diffusiongemma gemma4_26b_a4b -d sudoku_trace \
+  --output-root output --n-representative 3
+```
+
+For DiffusionGemma, Sudoku revision analysis decodes complete 81-digit board
+candidates from each denoising canvas rather than assuming one tokenizer token
+equals one cell. Per-sample scores include blank-cell revision counts,
+wrong-to-correct outcomes, and the fraction of trace steps with a parseable
+board; visualization emits the generic token trace plus a decoded 9x9 GIF.
+
 For formal comparisons, keep GPU type, precision, dataset sample set, output
 caps, trace policy, and compute-profiling flag identical. The formal RULER comparison uses one shared
 8192-token context window; model-advertised maximum context is metadata, not a

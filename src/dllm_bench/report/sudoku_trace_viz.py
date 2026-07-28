@@ -18,9 +18,9 @@ Per-cell coloring:
 Two ways to get the per-step ``SudokuCell`` frames:
 
 - :func:`derive_sudoku_frames` — the real path, from an actual model's
-  trace, valid only when that trace has exactly 81 positions mapped
-  row-major to grid cells (see ``trace_report._maybe_render_sudoku_gif``,
-  which only calls this when that holds).
+  trace. It uses direct row-major mapping for an 81-position trace, or
+  extracts an exact 81-digit candidate from each decoded canvas for
+  tokenized models such as DiffusionGemma.
 - :func:`simulate_sudoku_frames` — a self-contained demo/test fixture (no
   model involved) that fabricates a plausible solve, including deliberate
   wrong-then-corrected fills when ``hard=True`` — this is what exercises the
@@ -40,6 +40,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from ..interfaces import PositionState, TraceStep
+from ..metrics.sudoku_revision import trace_step_grid
 from .token_grid_viz import BG, MUTED, PANEL_BG, TEXT, _load_font
 
 Grid = list[list[int]]
@@ -102,14 +103,33 @@ def _classify(
 
 
 def derive_sudoku_frames(trace: list[TraceStep], puzzle: Grid, solution: Grid) -> list[Frame]:
-    """Real path: requires `trace`'s canvas to be exactly 81 positions,
-    row-major (position i -> row i // 9, col i % 9), with `token_texts`
-    populated so each accepted cell's actual digit is known."""
+    """Build row-major frames from token-aligned or decoded-canvas traces."""
     if not trace:
         return []
     n = len(trace[-1].position_states)
     if n != 81:
-        raise ValueError(f"expected an 81-position row-major canvas, got {n}")
+        decoded_grids = [trace_step_grid(step) for step in trace]
+        if not any(grid is not None for grid in decoded_grids):
+            return []
+        frames: list[Frame] = []
+        for grid in decoded_grids:
+            if grid is None:
+                frames.append([SudokuCell(CellState.HIDDEN) for _ in range(81)])
+                continue
+            frames.append(
+                [
+                    _classify(
+                        PositionState.ACCEPTED,
+                        str(grid[row][col]),
+                        puzzle[row][col] != 0,
+                        puzzle[row][col],
+                        solution[row][col],
+                    )
+                    for row in range(9)
+                    for col in range(9)
+                ]
+            )
+        return frames
 
     frames: list[Frame] = []
     for step in trace:

@@ -106,6 +106,23 @@ def _sudoku_samples(n: int) -> list[Sample]:
     return samples
 
 
+def _sudoku_trace_samples(n: int) -> list[Sample]:
+    from ..datasets.sudoku import format_sudoku_trace_prompt
+
+    samples = _sudoku_samples(n)
+    return [
+        Sample(
+            sample_id=sample.sample_id.replace("sudoku-demo", "sudoku-trace-demo"),
+            prompt=format_sudoku_trace_prompt(
+                "".join(str(value) for row in sample.reference.puzzle for value in row)
+            ),
+            reference=sample.reference,
+            meta={**sample.meta, "max_new_tokens": 128},
+        )
+        for sample in samples
+    ]
+
+
 def _ruler_samples(n: int) -> list[Sample]:
     positions = ["front", "middle", "back"]
     return [
@@ -139,6 +156,7 @@ _BUILDERS = {
     "mbpp": _mbpp_samples,
     "structeval_t": _structeval_t_samples,
     "sudoku": _sudoku_samples,
+    "sudoku_trace": _sudoku_trace_samples,
     "ruler": _ruler_samples,
     "hellobench": _hellobench_samples,
 }

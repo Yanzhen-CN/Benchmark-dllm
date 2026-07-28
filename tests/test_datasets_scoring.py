@@ -26,6 +26,7 @@ from dllm_bench.datasets.structeval_t import (
 )
 from dllm_bench.datasets.sudoku import (
     SudokuDataset,
+    SudokuTraceDataset,
     SudokuReference,
     _build_prompt,
     extract_final_grid,
@@ -40,8 +41,10 @@ from dllm_bench.datasets.sudoku import (
 from dllm_bench.interfaces import (
     GenerationRequest,
     GenerationResult,
+    PositionState,
     RunStatus,
     TimingResult,
+    TraceStep,
 )
 
 # ---------------------------------------------------------------------------
@@ -471,6 +474,58 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
     assert all(sample.meta["max_new_tokens"] == 96 for sample in samples)
+
+
+def test_instructed_sudoku_wraps_the_same_puzzle_and_reference():
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    puzzle_digits = "".join(str(value) for row in puzzle for value in row)
+    reference = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE, difficulty="easy")
+    raw = Sample(
+        sample_id="sudoku-test-0001",
+        prompt=puzzle_digits,
+        reference=reference,
+        meta={"max_new_tokens": 82},
+    )
+
+    sample = SudokuTraceDataset(samples=[raw]).load_samples()[0]
+
+    assert sample.sample_id == raw.sample_id
+    assert sample.reference is reference
+    assert "0 marks a blank cell" in sample.prompt
+    assert "Return exactly the completed 81 digits" in sample.prompt
+    assert sample.prompt.endswith(puzzle_digits)
+    assert sample.meta["prompt_protocol"] == "compact-trace-81-digit-v1"
+    assert sample.meta["max_new_tokens"] == 128
+
+
+def test_instructed_sudoku_persists_decoded_canvas_revision_metrics():
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    reference = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE, difficulty="easy")
+    sample = Sample("trace", "solve", reference)
+    solution = "".join(str(value) for row in _EASY_PUZZLE for value in row)
+    wrong_digit = "9" if solution[0] != "9" else "8"
+    trace = [
+        TraceStep(
+            forward_index=index,
+            token_ids=list(range(256)),
+            position_states=[PositionState.VISIBLE] * 256,
+            committed_positions=[],
+            decoded_text=digits,
+        )
+        for index, digits in enumerate((wrong_digit + solution[1:], solution))
+    ]
+    dataset = SudokuTraceDataset(samples=[sample])
+
+    metrics = dataset.trace_aux_metrics(sample, trace)
+    score = dataset.score(sample, solution)
+    score.aux.update(metrics)
+    summary = dataset.aggregate_records([sample], [score])
+
+    assert metrics["trace_revision_count"] == 1.0
+    assert metrics["trace_parseable_step_rate"] == 1.0
+    assert metrics["trace_error_then_correct_count"] == 1.0
+    assert summary["trace_correction_opportunity_count"] == 1.0
+    assert summary["trace_correction_success_rate"] == 1.0
 
 
 def test_sudoku_preparation_freezes_fifty_easy_and_fifty_hard():

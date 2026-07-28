@@ -43,11 +43,24 @@ SUDOKU_TEST_ROWS = 1_000
 # tokenizer headroom while staying aligned to the diffusion models' 32-token
 # blocks; a 512-token slot encouraged fixed-length dLLMs to produce essays.
 SUDOKU_MAX_NEW_TOKENS = 96
+SUDOKU_TRACE_MAX_NEW_TOKENS = 128
+SUDOKU_TRACE_PROTOCOL = "compact-trace-81-digit-v1"
 
 _FINAL_ANSWER_MARKER_RE = re.compile(
     r"(?im)^\s*(?:####|final\s+answer\s*:)\s*"
 )
 _COMPACT_SOLUTION_RE = re.compile(r"(?<![0-9])([1-9]{81})(?![0-9])")
+
+
+def format_sudoku_trace_prompt(puzzle_digits: str) -> str:
+    """Request a compact answer whose canvas states can map to grid cells."""
+    return (
+        "Solve the Sudoku puzzle below. The puzzle is an 81-digit row-major "
+        "sequence, and 0 marks a blank cell.\n"
+        "Return exactly the completed 81 digits in row-major order. Use only "
+        "digits 1-9, with no spaces, punctuation, code fences, or explanation.\n\n"
+        f"Puzzle:\n{puzzle_digits}"
+    )
 
 
 def _box_cells(r: int, c: int) -> list[tuple[int, int]]:
@@ -313,7 +326,48 @@ class SudokuDataset(Dataset):
                     sum(result.primary_score for result in group) / len(group)
                 )
                 summary[f"n_{difficulty}"] = float(len(group))
+        corrected = sum(
+            result.aux.get("trace_error_then_correct_count", 0.0)
+            for result in results
+        )
+        still_wrong = sum(
+            result.aux.get("trace_error_then_still_wrong_count", 0.0)
+            for result in results
+        )
+        opportunities = corrected + still_wrong
+        summary["trace_correction_opportunity_count"] = opportunities
+        if opportunities:
+            summary["trace_correction_success_rate"] = corrected / opportunities
         return summary
+
+    def trace_aux_metrics(self, sample: Sample, trace: list) -> dict[str, float]:
+        from ..metrics.sudoku_revision import (
+            compute_revision_count,
+            correction_outcomes,
+            revision_counts_by_stage,
+            trace_parseable_step_count,
+        )
+
+        ref: SudokuReference = sample.reference
+        stages = revision_counts_by_stage(trace, puzzle=ref.puzzle)
+        corrected, still_wrong, _ = correction_outcomes(
+            trace, ref.solution, puzzle=ref.puzzle
+        )
+        parseable_steps = trace_parseable_step_count(trace)
+        return {
+            "trace_revision_count": float(
+                compute_revision_count(trace, puzzle=ref.puzzle)
+            ),
+            "trace_revision_count_early": float(stages["early"]),
+            "trace_revision_count_middle": float(stages["middle"]),
+            "trace_revision_count_late": float(stages["late"]),
+            "trace_parseable_step_count": float(parseable_steps),
+            "trace_parseable_step_rate": (
+                parseable_steps / len(trace) if trace else 0.0
+            ),
+            "trace_error_then_correct_count": float(corrected),
+            "trace_error_then_still_wrong_count": float(still_wrong),
+        }
 
 
 def group_by_difficulty(
@@ -549,3 +603,34 @@ def _load_official_test_samples(
                     )
                 )
     return samples
+
+
+class SudokuTraceDataset(SudokuDataset):
+    """The same frozen rows with a compact protocol for revision analysis."""
+
+    name = "sudoku_trace"
+
+    def load_samples(self, n: int | None = None) -> list[Sample]:
+        samples = super().load_samples(n=n)
+        instructed: list[Sample] = []
+        for sample in samples:
+            puzzle_digits = _grid_to_digits(sample.reference.puzzle)
+            instructed.append(
+                replace(
+                    sample,
+                    prompt=format_sudoku_trace_prompt(puzzle_digits),
+                    meta={
+                        **sample.meta,
+                        "prompt_protocol": SUDOKU_TRACE_PROTOCOL,
+                        "max_new_tokens": SUDOKU_TRACE_MAX_NEW_TOKENS,
+                    },
+                )
+            )
+        return instructed
+
+    def preparation_signature(self) -> dict[str, object]:
+        return {
+            **super().preparation_signature(),
+            "prompt_protocol": SUDOKU_TRACE_PROTOCOL,
+            "max_new_tokens": SUDOKU_TRACE_MAX_NEW_TOKENS,
+        }

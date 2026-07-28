@@ -6,6 +6,7 @@ from dllm_bench.metrics.sudoku_revision import (
     correction_outcomes,
     extract_cell_digit_sequences,
     revision_counts_by_stage,
+    trace_parseable_step_count,
 )
 
 
@@ -76,7 +77,7 @@ def test_extract_cell_digit_sequences_shape_and_values():
     assert sequences[0] == [None, None]
 
 
-def test_rejects_wrong_position_count():
+def test_non_cell_canvas_without_a_decoded_grid_has_no_revisions():
     bad_trace = [
         TraceStep(
             forward_index=0,
@@ -86,8 +87,35 @@ def test_rejects_wrong_position_count():
             decoded_text="",
         )
     ]
-    with pytest.raises(ValueError):
-        compute_revision_count(bad_trace)
+    assert compute_revision_count(bad_trace) == 0
+    assert trace_parseable_step_count(bad_trace) == 0
+
+
+def _decoded_canvas_step(digits: str) -> TraceStep:
+    return TraceStep(
+        forward_index=0,
+        token_ids=list(range(256)),
+        position_states=[PositionState.VISIBLE] * 256,
+        committed_positions=[],
+        decoded_text=f"<canvas>{digits}</canvas>",
+    )
+
+
+def test_decoded_diffusion_canvas_tracks_blank_cell_correction():
+    solution = [[1 for _ in range(9)] for _ in range(9)]
+    puzzle = [[1 for _ in range(9)] for _ in range(9)]
+    puzzle[0][0] = 0
+    wrong = "2" + "1" * 80
+    correct = "1" * 81
+    trace = [_decoded_canvas_step(wrong), _decoded_canvas_step(correct)]
+
+    assert trace_parseable_step_count(trace) == 2
+    assert compute_revision_count(trace, puzzle=puzzle) == 1
+    corrected, still_wrong, rate = correction_outcomes(
+        trace, solution, puzzle=puzzle
+    )
+    assert (corrected, still_wrong) == (1, 0)
+    assert rate == 1.0
 
 
 def test_unparseable_digit_text_is_treated_as_none():

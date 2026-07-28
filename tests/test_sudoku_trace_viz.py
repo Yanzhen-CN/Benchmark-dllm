@@ -105,7 +105,7 @@ def test_derive_sudoku_frames_classifies_mismatches():
     assert frames[-1][1].state == CellState.GIVEN_MISMATCH
 
 
-def test_derive_sudoku_frames_rejects_wrong_position_count():
+def test_derive_sudoku_frames_skips_unparseable_non_cell_canvas():
     puzzle = _puzzle_with_blanks([(0, 0)])
     trace = [
         TraceStep(
@@ -116,8 +116,30 @@ def test_derive_sudoku_frames_rejects_wrong_position_count():
             decoded_text="",
         )
     ]
-    with pytest.raises(ValueError):
-        derive_sudoku_frames(trace, puzzle, _SOLUTION)
+    assert derive_sudoku_frames(trace, puzzle, _SOLUTION) == []
+
+
+def test_derive_sudoku_frames_decodes_diffusion_canvas_candidates():
+    puzzle = _puzzle_with_blanks([(0, 0)])
+    correct = "".join(str(value) for row in _SOLUTION for value in row)
+    wrong_digit = "9" if correct[0] != "9" else "8"
+    wrong = wrong_digit + correct[1:]
+    trace = [
+        TraceStep(
+            forward_index=index,
+            token_ids=list(range(256)),
+            position_states=[PositionState.VISIBLE] * 256,
+            committed_positions=[],
+            decoded_text=digits,
+        )
+        for index, digits in enumerate((wrong, correct))
+    ]
+
+    frames = derive_sudoku_frames(trace, puzzle, _SOLUTION)
+
+    assert frames[0][0].state == CellState.FILL_WRONG
+    assert frames[1][0].state == CellState.FILL_CORRECT
+    assert frames[1][1].state == CellState.GIVEN_MATCH
 
 
 def test_derive_sudoku_frames_masked_position_is_hidden():

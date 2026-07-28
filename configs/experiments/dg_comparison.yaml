@@ -14,6 +14,7 @@ datasets:
   - configs/datasets/mbpp.yaml
   - configs/datasets/structeval_t.yaml
   - configs/datasets/sudoku.yaml
+  - configs/datasets/sudoku_trace.yaml
   - config: configs/datasets/ruler.yaml
     max_new_tokens: 64
   - config: configs/datasets/hellobench.yaml

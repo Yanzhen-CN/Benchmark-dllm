@@ -226,3 +226,35 @@ def test_render_sample_report_renders_sudoku_gif_for_81_position_trace(tmp_path)
     )
     assert "sudoku_gif" in written
     assert Path(written["sudoku_gif"]).exists()
+
+
+def test_render_sample_report_renders_instructed_sudoku_from_decoded_canvas(tmp_path):
+    from dllm_bench.datasets.base import Sample
+    from dllm_bench.datasets.sudoku import SudokuReference
+    from dllm_bench.interfaces import PositionState, TraceStep
+
+    solution = [[(row * 3 + row // 3 + col) % 9 + 1 for col in range(9)] for row in range(9)]
+    puzzle = [row[:] for row in solution]
+    puzzle[0][0] = 0
+    digits = "".join(str(value) for row in solution for value in row)
+    trace = [
+        TraceStep(
+            forward_index=0,
+            token_ids=list(range(256)),
+            position_states=[PositionState.VISIBLE] * 256,
+            committed_positions=[],
+            decoded_text=digits,
+        )
+    ]
+    sample = Sample("sudoku-test-0000", "solve", SudokuReference(puzzle, solution))
+
+    written = render_sample_report(
+        sample_id=sample.sample_id,
+        trace=trace,
+        final_valid_length=81,
+        out_dir=str(tmp_path),
+        dataset_name="sudoku_trace",
+        sample=sample,
+    )
+
+    assert Path(written["sudoku_gif"]).exists()

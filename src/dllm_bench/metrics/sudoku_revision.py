@@ -21,9 +21,12 @@ a revision).
 
 from __future__ import annotations
 
+import re
+
 from ..interfaces import PositionState, TraceStep
 
 _DIGITS = set("123456789")
+Grid = list[list[int]]
 
 
 def _parse_digit(text: str | None) -> int | None:
@@ -31,6 +34,45 @@ def _parse_digit(text: str | None) -> int | None:
         return None
     stripped = text.strip()
     return int(stripped) if len(stripped) == 1 and stripped in _DIGITS else None
+
+
+def _token_aligned_grid(step: TraceStep) -> Grid | None:
+    if len(step.position_states) != 81 or not step.token_texts:
+        return None
+    digits: list[int] = []
+    for position in range(81):
+        if step.position_states[position] == PositionState.MASKED:
+            return None
+        digit = _parse_digit(step.token_texts[position])
+        if digit is None:
+            return None
+        digits.append(digit)
+    return [digits[row * 9 : (row + 1) * 9] for row in range(9)]
+
+
+def _decoded_grid(step: TraceStep) -> Grid | None:
+    """Extract one unambiguous 81-digit candidate from a decoded canvas."""
+    matches = re.findall(r"(?<![0-9])([1-9]{81})(?![0-9])", step.decoded_text)
+    if not matches:
+        return None
+    digits = matches[-1]
+    return [
+        [int(digits[row * 9 + col]) for col in range(9)]
+        for row in range(9)
+    ]
+
+
+def trace_step_grid(step: TraceStep) -> Grid | None:
+    """Decode a Sudoku candidate without assuming one token per cell."""
+    return _token_aligned_grid(step) or _decoded_grid(step)
+
+
+def trace_parseable_step_count(trace: list[TraceStep]) -> int:
+    return sum(trace_step_grid(step) is not None for step in trace)
+
+
+def _uses_row_major_token_canvas(trace: list[TraceStep]) -> bool:
+    return bool(trace) and len(trace[-1].position_states) == 81
 
 
 def extract_cell_digit_sequences(trace: list[TraceStep]) -> list[list[int | None]]:
@@ -41,40 +83,58 @@ def extract_cell_digit_sequences(trace: list[TraceStep]) -> list[list[int | None
     """
     if not trace:
         return [[] for _ in range(81)]
-    n = len(trace[-1].position_states)
-    if n != 81:
-        raise ValueError(f"expected an 81-position row-major canvas, got {n}")
-
     sequences: list[list[int | None]] = [[] for _ in range(81)]
+    if _uses_row_major_token_canvas(trace):
+        for step in trace:
+            for position in range(81):
+                if step.position_states[position] == PositionState.MASKED:
+                    sequences[position].append(None)
+                    continue
+                digit_text = step.token_texts[position] if step.token_texts else None
+                sequences[position].append(_parse_digit(digit_text))
+        return sequences
+
     for step in trace:
+        grid = _decoded_grid(step)
         for position in range(81):
-            if step.position_states[position] == PositionState.MASKED:
-                sequences[position].append(None)
-                continue
-            digit_text = step.token_texts[position] if step.token_texts else None
-            sequences[position].append(_parse_digit(digit_text))
+            row, col = divmod(position, 9)
+            sequences[position].append(grid[row][col] if grid is not None else None)
     return sequences
 
 
-def compute_revision_count(trace: list[TraceStep]) -> int:
+def _included_positions(puzzle: Grid | None) -> range | list[int]:
+    if puzzle is None:
+        return range(81)
+    return [
+        position
+        for position in range(81)
+        if puzzle[position // 9][position % 9] == 0
+    ]
+
+
+def compute_revision_count(trace: list[TraceStep], puzzle: Grid | None = None) -> int:
     """RevisionCount for one sample (design doc 4.2.5)."""
     sequences = extract_cell_digit_sequences(trace)
     count = 0
-    for sequence in sequences:
+    for position in _included_positions(puzzle):
+        sequence = sequences[position]
         for previous, current in zip(sequence, sequence[1:]):
             if previous is not None and current is not None and previous != current:
                 count += 1
     return count
 
 
-def revision_counts_by_stage(trace: list[TraceStep]) -> dict[str, int]:
+def revision_counts_by_stage(
+    trace: list[TraceStep], puzzle: Grid | None = None
+) -> dict[str, int]:
     """RevisionCount split over normalized forward-progress thirds."""
     counts = {"early": 0, "middle": 0, "late": 0}
     if len(trace) < 2:
         return counts
     sequences = extract_cell_digit_sequences(trace)
     denominator = max(len(trace) - 1, 1)
-    for sequence in sequences:
+    for position in _included_positions(puzzle):
+        sequence = sequences[position]
         for step_index, (previous, current) in enumerate(zip(sequence, sequence[1:]), start=1):
             if previous is None or current is None or previous == current:
                 continue
@@ -85,13 +145,14 @@ def revision_counts_by_stage(trace: list[TraceStep]) -> dict[str, int]:
 
 
 def correction_outcomes(
-    trace: list[TraceStep], solution: list[list[int]]
+    trace: list[TraceStep], solution: Grid, puzzle: Grid | None = None
 ) -> tuple[int, int, float | None]:
     """Return ErrorThenCorrect, ErrorThenStillWrong, and their success rate."""
     sequences = extract_cell_digit_sequences(trace)
     correct = still_wrong = 0
     flat_solution = [value for row in solution for value in row]
-    for position, sequence in enumerate(sequences):
+    for position in _included_positions(puzzle):
+        sequence = sequences[position]
         target = flat_solution[position]
         if not any(value is not None and value != target for value in sequence):
             continue
