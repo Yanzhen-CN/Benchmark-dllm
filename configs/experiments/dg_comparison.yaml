@@ -6,7 +6,7 @@ base_dir: ../..
 models:
   - config: configs/models/diffusiongemma.yaml
     variants: [official]
-  - config: configs/models/gemma4_26b.yaml
+  - config: configs/models/gemma4_26b_a4b.yaml
     variants: [ar-baseline]
 
 datasets:

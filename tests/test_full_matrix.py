@@ -58,7 +58,10 @@ def test_dg_comparison_matrix_is_a_separate_matched_pair():
 
     assert seed == 42
     assert len(jobs) == 2 * 6
-    assert {job.model_name for job in jobs} == {"diffusiongemma", "gemma4_26b"}
+    assert {job.model_name for job in jobs} == {
+        "diffusiongemma",
+        "gemma4_26b_a4b",
+    }
     assert {job.dataset_config.stem for job in jobs} == {
         "gsm8k", "mbpp", "structeval_t", "sudoku", "ruler", "hellobench"
     }
