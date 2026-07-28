@@ -24,6 +24,7 @@ class ModelProfile:
     torch_version: str | None = None
     transformers_version: str | None = None
     torch_cuda_indexes: tuple[str, ...] = ()
+    torchvision_version: str | None = None
 
 
 PROFILES: Mapping[str, ModelProfile] = {
@@ -46,10 +47,12 @@ PROFILES: Mapping[str, ModelProfile] = {
     "diffusiongemma": ModelProfile(
         "diffusiongemma", "diffusiongemma", "configs/models/diffusiongemma.yaml",
         "dev,diffusiongemma,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
+        torchvision_version="0.21.0",
     ),
     "gemma4_26b_a4b": ModelProfile(
         "gemma4_26b_a4b", "gemma4_26b_a4b", "configs/models/gemma4_26b_a4b.yaml",
         "dev,gemma4,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
+        torchvision_version="0.21.0",
     ),
     "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
 }
@@ -104,10 +107,17 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
              "--index-url", f"https://download.pytorch.org/whl/{cuda_index}"],
             env=install_env,
         )
-        subprocess.run(
-            [str(python), "-m", "pip", "uninstall", "-y", "torchvision", "torchaudio"],
-            cwd=REPO_ROOT, env=install_env, check=False,
-        )
+        uninstall = [str(python), "-m", "pip", "uninstall", "-y", "torchaudio"]
+        if profile.torchvision_version is None:
+            uninstall.append("torchvision")
+        subprocess.run(uninstall, cwd=REPO_ROOT, env=install_env, check=False)
+        if profile.torchvision_version is not None:
+            run(
+                [python, "-m", "pip", "install", "--upgrade",
+                 f"torchvision=={profile.torchvision_version}",
+                 "--index-url", f"https://download.pytorch.org/whl/{cuda_index}"],
+                env=install_env,
+            )
     if profile.transformers_version:
         run(
             [python, "-m", "pip", "install", "--upgrade",
@@ -141,6 +151,9 @@ if importlib.util.find_spec('torch'):
     print('CUDA runtime:', torch.version.cuda)
     if torch.cuda.is_available():
         print('GPU:', torch.cuda.get_device_name(0))
+if importlib.util.find_spec('torchvision'):
+    import torchvision
+    print('torchvision:', torchvision.__version__)
 if importlib.util.find_spec('transformers'):
     import transformers
     print('transformers:', transformers.__version__)
@@ -223,6 +236,7 @@ def _profile_version_mismatches(
         for name, version in (
             ("torch", profile.torch_version),
             ("transformers", profile.transformers_version),
+            ("torchvision", profile.torchvision_version),
         )
         if version is not None
     }
@@ -245,7 +259,7 @@ def _installed_version_matches(
     # CUDA wheels report a PEP 440 local suffix such as ``2.6.0+cu124`` even
     # though the pinned public Torch version and pip requirement are ``2.6.0``.
     # The CUDA index is validated separately, so this is not a stale package.
-    if distribution == "torch":
+    if distribution in {"torch", "torchvision"}:
         installed = installed.partition("+")[0]
     return installed == required
 
@@ -277,6 +291,15 @@ def repair_profile_dependencies(
             )
         run(
             [python, "-m", "pip", "install", "--upgrade", f"torch=={profile.torch_version}",
+             "--index-url", f"https://download.pytorch.org/whl/{cuda_index}"],
+            env=install_env,
+        )
+    if profile.torchvision_version is not None and (
+        "torchvision" in mismatches or "torch" in mismatches
+    ):
+        run(
+            [python, "-m", "pip", "install", "--upgrade",
+             f"torchvision=={profile.torchvision_version}",
              "--index-url", f"https://download.pytorch.org/whl/{cuda_index}"],
             env=install_env,
         )
@@ -343,9 +366,9 @@ def check_environment(profile: ModelProfile, python: Path) -> None:
     )
     run([python, "-c", code], env=model_environment(profile))
     if profile.model_id == "diffusiongemma":
-        run([python, "-c", "from transformers import DiffusionGemmaForBlockDiffusion; print('DiffusionGemma class OK')"])
+        run([python, "-c", "from transformers import DiffusionGemmaForBlockDiffusion, Gemma4Processor; print('DiffusionGemma classes OK')"])
     elif profile.model_id == "gemma4_26b_a4b":
-        run([python, "-c", "from transformers import AutoModelForMultimodalLM; print('Gemma 4 class OK')"])
+        run([python, "-c", "from transformers import AutoModelForMultimodalLM, Gemma4Processor; print('Gemma 4 classes OK')"])
 
 
 def benchmark_arguments(profile: ModelProfile) -> list[str]:

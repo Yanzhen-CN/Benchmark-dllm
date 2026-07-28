@@ -66,6 +66,9 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
     inference_dtype = getattr(adapter, "_inference_dtype", None)
     if inference_dtype:
         metadata["inference_dtype"] = inference_dtype
+    inference_optimizations = getattr(adapter, "inference_optimizations", None)
+    if inference_optimizations:
+        metadata["inference_optimizations"] = list(inference_optimizations)
     git_commit = _get_git_commit()
     if git_commit:
         metadata["code_commit"] = git_commit

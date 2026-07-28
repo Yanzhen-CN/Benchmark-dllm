@@ -150,6 +150,11 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         device: str | None = None,
     ) -> None:
         super().__init__(model_name_or_path, step_config, name="dreamreasoner", config_name=config_name, device=device)
+        self.inference_optimizations.extend(
+            ["official_prefix_kv_cache", "bounded_chunked_prefill_mask"]
+        )
+        if step_config.extra.get("greedy_confidence_mode", "softmax") == "logsumexp":
+            self.inference_optimizations.append("greedy_logsumexp_confidence")
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -228,6 +233,14 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         top_p = float(step_config.extra.get("top_p", 1.0))
         confidence_threshold = float(step_config.extra.get("confidence_threshold", 0.9))
         eb_threshold = step_config.extra.get("eb_threshold", 0.35)
+        greedy_confidence_mode = step_config.extra.get(
+            "greedy_confidence_mode", "softmax"
+        )
+        if greedy_confidence_mode not in {"softmax", "logsumexp"}:
+            raise ValueError(
+                "DreamReasoner step_config.extra['greedy_confidence_mode'] "
+                "must be 'softmax' or 'logsumexp'"
+            )
         mask_token_id = self._resolve_mask_token_id(step_config)
 
         device = self._device
@@ -329,7 +342,13 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     store_kv=False,
                 ).logits
 
-                x0, x0_p = _sample_with_temperature_topk_topp(logits, temperature, top_k, top_p)
+                x0, x0_p = _sample_with_temperature_topk_topp(
+                    logits,
+                    temperature,
+                    top_k,
+                    top_p,
+                    greedy_confidence_mode=greedy_confidence_mode,
+                )
                 x0 = torch.where(mask_index, x0, cur_x)
                 transfer_index = _select_transfer_index(
                     remasking_strategy,
@@ -401,7 +420,14 @@ def _top_p_logits(logits, p: float):
     return logits.masked_fill(mask_indices, float("-inf"))
 
 
-def _sample_with_temperature_topk_topp(logits, temperature: float = 1.0, top_k: int = 0, top_p: float = 1.0):
+def _sample_with_temperature_topk_topp(
+    logits,
+    temperature: float = 1.0,
+    top_k: int = 0,
+    top_p: float = 1.0,
+    *,
+    greedy_confidence_mode: str = "softmax",
+):
     """Ported exactly from the real source. This adjusted distribution (not
     raw-logit softmax) is what confidence-based remasking strategies select
     on — see this module's docstring for why the trace's own entropy/top1
@@ -420,12 +446,23 @@ def _sample_with_temperature_topk_topp(logits, temperature: float = 1.0, top_k: 
     if top_p < 1.0:
         logits = _top_p_logits(logits, top_p)
 
-    probs = F.softmax(logits, dim=-1)
-    if temperature > 0:
-        token = torch.multinomial(probs, num_samples=1)
+    if temperature > 0 or greedy_confidence_mode == "softmax":
+        probs = F.softmax(logits, dim=-1)
+        if temperature > 0:
+            token = torch.multinomial(probs, num_samples=1)
+        else:
+            token = probs.argmax(dim=-1, keepdim=True)
+        token_prob = torch.gather(probs, -1, token)
     else:
-        token = probs.argmax(dim=-1, keepdim=True)
-    token_prob = torch.gather(probs, -1, token)
+        # Formal Best/Fast generation is greedy. Avoid materializing a second
+        # ``positions x vocabulary`` probability tensor: argmax is identical
+        # on logits, and the selected probability follows exactly from
+        # exp(selected_logit - logsumexp(logits)).
+        token = logits.argmax(dim=-1, keepdim=True)
+        selected_logits = torch.gather(logits, -1, token)
+        token_prob = torch.exp(
+            selected_logits - torch.logsumexp(logits, dim=-1, keepdim=True)
+        )
     return token.view(*orig_shape), token_prob.view(*orig_shape)
 
 

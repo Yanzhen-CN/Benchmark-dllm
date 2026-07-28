@@ -49,3 +49,17 @@ configs:
       extra:
         temperature: 0.0
         remasking: low_confidence
+  # Same sampling budget as Best; only the official var_generate execution
+  # strategy changes, giving a clean current-vs-optimized comparison.
+  optimized:
+    adapter: dllm_bench.models.illada.IlladaAdapter
+    init_kwargs:
+      model_name_or_path: GSAI-ML/iLLaDA-8B-Instruct
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 32
+      extra:
+        temperature: 0.0
+        remasking: low_confidence
+        canvas_mode: growing

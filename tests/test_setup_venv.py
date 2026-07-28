@@ -84,6 +84,44 @@ def test_gemma4_ar_matches_diffusiongemma_runtime():
     diffusion = _model_script.PROFILES["diffusiongemma"]
     assert gemma_ar.torch_version == diffusion.torch_version
     assert gemma_ar.transformers_version == diffusion.transformers_version
+    assert gemma_ar.torchvision_version == "0.21.0"
+    assert diffusion.torchvision_version == "0.21.0"
+
+
+def test_diffusiongemma_repairs_missing_torchvision(monkeypatch):
+    installed = {
+        "torch": "2.6.0+cu124",
+        "transformers": "5.14.1",
+        "torchvision": None,
+    }
+    monkeypatch.setattr(
+        _model_script,
+        "_installed_distribution_version",
+        lambda python, distribution: installed[distribution],
+    )
+
+    mismatches = _model_script._profile_version_mismatches(
+        _model_script.PROFILES["diffusiongemma"], Path("python")
+    )
+
+    assert mismatches == {"torchvision": (None, "0.21.0")}
+
+
+def test_torchvision_cuda_local_version_matches_public_pin(monkeypatch):
+    installed = {
+        "torch": "2.6.0+cu124",
+        "transformers": "5.14.1",
+        "torchvision": "0.21.0+cu124",
+    }
+    monkeypatch.setattr(
+        _model_script,
+        "_installed_distribution_version",
+        lambda python, distribution: installed[distribution],
+    )
+
+    assert _model_script._profile_version_mismatches(
+        _model_script.PROFILES["diffusiongemma"], Path("python")
+    ) == {}
 
 
 def test_qwen3_8b_matches_qwen3_4b_runtime():

@@ -68,6 +68,7 @@ class HFDiffusionAdapter(BaseModelAdapter):
         self._inference_dtype = "bfloat16"
         self._model = None
         self._tokenizer = None
+        self.inference_optimizations = ["torch_inference_mode"]
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -167,6 +168,9 @@ class HFDiffusionAdapter(BaseModelAdapter):
         result_extra = {}
         if self._last_input_tokens is not None:
             result_extra["input_tokens"] = self._last_input_tokens
+        result_extra["inference_optimizations"] = list(
+            self.inference_optimizations
+        )
         return GenerationResult(
             request=request,
             output_text=output_text,

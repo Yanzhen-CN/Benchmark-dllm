@@ -340,7 +340,7 @@ instead of one combined "run" — this is what lets you:
 - generate on one machine (e.g. a GPU box) and score/visualize on another —
   only `model_output/` needs to make that trip.
 
-The atomic unit of testing is the **model**, not model+variant: Best/Fast
+The atomic unit of testing is the **model**, not model+variant: Best/Fast/Optimized
 (or standard/jump/gidd) run *together*, in one process, by default — loading
 weights onto the GPU only happens once, and every variant just changes the
 generation-time config (`models/model_cache.py`). So leaving out
@@ -434,13 +434,55 @@ the 8B-class checkpoints do not transiently become default-precision models
 that exhaust a 24 GiB device. `inference_dtype` is persisted in each run's
 `_meta.json` for reproducibility.
 
+Both HF diffusion adapters run under `torch.inference_mode()`. Their enabled
+optimizations are persisted in `_meta.json` and every sample JSON under
+`inference_optimizations`, so reported system results identify the execution
+path rather than relying on an undocumented code-state assumption.
+
+The iLLaDA `optimized` variant uses the official repository's
+[`var_generate`](https://github.com/ML-GSAI/LLaDA/blob/main/generate.py)
+growing-canvas path: only the current and already generated blocks enter each
+forward pass; future output-mask blocks are not repeatedly computed. This is
+an official inference strategy, but it changes the model-visible canvas, so
+quality and resource metrics must both be regenerated and reported. The
+existing `best` variant retains the current fixed-canvas implementation with
+the same 32-step sampling budget and is its explicit A/B baseline. `fast`
+continues to mean a smaller denoising-step budget, not an implementation
+optimization.
+
+DreamReasoner retains the checkpoint's official prefix-KV-cache generation
+path from
+[`generation_utils.py`](https://huggingface.co/Dream-org/DreamReasoner-8B/blob/main/generation_utils.py).
+Long prompt prefill uses equivalent bounded block-triangular chunks instead
+of materializing one sequence-square mask. For the formal greedy path,
+selected-token confidence is computed as
+`exp(selected_logit - logsumexp(logits))`; this is numerically equivalent to
+gathering from the full softmax but avoids another block-by-vocabulary tensor.
+This path is exposed only by DreamReasoner's `optimized` variant; `best`
+retains the current full-softmax implementation with the same 32-step budget.
+
+Run the isolated systems ablation on the same idle GPU, without concurrent
+jobs, and write it outside the formal output tree:
+
+```bash
+python run_bench.py --matrix configs/experiments/dllm_optimization_ablation.yaml \
+  --real-data --output-root output_optimization_ablation
+```
+
+The ablation matrix fixes the sampling schedule within each pair and covers
+RULER plus HelloBench. Compare task quality as a guardrail and report median
+sample latency, energy, and peak VRAM with hardware/software metadata. Do not
+describe `inference_mode`, growing canvas, KV cache, or logsumexp confidence as
+measured speedups until this paired run has produced results.
+
 Local HF models stay fully on the selected GPU. The runner does not retry an
 OOM by reloading weights, changing placement, or silently switching to CPU
 offload, because that would change the execution class and invalidate direct
 time/energy/VRAM comparisons. A formal-sample OOM is persisted with
 `status=oom`; an untimed-warmup OOM stops the job with the original CUDA
 exception so implementation problems are not mislabeled as capacity results.
-Best/Fast still share the one normally loaded checkpoint within the process.
+Best/Fast/Optimized still share the one normally loaded checkpoint within the
+process.
 
 Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in

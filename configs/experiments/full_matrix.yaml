@@ -1,4 +1,4 @@
-# Reference list of the section-5 model x dataset matrix (11 formal configs x
+# Reference list of the section-5 model x dataset matrix (13 formal configs x
 # 6 datasets, including the same-scale DiffusionGemma/Gemma 4 reference pair).
 # This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
@@ -16,9 +16,9 @@ models:
   - config: configs/models/qwen3_8b.yaml  # same-scale AR reference for 8B dLLMs
     variants: [ar-baseline]
   - config: configs/models/illada.yaml    # illada-8B
-    variants: [best, fast]
+    variants: [best, fast, optimized]
   - config: configs/models/dreamreasoner.yaml # dream reasoner-8B
-    variants: [best, fast]
+    variants: [best, fast, optimized]
   - config: configs/models/w1.yaml  # w1-instruct-4B
     variants: [standard, jump, gidd]  # sampler difference
   - config: configs/models/diffusiongemma.yaml

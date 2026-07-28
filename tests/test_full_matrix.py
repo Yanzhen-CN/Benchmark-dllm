@@ -28,6 +28,16 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         "ruler",
         "hellobench",
     }
+    illada_job = next(
+        job for job in jobs
+        if job.model_name == "illada" and job.dataset_config.stem == "gsm8k"
+    )
+    dream_job = next(
+        job for job in jobs
+        if job.model_name == "dreamreasoner" and job.dataset_config.stem == "gsm8k"
+    )
+    assert illada_job.variants == ("best", "fast", "optimized")
+    assert dream_job.variants == ("best", "fast", "optimized")
 
 
 def test_matrix_can_filter_task2_datasets_for_selected_models():

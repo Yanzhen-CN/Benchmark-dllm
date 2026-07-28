@@ -109,15 +109,27 @@ def test_env_placeholder_left_as_is_when_unset(monkeypatch):
 def test_illada_variants_carry_distinct_steps_per_block():
     best = build_model_adapter(CONFIGS_DIR / "models" / "illada.yaml", variant="best")
     fast = build_model_adapter(CONFIGS_DIR / "models" / "illada.yaml", variant="fast")
+    optimized = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada.yaml", variant="optimized"
+    )
     assert best._step_config.steps_per_block == 32
     assert fast._step_config.steps_per_block == 16
+    assert optimized._step_config.steps_per_block == 32
+    assert best._step_config.extra.get("canvas_mode", "fixed") == "fixed"
+    assert optimized._step_config.extra["canvas_mode"] == "growing"
 
 
 def test_dreamreasoner_variants_carry_distinct_steps_per_block():
     best = build_model_adapter(CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="best")
     fast = build_model_adapter(CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="fast")
+    optimized = build_model_adapter(
+        CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="optimized"
+    )
     assert best._step_config.steps_per_block == 32
     assert fast._step_config.steps_per_block == 16
+    assert optimized._step_config.steps_per_block == 32
+    assert best._step_config.extra["greedy_confidence_mode"] == "softmax"
+    assert optimized._step_config.extra["greedy_confidence_mode"] == "logsumexp"
 
 
 def test_w1_yaml_declares_all_three_configs():

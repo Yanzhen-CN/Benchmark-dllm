@@ -18,6 +18,7 @@ from dllm_bench.interfaces import PositionState
 from dllm_bench.models.dreamreasoner import (
     DreamReasonerAdapter,
     _get_num_transfer_tokens,
+    _sample_with_temperature_topk_topp,
     _select_transfer_index,
 )
 from dllm_bench.models.hf_diffusion import DiffusionStepConfig
@@ -29,6 +30,25 @@ def test_get_num_transfer_tokens_spreads_remainder_across_first_steps():
     assert _get_num_transfer_tokens(10, 3).tolist() == [4, 3, 3]
     assert _get_num_transfer_tokens(9, 3).tolist() == [3, 3, 3]
     assert _get_num_transfer_tokens(4, 4).tolist() == [1, 1, 1, 1]
+
+
+def test_greedy_sampling_matches_softmax_without_materializing_it(monkeypatch):
+    logits = torch.randn(2, 5, VOCAB_SIZE)
+    expected_tokens = logits.argmax(dim=-1)
+    expected_probs = torch.softmax(logits, dim=-1).gather(
+        -1, expected_tokens.unsqueeze(-1)
+    ).squeeze(-1)
+
+    def _softmax_must_not_run(*args, **kwargs):
+        raise AssertionError("greedy path must use selected-logit logsumexp")
+
+    monkeypatch.setattr(torch.nn.functional, "softmax", _softmax_must_not_run)
+    tokens, probs = _sample_with_temperature_topk_topp(
+        logits, temperature=0.0, top_k=0, top_p=1.0
+    )
+
+    assert torch.equal(tokens, expected_tokens)
+    assert torch.allclose(probs, expected_probs, atol=1e-6)
 
 
 class _FakeLogitsModel:

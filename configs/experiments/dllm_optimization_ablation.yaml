@@ -1,0 +1,21 @@
+# Separate from full_matrix.yaml: this is a controlled systems ablation, not
+# another formal task-quality leaderboard run. Use the same seed/samples and
+# compare latency, energy and peak VRAM between each adjacent baseline and
+# optimized pair.
+base_dir: ../..
+
+models:
+  - config: configs/models/illada.yaml
+    variants: [best, optimized]
+  - config: configs/models/dreamreasoner.yaml
+    variants: [best, optimized]
+
+datasets:
+  - config: configs/datasets/ruler.yaml
+    max_new_tokens: 64
+  - config: configs/datasets/hellobench.yaml
+    max_new_tokens: 6144
+
+seed: 42
+resource_measurement: reuse_formal_samples
+trace_scope: all_samples

@@ -47,6 +47,7 @@ configs:
       steps_per_block: 32
       extra:
         temperature: 0.0
+        greedy_confidence_mode: softmax
   fast:
     adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
     init_kwargs:
@@ -57,3 +58,17 @@ configs:
       steps_per_block: 16
       extra:
         temperature: 0.0
+        greedy_confidence_mode: softmax
+  # Same sampling budget and official prefix KV cache as Best; only the
+  # selected-token confidence implementation is optimized.
+  optimized:
+    adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
+    init_kwargs:
+      model_name_or_path: Dream-org/DreamReasoner-8B
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 32
+      extra:
+        temperature: 0.0
+        greedy_confidence_mode: logsumexp
