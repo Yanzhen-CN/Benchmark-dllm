@@ -215,8 +215,7 @@ python prepare_model.py -m gemma4_26b_a4b -m diffusiongemma
 ```
 
 For formal comparisons, keep GPU type, precision, dataset sample set, output
-caps, trace policy, and compute-profiling flag identical. Do not quantize or
-CPU-offload only one side. The formal RULER comparison uses one shared
+caps, trace policy, and compute-profiling flag identical. The formal RULER comparison uses one shared
 8192-token context window; model-advertised maximum context is metadata, not a
 second task point mixed into the primary resource comparison.
 `run_model.py` creates the environment automatically when it is missing, then
@@ -285,6 +284,8 @@ Prepare every real dataset declared in the matrix before allocating a GPU:
 
 ```bash
 python prepare_data.py
+python prepare_data.py -d sudoku
+python prepare_data.py -d sudoku ruler
 python prepare_data.py --force  # rebuild matching prepared artifacts
 ```
 
@@ -470,17 +471,13 @@ DreamReasoner retains the checkpoint's prefix-KV-cache generation path from
 The original `dreamreasoner` model is frozen to the final 2026-07-27
 implementation (`6dfd132`): it builds the complete block-triangular mask,
 prefills all complete prompt blocks in one forward, passes the corresponding
-mask slice during block denoising, and uses full-softmax confidence. This is
-the correctness baseline; at very long RULER contexts its sequence-square
-mask can require substantial VRAM. The separate `dreamreasoner_optimized`
-model combines prefix blocks using a bounded block-triangular mask. For that
-optimized greedy path, selected-token confidence is computed as
-`exp(selected_logit - logsumexp(logits))`; this is numerically equivalent to
-gathering from the full softmax but avoids another block-by-vocabulary tensor.
-Both changes are exposed only by the separate `dreamreasoner_optimized`
-model; the original model retains the 2026-07-27 full-mask prefill and
-full-softmax confidence. The execution branch is recorded in every output as
-`execution_path`.
+mask slice during block denoising, and uses the official full-softmax
+confidence calculation. The separate `dreamreasoner_optimized` model calls
+the checkpoint's own `block_diffusion_generate` method directly with the
+configured Best/Fast parameters. It contains no benchmark-authored generation
+algorithm or inference optimization. The official result exposes sequences
+and NFE but no per-step history, so its persisted trace is empty and
+`trace_source=official_api_no_history` records that limitation.
 
 Run the isolated systems ablation on the same idle GPU, without concurrent
 jobs, and write it outside the formal output tree:
@@ -492,16 +489,8 @@ python run_bench.py --matrix configs/experiments/dllm_optimization_ablation.yaml
 
 The ablation matrix contains matched Best and matched Fast pairs and covers
 RULER plus HelloBench. Compare task quality as a guardrail and report median
-sample latency, energy, and peak VRAM with hardware/software metadata. Do not
-describe `inference_mode`, growing canvas, KV cache, or logsumexp confidence as
-measured speedups until this paired run has produced results.
+sample latency, energy, and peak VRAM with hardware/software metadata.
 
-Local HF models stay fully on the selected GPU. The runner does not retry an
-OOM by reloading weights, changing placement, or silently switching to CPU
-offload, because that would change the execution class and invalidate direct
-time/energy/VRAM comparisons. A formal-sample OOM is persisted with
-`status=oom`; an untimed-warmup OOM stops the job with the original CUDA
-exception so implementation problems are not mislabeled as capacity results.
 Each model group shares one loaded checkpoint between its Best/Fast variants.
 The base and optimized groups also share the same on-disk HF checkpoint cache
 and model venv, but run as separate benchmark identities/processes.

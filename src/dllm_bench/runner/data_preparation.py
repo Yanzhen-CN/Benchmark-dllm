@@ -166,6 +166,7 @@ def prepare_matrix_datasets(
     experiment_config: str | Path,
     *,
     force: bool = False,
+    dataset_names: list[str] | tuple[str, ...] = (),
 ) -> list[PreparedDataset]:
     """Prepare each unique dataset entry in an experiment matrix once."""
     experiment_path = Path(experiment_config).resolve()
@@ -176,11 +177,17 @@ def prepare_matrix_datasets(
 
     prepared: list[PreparedDataset] = []
     seen: set[tuple[Path, Path | None]] = set()
+    requested = set(dataset_names)
+    available: set[str] = set()
     for entry in config["datasets"]:
         entry = {"config": entry} if isinstance(entry, str) else entry
         dataset_config = Path(entry["config"])
         if not dataset_config.is_absolute():
             dataset_config = (base / dataset_config).resolve()
+        dataset_name = str(load_yaml(dataset_config)["dataset"])
+        available.add(dataset_name)
+        if requested and dataset_name not in requested:
+            continue
         samples_file = Path(entry["samples_file"]) if entry.get("samples_file") else None
         if samples_file is not None and not samples_file.is_absolute():
             samples_file = (base / samples_file).resolve()
@@ -190,5 +197,11 @@ def prepare_matrix_datasets(
         seen.add(key)
         prepared.append(
             prepare_dataset(dataset_config, samples_file=samples_file, force=force)
+        )
+    unknown = requested.difference(available)
+    if unknown:
+        raise DataPreparationError(
+            f"unknown dataset(s): {', '.join(sorted(unknown))}; available: "
+            f"{', '.join(sorted(available))}"
         )
     return prepared

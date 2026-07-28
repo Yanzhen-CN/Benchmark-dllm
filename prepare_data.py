@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Sequence
 
 from venv_scripts.root import REPO_ROOT, run_in_root_venv
 
@@ -18,24 +19,43 @@ from venv_scripts.root import REPO_ROOT, run_in_root_venv
 PROJECT_ROOT = REPO_ROOT
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--experiment-config",
         default=str(PROJECT_ROOT / "configs" / "experiments" / "full_matrix.yaml"),
     )
+    parser.add_argument(
+        "-d",
+        "--dataset",
+        action="extend",
+        nargs="+",
+        default=[],
+        help="Dataset name(s) to prepare, e.g. -d sudoku ruler (default: all)",
+    )
     parser.add_argument("--force", action="store_true", help="Rebuild matching cached artifacts")
-    args = parser.parse_args()
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(arguments)
 
-    run_in_root_venv(__file__, sys.argv[1:])
+    run_in_root_venv(__file__, arguments)
 
     from dllm_bench.runner.data_preparation import (
         DataPreparationError,
         prepare_matrix_datasets,
     )
 
+    dataset_names = [
+        part.strip()
+        for value in args.dataset
+        for part in value.split(",")
+        if part.strip()
+    ]
     try:
-        prepared = prepare_matrix_datasets(args.experiment_config, force=args.force)
+        prepared = prepare_matrix_datasets(
+            args.experiment_config,
+            force=args.force,
+            dataset_names=dataset_names,
+        )
     except DataPreparationError as exc:
         raise SystemExit(str(exc)) from exc
     for item in prepared:

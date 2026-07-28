@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from click.testing import CliRunner
 
+import prepare_data
 from venv_scripts import root as root_venv
 from dllm_bench.cli import main
 from dllm_bench.datasets.base import Dataset, Sample, ScoreResult
@@ -107,6 +108,32 @@ def test_full_matrix_prepare_visits_all_six_datasets(tmp_path, monkeypatch):
     assert all(item.sample_count == 1 and item.prepared_now for item in first)
     assert all(not item.prepared_now for item in second)
     assert all(item.samples_path.is_file() and item.manifest_path.is_file() for item in first)
+
+
+def test_full_matrix_prepare_can_filter_to_sudoku(tmp_path, monkeypatch):
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
+    monkeypatch.setattr(
+        "dllm_bench.runner.data_preparation.build_dataset",
+        lambda config_path: _PreparedMatrixStub(Path(config_path).stem),
+    )
+
+    prepared = prepare_matrix_datasets(
+        FULL_MATRIX_CONFIG, dataset_names=["sudoku"]
+    )
+
+    assert [item.dataset_name for item in prepared] == ["sudoku"]
+
+
+def test_prepare_data_public_dataset_flag_is_forwarded(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(prepare_data, "run_in_root_venv", lambda *args: None)
+    monkeypatch.setattr(
+        "dllm_bench.runner.data_preparation.prepare_matrix_datasets",
+        lambda experiment_config, **kwargs: captured.update(kwargs) or [],
+    )
+
+    assert prepare_data.main(["-d", "sudoku"]) == 0
+    assert captured["dataset_names"] == ["sudoku"]
 
 
 def test_prepare_data_help_works_outside_repository_without_creating_venv(tmp_path):

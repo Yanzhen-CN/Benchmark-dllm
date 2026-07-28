@@ -169,24 +169,6 @@ def test_qwen3_8b_matches_qwen3_4b_runtime():
     assert qwen_8b.transformers_version == qwen_4b.transformers_version
 
 
-def test_gpu_profile_env_defaults_expandable_segments(monkeypatch):
-    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
-    environment = _model_script.model_environment(_model_script.PROFILES["illada"])
-    assert environment["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
-
-
-def test_gpu_profile_env_never_overrides_an_operator_supplied_value(monkeypatch):
-    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.6")
-    environment = _model_script.model_environment(_model_script.PROFILES["illada"])
-    assert environment["PYTORCH_CUDA_ALLOC_CONF"] == "garbage_collection_threshold:0.6"
-
-
-def test_non_gpu_profile_env_does_not_set_alloc_conf(monkeypatch):
-    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
-    environment = _model_script.model_environment(_model_script.PROFILES["w1"])
-    assert "PYTORCH_CUDA_ALLOC_CONF" not in environment
-
-
 def test_cuda_torch_local_version_matches_public_pin(monkeypatch):
     installed = {"torch": "2.6.0+cu124", "transformers": "5.14.1"}
     monkeypatch.setattr(

@@ -150,12 +150,12 @@ def test_dreamreasoner_variants_carry_distinct_steps_per_block():
     assert optimized_best._step_config.steps_per_block == 32
     assert optimized_fast._step_config.steps_per_block == 16
     assert best.execution_path == "default"
-    assert optimized_best.execution_path == "optimized"
+    assert optimized_best.execution_path == "official"
     assert optimized_best.name == "dreamreasoner_optimized"
     assert best.sampling_profile == "best"
     assert optimized_fast.sampling_profile == "fast"
-    assert best._step_config.extra["greedy_confidence_mode"] == "softmax"
-    assert optimized_best._step_config.extra["greedy_confidence_mode"] == "logsumexp"
+    assert "greedy_confidence_mode" not in best._step_config.extra
+    assert "greedy_confidence_mode" not in optimized_best._step_config.extra
 
 
 def test_w1_yaml_declares_all_three_configs():

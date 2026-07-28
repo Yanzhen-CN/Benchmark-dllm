@@ -71,13 +71,10 @@ Confirmed facts driving this port (not guessed):
   same as iLLaDA. This means design doc 4.2.6's `ErrorThenCorrect` is
   expected to come out ~0 for this model, same as iLLaDA — a real,
   ported-implementation-driven finding, not a modeling gap in this adapter.
-- The default execution path is intentionally frozen to the final 2026-07-27
-  implementation (commit `6dfd132`): it materializes the checkpoint's dense
-  `(total_length, total_length)` block-triangular mask and performs one-shot
-  prefix prefill. That known-good path is the correctness baseline, even
-  though its mask can consume several GB at long RULER contexts. Only the
-  separately named `dreamreasoner_optimized` model replaces it with bounded
-  chunks of up to `_PREFILL_CHUNK_BLOCKS` blocks per forward.
+- The default execution path is frozen to the final 2026-07-27 traced port
+  (commit `6dfd132`). The separately named `dreamreasoner_optimized` model
+  contains no benchmark-authored inference change: it calls the checkpoint's
+  own `block_diffusion_generate` method directly.
 
 This benchmark's own addition (not from source): a full-vocab softmax over
 each step's raw logits, purely to populate `entropy_by_position`/
@@ -256,14 +253,6 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         top_p = float(step_config.extra.get("top_p", 1.0))
         confidence_threshold = float(step_config.extra.get("confidence_threshold", 0.9))
         eb_threshold = step_config.extra.get("eb_threshold", 0.35)
-        greedy_confidence_mode = step_config.extra.get(
-            "greedy_confidence_mode", "softmax"
-        )
-        if greedy_confidence_mode not in {"softmax", "logsumexp"}:
-            raise ValueError(
-                "DreamReasoner step_config.extra['greedy_confidence_mode'] "
-                "must be 'softmax' or 'logsumexp'"
-            )
         mask_token_id = self._resolve_mask_token_id(step_config)
 
         device = self._device
@@ -288,67 +277,19 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         prefill_blocks = prompt_len // block_length
         past_key_values = DynamicCache()
 
-        if self.execution_path == "optimized":
-            # Experimental path only: combine several prefix blocks into one
-            # forward and preserve their block-causal relation with a bounded
-            # mask. This must never be used by the formal base model because
-            # it has not been validated as bit-for-bit equivalent against the
-            # checkpoint's custom attention/cache implementation.
-            chunk_index = 0
-            while chunk_index < prefill_blocks:
-                blocks_in_chunk = min(
-                    _PREFILL_CHUNK_BLOCKS, prefill_blocks - chunk_index
-                )
-                chunk_start = chunk_index * block_length
-                chunk_length = blocks_in_chunk * block_length
-                chunk_end = chunk_start + chunk_length
-
-                attention_mask = None
-                if blocks_in_chunk > 1:
-                    intra_chunk_tril = torch.tril(
-                        torch.ones(blocks_in_chunk, blocks_in_chunk, device=device)
-                    )
-                    intra_chunk_mask = intra_chunk_tril.repeat_interleave(
-                        block_length, dim=0
-                    ).repeat_interleave(block_length, dim=1)
-                    if chunk_start > 0:
-                        prefix_visible = torch.ones(
-                            chunk_length, chunk_start, device=device
-                        )
-                        intra_chunk_mask = torch.cat(
-                            [prefix_visible, intra_chunk_mask], dim=1
-                        )
-                    attention_mask = intra_chunk_mask.unsqueeze(0)
-
-                self._model(
-                    x[:, chunk_start:chunk_end],
-                    attention_mask=attention_mask,
-                    position_ids=position_ids[:, chunk_start:chunk_end],
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    store_kv=True,
-                )
-                chunk_index += blocks_in_chunk
-        else:
-            # Exact 2026-07-27 baseline (commit 6dfd132): build the checkpoint's
-            # complete block-triangular mask and prefill every complete prompt
-            # block in one forward. Do not replace this correctness baseline
-            # with any later OOM/prefill optimization.
-            attention_mask = _build_block_diffusion_attention_mask(
-                num_blocks, block_length, device
+        attention_mask = _build_block_diffusion_attention_mask(
+            num_blocks, block_length, device
+        )
+        prefill_length = prefill_blocks * block_length
+        if prefill_length > 0:
+            self._model(
+                x[:, :prefill_length],
+                attention_mask=attention_mask[:, :prefill_length, :prefill_length],
+                position_ids=position_ids[:, :prefill_length],
+                past_key_values=past_key_values,
+                use_cache=True,
+                store_kv=True,
             )
-            prefill_length = prefill_blocks * block_length
-            if prefill_length > 0:
-                self._model(
-                    x[:, :prefill_length],
-                    attention_mask=attention_mask[
-                        :, :prefill_length, :prefill_length
-                    ],
-                    position_ids=position_ids[:, :prefill_length],
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    store_kv=True,
-                )
 
         num_transfer_tokens = _get_num_transfer_tokens(block_length, denoising_steps)
         trace: list[TraceStep] = []
@@ -359,11 +300,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             block_end = block_start + block_length
             cur_x = x[:, block_start:block_end].clone()
             cur_pos = position_ids[:, block_start:block_end]
-            cur_attn = (
-                None
-                if self.execution_path == "optimized"
-                else attention_mask[:, block_start:block_end, :block_end]
-            )
+            cur_attn = attention_mask[:, block_start:block_end, :block_end]
 
             for step in range(denoising_steps + 1):
                 mask_index = cur_x == mask_token_id
@@ -397,7 +334,6 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     temperature,
                     top_k,
                     top_p,
-                    greedy_confidence_mode=greedy_confidence_mode,
                 )
                 x0 = torch.where(mask_index, x0, cur_x)
                 transfer_index = _select_transfer_index(
@@ -475,8 +411,6 @@ def _sample_with_temperature_topk_topp(
     temperature: float = 1.0,
     top_k: int = 0,
     top_p: float = 1.0,
-    *,
-    greedy_confidence_mode: str = "softmax",
 ):
     """Ported exactly from the real source. This adjusted distribution (not
     raw-logit softmax) is what confidence-based remasking strategies select
@@ -496,23 +430,12 @@ def _sample_with_temperature_topk_topp(
     if top_p < 1.0:
         logits = _top_p_logits(logits, top_p)
 
-    if temperature > 0 or greedy_confidence_mode == "softmax":
-        probs = F.softmax(logits, dim=-1)
-        if temperature > 0:
-            token = torch.multinomial(probs, num_samples=1)
-        else:
-            token = probs.argmax(dim=-1, keepdim=True)
-        token_prob = torch.gather(probs, -1, token)
+    probs = F.softmax(logits, dim=-1)
+    if temperature > 0:
+        token = torch.multinomial(probs, num_samples=1)
     else:
-        # Formal Best/Fast generation is greedy. Avoid materializing a second
-        # ``positions x vocabulary`` probability tensor: argmax is identical
-        # on logits, and the selected probability follows exactly from
-        # exp(selected_logit - logsumexp(logits)).
-        token = logits.argmax(dim=-1, keepdim=True)
-        selected_logits = torch.gather(logits, -1, token)
-        token_prob = torch.exp(
-            selected_logits - torch.logsumexp(logits, dim=-1, keepdim=True)
-        )
+        token = probs.argmax(dim=-1, keepdim=True)
+    token_prob = torch.gather(probs, -1, token)
     return token.view(*orig_shape), token_prob.view(*orig_shape)
 
 
