@@ -38,6 +38,13 @@ keeps every model on its own published inference path.
 | HelloBench, other models | 1 per configured 2K/4K profile | Per-profile cap | Reference diagnostic |
 | RULER half-context probe | 1 | Input = floor(declared max context / 2), output cap = 64 | Capacity diagnostic only |
 
+The generation ceilings are fixed by dataset rather than inherited from a
+mutable runner default: GSM8K 256, MBPP-Sanitized 256, StructEval-T 256,
+Sudoku4 128, Sudoku9 256, formal RULER 64, and the RULER context probe 64
+output tokens. HelloBench uses its per-sample profiles: 2K words / 3072 tokens
+and 4K words / 6144 tokens. StructEval upstream leaves `max_tokens` unset, so
+this suite's 256-token ceiling is a controlled cross-model setting.
+
 ### Official-protocol boundary
 
 | Dataset | Upstream/common protocol retained | Controlled deviation in this suite |

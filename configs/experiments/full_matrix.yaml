@@ -54,9 +54,12 @@ models:
         n_samples: 10
 
 datasets:
-  - configs/datasets/gsm8k.yaml
-  - configs/datasets/mbpp.yaml
-  - configs/datasets/structeval_t.yaml
+  - config: configs/datasets/gsm8k.yaml
+    max_new_tokens: 256
+  - config: configs/datasets/mbpp.yaml
+    max_new_tokens: 256
+  - config: configs/datasets/structeval_t.yaml
+    max_new_tokens: 256
   - config: configs/datasets/sudoku4.yaml
     max_new_tokens: 128
   - config: configs/datasets/sudoku9.yaml
