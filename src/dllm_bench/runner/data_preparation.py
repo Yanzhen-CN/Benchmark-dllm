@@ -22,12 +22,10 @@ from ..data_paths import ensure_data_layout
 from ..datasets.base import Dataset, Sample
 from ..datasets.io import load_samples_file
 from ..registry import build_dataset, load_yaml
+from .matrix import dataset_selector_matches, unknown_dataset_selectors
 
 
 PREPARED_SCHEMA_VERSION = 1
-DATASET_GROUP_PREFIXES = {
-    "sudoku": "sudoku",
-}
 
 
 class DataPreparationError(RuntimeError):
@@ -215,11 +213,7 @@ def prepare_matrix_datasets(
             dataset_config = (base / dataset_config).resolve()
         dataset_name = str(load_yaml(dataset_config)["dataset"])
         available.add(dataset_name)
-        matches_group = any(
-            alias in requested and dataset_name.startswith(prefix)
-            for alias, prefix in DATASET_GROUP_PREFIXES.items()
-        )
-        if requested and dataset_name not in requested and not matches_group:
+        if not dataset_selector_matches(dataset_name, requested):
             continue
         samples_file = Path(entry["samples_file"]) if entry.get("samples_file") else None
         if samples_file is not None and not samples_file.is_absolute():
@@ -231,7 +225,7 @@ def prepare_matrix_datasets(
         prepared.append(
             prepare_dataset(dataset_config, samples_file=samples_file, force=force)
         )
-    unknown = requested.difference(available).difference(DATASET_GROUP_PREFIXES)
+    unknown = unknown_dataset_selectors(requested, available)
     if unknown:
         raise DataPreparationError(
             f"unknown dataset(s): {', '.join(sorted(unknown))}; available: "

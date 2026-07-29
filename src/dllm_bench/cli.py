@@ -701,7 +701,15 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
     "--hellobench-length", "hellobench_lengths", multiple=True,
     type=click.Choice(["2k", "4k", "2000", "4000"]),
 )
-@click.option("--dataset", "dataset_names", multiple=True, help="Dataset name to include; repeat to select multiple")
+@click.option(
+    "--dataset",
+    "dataset_names",
+    multiple=True,
+    help=(
+        "Dataset name to include; repeat for multiple. 'sudoku' selects every "
+        "sudoku* variant in the matrix"
+    ),
+)
 @click.option("--stage", type=click.Choice(["generate", "score", "visualize", "all"]), default="all", show_default=True)
 @click.option("--demo/--no-demo", default=False, show_default=True, help="Use demo data for every matrix row")
 @click.option("--n-samples", default=None, type=int)

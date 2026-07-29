@@ -120,10 +120,13 @@ python run_model.py
 python run_model.py -m illada
 python run_model.py -m illada_vargen
 python run_model.py -m illada dreamreasoner -d ruler hellobench
+python run_model.py -m qwen3_8b -d sudoku  # all sudoku* matrix variants
 
 # Local machine after copying output/model_output/
 python run_score.py
 python run_visualization.py
+python run_score.py -m qwen3_8b -d sudoku
+python run_visualization.py -m qwen3_8b -d sudoku
 ```
 
 Useful controls:

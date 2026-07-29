@@ -101,7 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="extend",
         nargs="+",
         default=[],
-        help="Dataset name(s) to run, e.g. -d ruler hellobench (default: all matrix datasets)",
+        help=(
+            "Dataset name(s) to run; 'sudoku' selects every sudoku* variant "
+            "in the matrix (default: all matrix datasets)"
+        ),
     )
     parser.add_argument("--matrix", default=str(DEFAULT_MATRIX), help="Experiment matrix YAML")
     parser.add_argument("--venv-scripts-dir", dest="scripts_dir", default=str(DEFAULT_VENV_SCRIPTS_DIR), help="Directory containing per-model Python environment scripts")

@@ -9,6 +9,28 @@ from typing import Iterable
 from ..registry import load_yaml
 
 
+DATASET_GROUP_PREFIXES = {
+    "sudoku": "sudoku",
+}
+
+
+def dataset_selector_matches(dataset_name: str, requested: set[str]) -> bool:
+    """Whether a matrix dataset is selected by a name or group alias."""
+    if not requested or dataset_name in requested:
+        return True
+    return any(
+        alias in requested and dataset_name.startswith(prefix)
+        for alias, prefix in DATASET_GROUP_PREFIXES.items()
+    )
+
+
+def unknown_dataset_selectors(
+    requested: set[str], available: Iterable[str]
+) -> set[str]:
+    """Return selectors that are neither exact names nor known groups."""
+    return requested.difference(available).difference(DATASET_GROUP_PREFIXES)
+
+
 @dataclass(frozen=True)
 class MatrixJob:
     model_name: str
@@ -61,7 +83,9 @@ def load_matrix_jobs(
         else Path(entry).stem
         for entry in config["datasets"]
     ]
-    unknown_datasets = requested_datasets.difference(available_datasets)
+    unknown_datasets = unknown_dataset_selectors(
+        requested_datasets, available_datasets
+    )
     if unknown_datasets:
         raise ValueError(
             f"unknown dataset(s): {', '.join(sorted(unknown_datasets))}; "
@@ -81,7 +105,7 @@ def load_matrix_jobs(
             dataset_name = str(
                 dataset_entry.get("name") or Path(dataset_entry["config"]).stem
             )
-            if requested_datasets and dataset_name not in requested_datasets:
+            if not dataset_selector_matches(dataset_name, requested_datasets):
                 continue
             override = dataset_overrides.get(dataset_name, {})
             if not isinstance(override, dict):

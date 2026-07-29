@@ -53,6 +53,14 @@ def test_local_score_can_force_rescoring(capsys):
     assert "--no-resume" in output
 
 
+def test_local_score_forwards_sudoku_group_to_shared_matrix_filter(capsys):
+    assert local_pipeline.main(
+        "score", ["--dry-run", "-m", "qwen3_8b", "-d", "sudoku"]
+    ) == 0
+    output = capsys.readouterr().out
+    assert "--dataset sudoku" in output
+
+
 def test_local_visualization_also_builds_report(capsys):
     assert local_pipeline.main("visualize", ["--dry-run", "-m", "illada"]) == 0
     output = capsys.readouterr().out

@@ -24,7 +24,13 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("-m", "--model", action="extend", nargs="+", default=[])
-    parser.add_argument("-d", "--dataset", action="extend", nargs="+", default=[])
+    parser.add_argument(
+        "-d", "--dataset", action="extend", nargs="+", default=[],
+        help=(
+            "Dataset name(s); 'sudoku' selects every sudoku* variant in the "
+            "matrix"
+        ),
+    )
     parser.add_argument("--matrix", default=str(DEFAULT_MATRIX))
     data = parser.add_mutually_exclusive_group()
     data.add_argument("--demo", dest="real_data", action="store_false")

@@ -128,6 +128,21 @@ def test_matrix_can_filter_task2_datasets_for_selected_models():
     assert {job.dataset_config.stem for job in jobs} == {"ruler", "hellobench"}
 
 
+def test_matrix_sudoku_group_expands_every_declared_variant():
+    jobs, _ = load_matrix_jobs(
+        ROOT / "configs" / "experiments" / "full_matrix.yaml",
+        model_names=["qwen3_8b"],
+        dataset_names=["sudoku"],
+    )
+
+    assert [job.dataset_config.stem for job in jobs] == [
+        "sudoku4",
+        "sudoku9",
+        "sudoku4_thinking",
+        "sudoku9_thinking",
+    ]
+
+
 def test_dg_comparison_matrix_contains_native_pair_and_dflash_deployment_row():
     jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "dg_comparison.yaml")
 
