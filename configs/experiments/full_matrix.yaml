@@ -14,8 +14,10 @@ models:
   - config: configs/models/qwen3_4b.yaml  # AR reference model
     variants: [ar-baseline]
     dataset_overrides:
+      sudoku4:
+        n_samples: 5
       sudoku9:
-        n_samples: 10
+        n_samples: 5
   - config: configs/models/qwen3_8b.yaml  # same-scale AR reference for 8B dLLMs
     variants: [ar-baseline]
     dataset_overrides:
@@ -24,24 +26,30 @@ models:
   - config: configs/models/illada.yaml    # illada-8B
     variants: [best, fast]
     dataset_overrides:
+      sudoku4:
+        n_samples: 5
       sudoku9:
-        n_samples: 10
+        n_samples: 5
       hellobench:
         hellobench_lengths: [2k]
         n_samples: 1
   - config: configs/models/illada_vargen.yaml # official incremental block canvas
     variants: [best, fast]
     dataset_overrides:
+      sudoku4:
+        n_samples: 5
       sudoku9:
-        n_samples: 10
+        n_samples: 5
       hellobench:
         hellobench_lengths: [2k]
         n_samples: 1
   - config: configs/models/dreamreasoner.yaml # dream reasoner-8B
     variants: [best, fast]
     dataset_overrides:
+      sudoku4:
+        n_samples: 5
       sudoku9:
-        n_samples: 10
+        n_samples: 5
       hellobench:
         hellobench_lengths: [2k]
         n_samples: 1
