@@ -275,8 +275,10 @@ The setup scripts keep pip and uv caches, temporary build files, and Torch
 extension builds under `DLLM_DATA_ROOT` (repository `data/` by default), so a
 large vLLM wheel is not staged on RunPod's small `/tmp` filesystem. Override
 the build location with `DLLM_BUILD_TMPDIR` when needed. DFlash setup uses the
-compatible precompiled vLLM wheel by default; set `VLLM_USE_PRECOMPILED=0`
-only when intentionally compiling vLLM from source.
+compatible precompiled vLLM wheel and disables its persistent uv cache by
+default, avoiding a second expanded copy of Torch on quota-limited volumes.
+Set `VLLM_USE_PRECOMPILED=0` only when intentionally compiling vLLM from
+source.
 
 Run on the same exclusive A100 80GB used by the native pair. DFlash keeps the
 normal measured timing, energy, peak-memory, TPS/SPS/EPS and dataset score

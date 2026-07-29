@@ -103,7 +103,11 @@ def run(command: Sequence[str | Path], *, env: Mapping[str, str] | None = None) 
     )
 
 
-def installation_environment(*, prefer_vllm_precompiled: bool = False) -> dict[str, str]:
+def installation_environment(
+    *,
+    prefer_vllm_precompiled: bool = False,
+    avoid_uv_cache: bool = False,
+) -> dict[str, str]:
     """Keep package caches and large build artifacts on the persistent data volume."""
     environment = os.environ.copy()
     data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
@@ -137,6 +141,10 @@ def installation_environment(*, prefer_vllm_precompiled: bool = False) -> dict[s
     )
     if prefer_vllm_precompiled:
         environment.setdefault("VLLM_USE_PRECOMPILED", "1")
+    if avoid_uv_cache:
+        # A cached vLLM install retains expanded copies of heavyweight packages
+        # such as Torch. Keep only the final model venv on quota-limited volumes.
+        environment.setdefault("UV_NO_CACHE", "1")
     return environment
 
 
@@ -153,7 +161,8 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
     directory = venv_dir(profile)
     base_python = os.environ.get("PYTHON_BIN", sys.executable)
     install_env = installation_environment(
-        prefer_vllm_precompiled=bool(profile.setup_requirements)
+        prefer_vllm_precompiled=bool(profile.setup_requirements),
+        avoid_uv_cache=bool(profile.setup_requirements),
     )
 
     run([base_python, "-m", "venv", directory])

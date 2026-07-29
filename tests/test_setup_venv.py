@@ -172,9 +172,11 @@ def test_installation_environment_keeps_large_build_files_under_data_root(
     monkeypatch.delenv("DLLM_BUILD_TMPDIR", raising=False)
     monkeypatch.delenv("DLLM_TORCH_EXTENSIONS_DIR", raising=False)
     monkeypatch.delenv("VLLM_USE_PRECOMPILED", raising=False)
+    monkeypatch.delenv("UV_NO_CACHE", raising=False)
 
     environment = _model_script.installation_environment(
-        prefer_vllm_precompiled=True
+        prefer_vllm_precompiled=True,
+        avoid_uv_cache=True,
     )
 
     assert environment["PIP_CACHE_DIR"] == str(data_root / "pip-cache")
@@ -186,6 +188,7 @@ def test_installation_environment_keeps_large_build_files_under_data_root(
         data_root / "torch-extensions"
     )
     assert environment["VLLM_USE_PRECOMPILED"] == "1"
+    assert environment["UV_NO_CACHE"] == "1"
     assert all(
         (data_root / name).is_dir()
         for name in ("pip-cache", "uv-cache", "tmp", "torch-extensions")
@@ -201,14 +204,17 @@ def test_installation_environment_respects_explicit_build_overrides(
     monkeypatch.setenv("DLLM_BUILD_TMPDIR", str(custom_tmp))
     monkeypatch.setenv("DLLM_UV_CACHE_DIR", str(custom_uv))
     monkeypatch.setenv("VLLM_USE_PRECOMPILED", "0")
+    monkeypatch.setenv("UV_NO_CACHE", "0")
 
     environment = _model_script.installation_environment(
-        prefer_vllm_precompiled=True
+        prefer_vllm_precompiled=True,
+        avoid_uv_cache=True,
     )
 
     assert environment["TMPDIR"] == str(custom_tmp)
     assert environment["UV_CACHE_DIR"] == str(custom_uv)
     assert environment["VLLM_USE_PRECOMPILED"] == "0"
+    assert environment["UV_NO_CACHE"] == "0"
 
 
 def test_diffusiongemma_repairs_missing_torchvision(monkeypatch):
