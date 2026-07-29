@@ -27,6 +27,7 @@ from typing import Any
 
 from ..interfaces import GenerationRequest, GenerationResult, RunStatus, TraceStep
 from .base import BaseModelAdapter
+from .device_transfer import move_model_to_device
 from .model_cache import get_or_load
 
 
@@ -109,7 +110,7 @@ class HFDiffusionAdapter(BaseModelAdapter):
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=True,
         )
-        model.to(device)
+        move_model_to_device(model, device, model_name=self._model_name)
         model.eval()
         return tokenizer, model
 

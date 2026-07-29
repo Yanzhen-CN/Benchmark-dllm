@@ -93,6 +93,7 @@ from __future__ import annotations
 import math
 
 from ..interfaces import PositionState, TraceStep
+from .device_transfer import move_model_to_device
 from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
 from .model_cache import get_or_load
 from .prompting import tokenize_instruction_prompt
@@ -140,7 +141,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
             )
-            model.to(device)
+            move_model_to_device(model, device, model_name=self._model_name)
             model.eval()
             return tokenizer, model
 

@@ -32,6 +32,7 @@ import math
 
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
+from .device_transfer import move_model_to_device
 from .model_cache import get_or_load
 from .prompting import tokenize_instruction_prompt
 
@@ -83,7 +84,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         model = DiffusionGemmaForBlockDiffusion.from_pretrained(
             self._model_name, dtype="auto"
         )
-        model.to(device)
+        move_model_to_device(model, device, model_name=self._model_name)
         model.eval()
         return processor, model
 

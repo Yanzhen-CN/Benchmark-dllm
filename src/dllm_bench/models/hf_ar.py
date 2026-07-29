@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
+from .device_transfer import move_model_to_device
 from .model_cache import get_or_load
 from .prompting import tokenize_instruction_prompt
 
@@ -69,7 +70,7 @@ class QwenARAdapter(BaseModelAdapter):
             torch_dtype=torch.bfloat16,
             low_cpu_mem_usage=True,
         )
-        model.to(device)
+        move_model_to_device(model, device, model_name=self._model_name)
         model.eval()
         return tokenizer, model
 
