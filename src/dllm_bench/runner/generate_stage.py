@@ -296,6 +296,13 @@ def run_generation(
         raise ValueError("samples must be non-empty")
 
     out_dir = Path(out_dir)
+    # ``--no-resume`` means replace this model/config/dataset result as one
+    # unit.  Regenerating only the newly selected IDs would leave stale sample
+    # files (especially after reducing n_samples) and a previous oom_info.json
+    # beside an otherwise valid rerun.
+    if not resume and out_dir.exists():
+        for stale_json in out_dir.glob("*.json"):
+            stale_json.unlink()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     meta_path = out_dir / "_meta.json"
