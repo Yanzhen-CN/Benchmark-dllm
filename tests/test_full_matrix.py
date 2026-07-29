@@ -39,6 +39,19 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     expected = ("best", "fast")
     assert illada_job.variants == expected
     assert dream_job.variants == expected
+    sudoku_jobs = [job for job in jobs if job.dataset_config.stem == "sudoku"]
+    assert all(job.max_new_tokens == 96 for job in sudoku_jobs)
+
+
+def test_sudoku_long_output_probe_is_separate_and_uses_1024_tokens():
+    jobs, seed = load_matrix_jobs(
+        ROOT / "configs" / "experiments" / "sudoku_long_output_probe.yaml"
+    )
+
+    assert seed == 42
+    assert {job.model_name for job in jobs} == {"illada", "dreamreasoner"}
+    assert all(job.dataset_config.stem == "sudoku" for job in jobs)
+    assert all(job.max_new_tokens == 1024 for job in jobs)
 
 
 def test_matrix_can_filter_task2_datasets_for_selected_models():

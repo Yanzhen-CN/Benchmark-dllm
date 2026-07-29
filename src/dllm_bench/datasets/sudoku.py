@@ -39,10 +39,6 @@ SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81
 SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
 SUDOKU_TRAIN_ROWS = 100_000
 SUDOKU_TEST_ROWS = 1_000
-# The expected answer is exactly 81 ASCII digits. A 96-token slot leaves
-# tokenizer headroom while staying aligned to the diffusion models' 32-token
-# blocks; a 512-token slot encouraged fixed-length dLLMs to produce essays.
-SUDOKU_MAX_NEW_TOKENS = 96
 SUDOKU_TRACE_MAX_NEW_TOKENS = 128
 SUDOKU_TRACE_PROTOCOL = "compact-trace-81-digit-v1"
 
@@ -249,7 +245,6 @@ class SudokuDataset(Dataset):
             "formal_easy_count": self._easy_count,
             "formal_hard_count": self._hard_count,
             "formal_subset_seed": self._seed,
-            "max_new_tokens": SUDOKU_MAX_NEW_TOKENS,
         }
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
@@ -594,9 +589,8 @@ def _load_official_test_samples(
                             "source_index": train_rows + test_index,
                             "official_split": "test",
                             "source_input_format": "81_digits_zero_is_blank",
-                            "prompt_protocol": "nine_row_grid_then_final_answer_marker",
+                            "prompt_protocol": "nine_row_grid_direct_81_digits",
                             "official_output_format": "81_solution_digits",
-                            "max_new_tokens": SUDOKU_MAX_NEW_TOKENS,
                             "difficulty_rule": "naked_single_rounds_le_5_vs_ge_6",
                             "naked_single_rounds": rounds,
                         },

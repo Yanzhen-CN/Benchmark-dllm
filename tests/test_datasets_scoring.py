@@ -473,7 +473,7 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
     assert all("FINAL ANSWER:" not in sample.prompt for sample in samples)
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
-    assert all(sample.meta["max_new_tokens"] == 96 for sample in samples)
+    assert all("max_new_tokens" not in sample.meta for sample in samples)
 
 
 def test_instructed_sudoku_wraps_the_same_puzzle_and_reference():

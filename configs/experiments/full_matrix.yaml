@@ -30,7 +30,8 @@ datasets:
   - configs/datasets/gsm8k.yaml
   - configs/datasets/mbpp.yaml
   - configs/datasets/structeval_t.yaml
-  - configs/datasets/sudoku.yaml
+  - config: configs/datasets/sudoku.yaml
+    max_new_tokens: 96
   - config: configs/datasets/ruler.yaml
     max_new_tokens: 64  # fallback; formal samples also carry this per sample
   - config: configs/datasets/hellobench.yaml
