@@ -111,7 +111,7 @@ def test_prepare_model_defaults_to_all_matrix_models_via_isolated_scripts(tmp_pa
         "dreamreasoner",
         "w1",
         "diffusiongemma",
-        "gemma4_26b_a4b",
+        "gemma",
     ):
         assert f"{model}.py prepare" in result.stdout
 

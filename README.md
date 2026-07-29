@@ -159,7 +159,7 @@ python setup_venv.py -m qwen3_8b       # only .venvs/qwen3_8b
 python setup_venv.py -m illada         # only .venvs/illada
 python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
 python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
-python setup_venv.py -m gemma4_26b_a4b # only .venvs/gemma4_26b_a4b
+python setup_venv.py -m gemma          # only .venvs/gemma (reuses the legacy env if present)
 ```
 
 `setup_venv.py` is only a dispatcher. It calls
@@ -188,7 +188,7 @@ Available entry points and environments:
 | iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
-| Gemma 4 26B-A4B AR | `venv_scripts/gemma4_26b_a4b.py` | `.venvs/gemma4_26b_a4b` |
+| Gemma 4 26B-A4B AR | `venv_scripts/gemma.py` | `.venvs/gemma` |
 | W1 | `venv_scripts/w1.py` | `.venvs/w1` |
 | Local non-model stages | `venv_scripts/root.py` | `.venvs/root` |
 
@@ -224,12 +224,12 @@ export HF_TOKEN=hf_your_read_token
 
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
-python setup_venv.py -m gemma4_26b_a4b -m diffusiongemma --cuda-index cu124
-python prepare_model.py -m gemma4_26b_a4b -m diffusiongemma
+python setup_venv.py -m gemma -m diffusiongemma --cuda-index cu124
+python prepare_model.py -m gemma -m diffusiongemma
 
 # One-sample generation checks, run sequentially on the same GPU.
-.venvs/gemma4_26b_a4b/bin/python -m dllm_bench.cli generate \
-  --model-config configs/models/gemma4_26b_a4b.yaml \
+.venvs/gemma/bin/python -m dllm_bench.cli generate \
+  --model-config configs/models/gemma.yaml \
   --variant ar-baseline \
   --dataset-config configs/datasets/gsm8k.yaml \
   --demo --n-samples 1 --max-new-tokens 64 \
@@ -253,13 +253,13 @@ validate three real puzzles before spending the full 10-sample budget:
 ```bash
 python run_model.py \
   --matrix configs/experiments/dg_comparison.yaml \
-  -m diffusiongemma gemma4_26b_a4b \
+  -m diffusiongemma gemma \
   -d sudoku_trace --real-data --n-samples 3 \
   --output-root output/a100_sudoku_trace_check --no-resume
 
 python run_model.py \
   --matrix configs/experiments/dg_comparison.yaml \
-  -m diffusiongemma gemma4_26b_a4b \
+  -m diffusiongemma gemma \
   -d sudoku_trace --real-data \
   --output-root output --resume
 ```
@@ -270,10 +270,10 @@ is needed. Score and visualize the transferred outputs locally:
 
 ```bash
 python run_score.py --matrix configs/experiments/dg_comparison.yaml \
-  -m diffusiongemma gemma4_26b_a4b -d sudoku_trace \
+  -m diffusiongemma gemma -d sudoku_trace \
   --output-root output --resume
 python run_visualization.py --matrix configs/experiments/dg_comparison.yaml \
-  -m diffusiongemma gemma4_26b_a4b -d sudoku_trace \
+  -m diffusiongemma gemma -d sudoku_trace \
   --output-root output --n-representative 3
 ```
 

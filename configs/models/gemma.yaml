@@ -3,7 +3,7 @@
 # the same single A100/H100 80GB GPU in BF16 for a clean decoding comparison.
 # If Hugging Face prompts for repository access, accept the model terms and
 # export a read-capable HF_TOKEN before running prepare_model.py.
-model: gemma4_26b_a4b
+model: gemma
 max_context_tokens: 262144
 configs:
   ar-baseline:

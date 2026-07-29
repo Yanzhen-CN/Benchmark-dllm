@@ -12,7 +12,7 @@ Python. This keeps incompatible torch/transformers versions isolated.
     python run_bench.py -m qwen3_4b
     python run_bench.py -m qwen3_8b
     python run_bench.py -m diffusiongemma
-    python run_bench.py -m gemma4_26b_a4b
+    python run_bench.py -m gemma
 """
 
 from __future__ import annotations

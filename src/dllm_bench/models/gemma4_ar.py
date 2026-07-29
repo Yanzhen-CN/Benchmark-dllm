@@ -28,7 +28,7 @@ class Gemma4ARAdapter(BaseModelAdapter):
         capture_trace: bool = True,
         enable_thinking: bool = False,
     ) -> None:
-        self.name = "gemma4_26b_a4b"
+        self.name = "gemma"
         self.config_name = config_name
         self.supports_trace = capture_trace
         self.natively_measures_resources = False

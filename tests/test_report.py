@@ -90,7 +90,7 @@ def test_compute_converted_row_missing_energy_leaves_energy_fields_none():
 def test_resource_baseline_is_qwen3_4b_not_every_ar_baseline():
     qwen4 = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
     qwen8 = _summary("qwen3_8b", "ar-baseline", 0.6, tps=12.0)
-    gemma = _summary("gemma4_26b_a4b", "ar-baseline", 0.7, tps=8.0)
+    gemma = _summary("gemma", "ar-baseline", 0.7, tps=8.0)
 
     selected = select_resource_baselines([qwen8, gemma, qwen4])
 

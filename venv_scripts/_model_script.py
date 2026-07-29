@@ -25,6 +25,7 @@ class ModelProfile:
     transformers_version: str | None = None
     torch_cuda_indexes: tuple[str, ...] = ()
     torchvision_version: str | None = None
+    legacy_venv_subdirs: tuple[str, ...] = ()
 
 
 PROFILES: Mapping[str, ModelProfile] = {
@@ -49,10 +50,11 @@ PROFILES: Mapping[str, ModelProfile] = {
         "dev,diffusiongemma,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
         torchvision_version="0.21.0",
     ),
-    "gemma4_26b_a4b": ModelProfile(
-        "gemma4_26b_a4b", "gemma4_26b_a4b", "configs/models/gemma4_26b_a4b.yaml",
+    "gemma": ModelProfile(
+        "gemma", "gemma", "configs/models/gemma.yaml",
         "dev,gemma4,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
         torchvision_version="0.21.0",
+        legacy_venv_subdirs=("gemma4_26b_a4b",),
     ),
     "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
 }
@@ -60,11 +62,16 @@ PROFILES: Mapping[str, ModelProfile] = {
 
 def venv_dir(profile: ModelProfile) -> Path:
     override = os.environ.get("DLLM_VENV_DIR")
-    return (
-        Path(override).expanduser().resolve()
-        if override
-        else REPO_ROOT / ".venvs" / profile.venv_subdir
-    )
+    if override:
+        return Path(override).expanduser().resolve()
+    preferred = REPO_ROOT / ".venvs" / profile.venv_subdir
+    if preferred.exists():
+        return preferred
+    for legacy_subdir in profile.legacy_venv_subdirs:
+        legacy = REPO_ROOT / ".venvs" / legacy_subdir
+        if legacy.exists():
+            return legacy
+    return preferred
 
 
 def venv_python(directory: Path) -> Path:
@@ -350,7 +357,7 @@ def check_environment(profile: ModelProfile, python: Path) -> None:
     run([python, "-c", code], env=model_environment(profile))
     if profile.model_id == "diffusiongemma":
         run([python, "-c", "from transformers import DiffusionGemmaForBlockDiffusion, Gemma4Processor; print('DiffusionGemma classes OK')"])
-    elif profile.model_id == "gemma4_26b_a4b":
+    elif profile.model_id == "gemma":
         run([python, "-c", "from transformers import AutoModelForMultimodalLM, Gemma4Processor; print('Gemma 4 classes OK')"])
 
 

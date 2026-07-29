@@ -11,7 +11,7 @@ def test_default_dry_run_selects_every_matrix_model(capsys):
     assert "illada, dreamreasoner" in output
     assert "venv_scripts\\illada.py run" in output or "venv_scripts/illada.py run" in output
     assert "venv_scripts\\diffusiongemma.py run" in output or "venv_scripts/diffusiongemma.py run" in output
-    assert "venv_scripts\\gemma4_26b_a4b.py run" in output or "venv_scripts/gemma4_26b_a4b.py run" in output
+    assert "venv_scripts\\gemma.py run" in output or "venv_scripts/gemma.py run" in output
     assert "venv_scripts\\qwen3_8b.py run" in output or "venv_scripts/qwen3_8b.py run" in output
 
 
@@ -118,4 +118,4 @@ def test_diffusiongemma_is_the_public_name():
 
 
 def test_same_scale_gemma_ar_reference_is_public():
-    assert "gemma4_26b_a4b" in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)
+    assert "gemma" in run_bench.matrix_model_names(run_bench.DEFAULT_MATRIX)

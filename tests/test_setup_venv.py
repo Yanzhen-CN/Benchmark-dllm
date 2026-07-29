@@ -25,7 +25,7 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "dreamreasoner",
         "w1",
         "diffusiongemma",
-        "gemma4_26b_a4b",
+        "gemma",
     ):
         assert f"{model}.py setup" in output
 
@@ -35,7 +35,7 @@ def test_setup_venv_supports_separate_dg_comparison_matrix(capsys):
     assert setup_venv.main(["--dry-run", "--matrix", str(matrix)]) == 0
     output = capsys.readouterr().out
     assert "diffusiongemma.py setup" in output
-    assert "gemma4_26b_a4b.py setup" in output
+    assert "gemma.py setup" in output
 
 
 @pytest.mark.parametrize(
@@ -88,6 +88,15 @@ def test_model_venvs_share_one_parent_directory(monkeypatch):
     assert _model_script.venv_dir(profile) == _model_script.REPO_ROOT / ".venvs" / "illada"
 
 
+def test_gemma_reuses_legacy_environment_after_public_rename(tmp_path, monkeypatch):
+    monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
+    monkeypatch.setattr(_model_script, "REPO_ROOT", tmp_path)
+    legacy = tmp_path / ".venvs" / "gemma4_26b_a4b"
+    legacy.mkdir(parents=True)
+
+    assert _model_script.venv_dir(_model_script.PROFILES["gemma"]) == legacy
+
+
 def test_model_run_forwards_sampling_variant_filter(monkeypatch):
     monkeypatch.setenv("MATRIX_VARIANTS", "fast")
     arguments = _model_script.benchmark_arguments(_model_script.PROFILES["illada"])
@@ -111,7 +120,7 @@ def test_dreamreasoner_matches_checkpoint_transformers_version():
 
 
 def test_gemma4_ar_matches_diffusiongemma_runtime():
-    gemma_ar = _model_script.PROFILES["gemma4_26b_a4b"]
+    gemma_ar = _model_script.PROFILES["gemma"]
     diffusion = _model_script.PROFILES["diffusiongemma"]
     assert gemma_ar.torch_version == diffusion.torch_version
     assert gemma_ar.transformers_version == diffusion.transformers_version

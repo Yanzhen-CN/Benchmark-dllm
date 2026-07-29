@@ -44,10 +44,10 @@ def test_build_gemma4_ar_trace_commits_one_token_per_forward():
 
 
 def test_gemma4_model_config_builds_official_non_thinking_adapter():
-    adapter = build_model_adapter("configs/models/gemma4_26b_a4b.yaml")
+    adapter = build_model_adapter("configs/models/gemma.yaml")
 
     assert isinstance(adapter, Gemma4ARAdapter)
-    assert adapter.name == "gemma4_26b_a4b"
+    assert adapter.name == "gemma"
     assert adapter.config_name == "ar-baseline"
     assert adapter._enable_thinking is False
 

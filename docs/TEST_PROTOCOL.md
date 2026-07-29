@@ -172,7 +172,7 @@ Run the large matched pair on the 80 GiB machine and W1 only after its API
 credentials and rate limits are confirmed:
 
 ```bash
-python run_model.py -m diffusiongemma gemma4_26b_a4b --output-root output/formal --resume
+python run_model.py -m diffusiongemma gemma --output-root output/formal --resume
 python run_model.py -m w1 --output-root output/formal --resume
 ```
 

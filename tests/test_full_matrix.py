@@ -18,7 +18,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         "dreamreasoner",
         "w1",
         "diffusiongemma",
-        "gemma4_26b_a4b",
+        "gemma",
     }
     assert {job.dataset_config.stem for job in jobs} == {
         "gsm8k",
@@ -57,8 +57,8 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     }
     assert {
         job.model_name: job.n_samples for job in sudoku4_jobs
-        if job.model_name in {"diffusiongemma", "gemma4_26b_a4b"}
-    } == {"diffusiongemma": 10, "gemma4_26b_a4b": 10}
+        if job.model_name in {"diffusiongemma", "gemma"}
+    } == {"diffusiongemma": 10, "gemma": 10}
     for model_name in ("illada", "dreamreasoner"):
         hello_job = next(
             job for job in jobs
@@ -115,7 +115,7 @@ def test_dg_comparison_matrix_is_a_separate_matched_pair():
     assert len(jobs) == 2 * 8
     assert {job.model_name for job in jobs} == {
         "diffusiongemma",
-        "gemma4_26b_a4b",
+        "gemma",
     }
     assert {job.dataset_config.stem for job in jobs} == {
         "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9", "sudoku_trace",

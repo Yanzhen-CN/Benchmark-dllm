@@ -2,4 +2,4 @@
 from _model_script import main
 
 if __name__ == "__main__":
-    raise SystemExit(main("gemma4_26b_a4b"))
+    raise SystemExit(main("gemma"))
