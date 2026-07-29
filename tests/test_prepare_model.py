@@ -90,6 +90,24 @@ def test_prepare_model_downloads_shared_checkpoint_once_without_building_adapter
     )
 
 
+def test_prepare_model_downloads_dflash_target_and_draft(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        prepare_model,
+        "_download_snapshot",
+        lambda repo_id, revision, cache_dir: calls.append(repo_id) or "/cached/model",
+    )
+
+    prepare_model._prepare_one(
+        str(CONFIGS_DIR / "models" / "gemma_dflash.yaml"), None, None
+    )
+
+    assert calls == [
+        "google/gemma-4-26B-A4B-it",
+        "z-lab/gemma-4-26B-A4B-it-DFlash",
+    ]
+
+
 def test_prepare_model_rejects_variant_and_variants_together(tmp_path):
     result = _run(
         [
@@ -112,6 +130,7 @@ def test_prepare_model_defaults_to_all_matrix_models_via_isolated_scripts(tmp_pa
         "w1",
         "diffusiongemma",
         "gemma",
+        "gemma_dflash",
     ):
         assert f"{model}.py prepare" in result.stdout
 

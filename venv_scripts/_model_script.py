@@ -26,6 +26,8 @@ class ModelProfile:
     torch_cuda_indexes: tuple[str, ...] = ()
     torchvision_version: str | None = None
     legacy_venv_subdirs: tuple[str, ...] = ()
+    setup_requirements: tuple[str, ...] = ()
+    required_distributions: tuple[str, ...] = ()
 
 
 PROFILES: Mapping[str, ModelProfile] = {
@@ -55,6 +57,16 @@ PROFILES: Mapping[str, ModelProfile] = {
         "dev,gemma4,gpu", "2.6.0", "5.14.1", ("cu118", "cu124", "cu126"),
         torchvision_version="0.21.0",
         legacy_venv_subdirs=("gemma4_26b_a4b",),
+    ),
+    "gemma_dflash": ModelProfile(
+        "gemma_dflash",
+        "gemma_dflash",
+        "configs/models/gemma_dflash.yaml",
+        "dev,api,gpu",
+        setup_requirements=(
+            "vllm @ git+https://github.com/vllm-project/vllm.git@refs/pull/41703/head",
+        ),
+        required_distributions=("vllm", "transformers", "torch"),
     ),
     "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
 }
@@ -108,6 +120,26 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
     run([base_python, "-m", "venv", directory])
     python = venv_python(directory)
     run([python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], env=install_env)
+    if profile.setup_requirements:
+        # Official Gemma 4 DFlash currently needs the temporary vLLM PR
+        # build. uv selects the compatible PyTorch/CUDA wheel from the server
+        # driver instead of applying one of the HF adapter pins below.
+        run([python, "-m", "pip", "install", "--upgrade", "uv"], env=install_env)
+        uv = python.with_name("uv.exe" if os.name == "nt" else "uv")
+        run(
+            [
+                uv,
+                "pip",
+                "install",
+                "--python",
+                python,
+                "--torch-backend",
+                "auto",
+                "--upgrade",
+                *profile.setup_requirements,
+            ],
+            env=install_env,
+        )
     if profile.torch_version:
         run(
             [python, "-m", "pip", "install", "--upgrade", f"torch=={profile.torch_version}",
@@ -209,6 +241,19 @@ def repair_project_installation(profile: ModelProfile, python: Path) -> None:
 def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
     python = venv_python(venv_dir(profile))
     if not python.is_file():
+        return setup_environment(profile, cuda_index)
+
+    missing = [
+        distribution
+        for distribution in profile.required_distributions
+        if _installed_distribution_version(python, distribution) is None
+    ]
+    if missing:
+        print(
+            f"Rebuilding incomplete {profile.model_id} environment; missing: "
+            f"{', '.join(missing)}",
+            flush=True,
+        )
         return setup_environment(profile, cuda_index)
 
     mismatches = _profile_version_mismatches(profile, python)
@@ -359,6 +404,8 @@ def check_environment(profile: ModelProfile, python: Path) -> None:
         run([python, "-c", "from transformers import DiffusionGemmaForBlockDiffusion, Gemma4Processor; print('DiffusionGemma classes OK')"])
     elif profile.model_id == "gemma":
         run([python, "-c", "from transformers import AutoModelForMultimodalLM, Gemma4Processor; print('Gemma 4 classes OK')"])
+    elif profile.model_id == "gemma_dflash":
+        run([python, "-c", "import requests, torch, transformers, vllm; print('Gemma DFlash vLLM runtime OK')"])
 
 
 def benchmark_arguments(profile: ModelProfile) -> list[str]:
@@ -367,6 +414,11 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
         raise SystemExit(f"unknown DATA_SOURCE={data_source!r}; use 'demo' or 'real'")
     if profile.model_id == "w1" and not os.environ.get("W1_API_BASE_URL"):
         raise SystemExit("W1_API_BASE_URL must be set before running W1")
+    if profile.model_id == "gemma_dflash" and os.environ.get("MEASURE_COMPUTE", "0") == "1":
+        raise SystemExit(
+            "gemma_dflash does not support the separate PyTorch FLOP replay; "
+            "run it with --no-measure-compute"
+        )
 
     stage = os.environ.get("STAGE", "all")
     arguments = [
@@ -386,6 +438,8 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
         )
     if os.environ.get("N_SAMPLES"):
         arguments.extend(["--n-samples", os.environ["N_SAMPLES"]])
+    if os.environ.get("MAX_NEW_TOKENS"):
+        arguments.extend(["--max-new-tokens", os.environ["MAX_NEW_TOKENS"]])
     if os.environ.get("DATASETS"):
         for dataset_name in os.environ["DATASETS"].split(","):
             if dataset_name.strip():

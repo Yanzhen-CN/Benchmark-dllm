@@ -93,7 +93,7 @@ class EnergyHandle:
 
 
 @contextmanager
-def measure_energy_joules() -> Iterator[EnergyHandle]:
+def measure_energy_joules(*, synchronize: bool = True) -> Iterator[EnergyHandle]:
     """Context manager mirroring :func:`resource.timing.measure_wall_clock`.
 
     Sets ``handle.available = False`` and ``handle.joules = None`` instead of
@@ -104,7 +104,8 @@ def measure_energy_joules() -> Iterator[EnergyHandle]:
     from .timing import synchronize_all_gpus
 
     handle = EnergyHandle()
-    synchronize_all_gpus()
+    if synchronize:
+        synchronize_all_gpus()
     try:
         handle._before_mj = _read_energy_mj_per_gpu()
     except EnergyUnavailableError:
@@ -114,7 +115,8 @@ def measure_energy_joules() -> Iterator[EnergyHandle]:
         yield handle
     finally:
         if handle.available:
-            synchronize_all_gpus()
+            if synchronize:
+                synchronize_all_gpus()
             try:
                 after_mj = _read_energy_mj_per_gpu()
                 total_mj = sum(

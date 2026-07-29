@@ -79,15 +79,24 @@ def _prepare_one(model_config: str, variant: str | None, variants_arg: str | Non
                 f"unknown variant {resolved_variant!r}; available: {available}"
             )
         init_kwargs = config["configs"][resolved_variant].get("init_kwargs", {})
-        repo_id = init_kwargs.get("model_name_or_path")
-        if not repo_id:
+        repositories: list[tuple[str, str | None]] = []
+        for key, value in init_kwargs.items():
+            if not key.endswith("model_name_or_path") or not value:
+                continue
+            revision_key = (
+                "revision"
+                if key == "model_name_or_path"
+                else f"{key.removesuffix('_model_name_or_path')}_revision"
+            )
+            repositories.append((str(value), init_kwargs.get(revision_key)))
+        if not repositories:
             print(
                 f"[{resolved_variant}] {config['model']}: "
                 "no Hugging Face checkpoint to download — skipping"
             )
             continue
-        revision = init_kwargs.get("revision")
-        snapshots.setdefault((str(repo_id), revision), []).append(resolved_variant)
+        for repo_id, revision in repositories:
+            snapshots.setdefault((repo_id, revision), []).append(resolved_variant)
 
     for (repo_id, revision), shared_variants in snapshots.items():
         revision_label = revision or "default revision"

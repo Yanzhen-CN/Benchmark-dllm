@@ -53,6 +53,10 @@ MEASUREMENT_PROTOCOL = "gpu-synced-v4-trace-excluded-compute-deferred"
 OOM_INFO_FILENAME = "oom_info.json"
 
 
+def _measurement_protocol(adapter: ModelAdapter) -> str:
+    return str(getattr(adapter, "measurement_protocol", MEASUREMENT_PROTOCOL))
+
+
 class OOMInvalidTestError(RuntimeError):
     """The current model×dataset test is invalid because CUDA OOM occurred."""
 
@@ -103,7 +107,7 @@ def persist_setup_oom_invalidation(
         adapter,
         {
             "seed": seed,
-            "measurement_protocol": MEASUREMENT_PROTOCOL,
+            "measurement_protocol": _measurement_protocol(adapter),
             "measure_compute": measure_compute,
             "require_all_metrics": require_all_metrics,
             "trace_scope": "all_samples" if capture_trace else "none",
@@ -285,6 +289,7 @@ def run_generation(
     capture_trace: bool = True,
     seed: int = DEFAULT_SEED,
     resume: bool = True,
+    force_max_new_tokens: bool = False,
     progress: GenerationProgress | None = None,
 ) -> GenerateStageSummary:
     if not samples:
@@ -297,7 +302,8 @@ def run_generation(
     if resume and meta_path.exists():
         existing_meta = json.loads(meta_path.read_text(encoding="utf-8"))
         existing_run = existing_meta.get("run_metadata", {})
-        if existing_run.get("measurement_protocol") != MEASUREMENT_PROTOCOL:
+        expected_protocol = _measurement_protocol(adapter)
+        if existing_run.get("measurement_protocol") != expected_protocol:
             raise RuntimeError(
                 f"existing outputs under {out_dir} use an incompatible measurement "
                 "protocol; rerun with --no-resume (overwrites this dataset) or "
@@ -348,11 +354,14 @@ def run_generation(
                 "run_metadata": collect_run_metadata(
                     adapter,
                     {
-                        "measurement_protocol": MEASUREMENT_PROTOCOL,
+                        "measurement_protocol": _measurement_protocol(adapter),
                         "measure_compute": measure_compute,
                         "require_all_metrics": require_all_metrics,
                         "trace_scope": "all_samples" if capture_trace else "none",
                         "energy_backend": "nvml-total-energy",
+                        "max_new_tokens_override": (
+                            max_new_tokens if force_max_new_tokens else None
+                        ),
                     },
                 ),
             },
@@ -368,9 +377,18 @@ def run_generation(
     ] = []
     for index, sample in enumerate(samples, start=1):
         sample_path = out_dir / f"{sample.sample_id}.json"
+        sample_max_new_tokens = (
+            int(max_new_tokens)
+            if force_max_new_tokens
+            else int(sample.meta.get("max_new_tokens", max_new_tokens))
+        )
+        if sample_max_new_tokens <= 0:
+            raise ValueError(
+                f"sample {sample.sample_id} has invalid max_new_tokens={sample_max_new_tokens}"
+        )
         if resume and sample_path.exists():
-            skipped += 1
             existing = load_generation_result(sample_path)
+            skipped += 1
             if existing.status is RunStatus.OOM:
                 stopped_early = True
                 first_oom_sample_id = sample.sample_id
@@ -387,6 +405,13 @@ def run_generation(
                     (out_dir / OOM_INFO_FILENAME).read_text(encoding="utf-8")
                 )
                 raise oom_invalid_test_error(out_dir, detail)
+            if existing.request.max_new_tokens != sample_max_new_tokens:
+                raise RuntimeError(
+                    f"existing sample {sample.sample_id} under {out_dir} used "
+                    f"max_new_tokens={existing.request.max_new_tokens}, but the current "
+                    f"matrix requires {sample_max_new_tokens}; rerun with --no-resume "
+                    "(overwrites this dataset) or choose a fresh --output-root"
+                )
             if (
                 measure_compute
                 and existing.status.value == "success"
@@ -395,11 +420,6 @@ def run_generation(
                 compute_queue.append((index, sample, sample_path, existing))
             continue
 
-        sample_max_new_tokens = int(sample.meta.get("max_new_tokens", max_new_tokens))
-        if sample_max_new_tokens <= 0:
-            raise ValueError(
-                f"sample {sample.sample_id} has invalid max_new_tokens={sample_max_new_tokens}"
-            )
         request_config = dict(extra_config or {})
         request_config["capture_trace"] = capture_trace
         if "target_input_tokens" in sample.meta:

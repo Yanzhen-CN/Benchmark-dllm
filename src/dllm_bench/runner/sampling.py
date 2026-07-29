@@ -86,6 +86,13 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
         metadata["transformers_version"] = None
 
     try:
+        from importlib.metadata import version
+
+        metadata["vllm_version"] = version("vllm")
+    except Exception:
+        metadata["vllm_version"] = None
+
+    try:
         import pynvml
 
         pynvml.nvmlInit()
@@ -106,6 +113,9 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
     )
     if checkpoint:
         metadata["checkpoint"] = checkpoint
+    draft_checkpoint = getattr(adapter, "_draft_model_name", None)
+    if draft_checkpoint:
+        metadata["draft_checkpoint"] = draft_checkpoint
     loaded_model = getattr(adapter, "_model", None)
     loaded_config = getattr(loaded_model, "config", None)
     checkpoint_revision = getattr(loaded_config, "_commit_hash", None)

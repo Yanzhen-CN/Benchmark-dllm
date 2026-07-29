@@ -15,6 +15,6 @@ seed: 42
 dataset_kwargs:
   sample_count: 100
   seed: 42
-# d1 evaluates LLaDA at 128 and 256 output tokens. The shared main point uses
-# 128 to keep this compact task resource-proportionate; any 256 sweep must be
-# reported as a separate output-length profile.
+# d1 evaluates LLaDA at both 128 and 256 output tokens. The shared main point
+# uses 256 because general instruction checkpoints can consume most of a
+# 128-token canvas on the required reasoning before reaching <answer>.

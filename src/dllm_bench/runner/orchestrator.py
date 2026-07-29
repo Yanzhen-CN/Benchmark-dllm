@@ -128,6 +128,43 @@ def summarize_records(
     q = agg[f"{dataset.name}_score"]
     aux = {k: v for k, v in agg.items() if k != f"{dataset.name}_score"}
 
+    speculative = [
+        record.generation.extra
+        for record in records
+        if "target_verification_passes" in record.generation.extra
+    ]
+    if speculative:
+        drafts = sum(int(item.get("target_verification_passes", 0)) for item in speculative)
+        drafted_tokens = sum(int(item.get("drafted_tokens", 0)) for item in speculative)
+        accepted_tokens = sum(int(item.get("accepted_draft_tokens", 0)) for item in speculative)
+        aux.update(
+            {
+                "speculative_target_verification_passes": float(drafts),
+                "speculative_drafted_tokens": float(drafted_tokens),
+                "speculative_accepted_draft_tokens": float(accepted_tokens),
+                "speculative_draft_acceptance_rate": (
+                    accepted_tokens / drafted_tokens if drafted_tokens else 0.0
+                ),
+                "speculative_mean_acceptance_length": (
+                    1.0 + accepted_tokens / drafts if drafts else 1.0
+                ),
+            }
+        )
+        ttfts = [
+            float(item["time_to_first_token_seconds"])
+            for item in speculative
+            if item.get("time_to_first_token_seconds") is not None
+        ]
+        tpots = [
+            float(item["time_per_output_token_seconds"])
+            for item in speculative
+            if item.get("time_per_output_token_seconds") is not None
+        ]
+        if ttfts:
+            aux["mean_time_to_first_token_seconds"] = statistics.fmean(ttfts)
+        if tpots:
+            aux["mean_time_per_output_token_seconds"] = statistics.fmean(tpots)
+
     successful = [r for r in records if r.generation.status == RunStatus.SUCCESS]
     timed = [
         r for r in records

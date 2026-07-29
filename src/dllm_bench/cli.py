@@ -247,6 +247,7 @@ def generate(
     measure_compute: bool,
     require_all_metrics: bool,
     resume: bool,
+    force_max_new_tokens: bool = False,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset_settings = load_yaml(dataset_config)
@@ -331,7 +332,13 @@ def generate(
             )
             warmup_tokens = min(
                 8,
-                int(warmup_sample.meta.get("max_new_tokens", max_new_tokens)),
+                (
+                    max_new_tokens
+                    if force_max_new_tokens
+                    else int(
+                        warmup_sample.meta.get("max_new_tokens", max_new_tokens)
+                    )
+                ),
             )
             click.echo(f"[{v}] running untimed {warmup_tokens}-token warmup ...")
             try:
@@ -422,6 +429,7 @@ def generate(
                         out_dir=out_dir, measure_compute=measure_compute,
                         require_all_metrics=require_all_metrics, seed=resolved_seed,
                         capture_trace=capture_trace, resume=resume,
+                        force_max_new_tokens=force_max_new_tokens,
                         progress=bar_progress,
                     )
             else:
@@ -430,6 +438,7 @@ def generate(
                     out_dir=out_dir, measure_compute=measure_compute,
                     require_all_metrics=require_all_metrics, seed=resolved_seed,
                     capture_trace=capture_trace, resume=resume,
+                    force_max_new_tokens=force_max_new_tokens,
                     progress=log_progress,
                 )
         except OOMInvalidTestError as exc:
@@ -696,6 +705,12 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
 @click.option("--stage", type=click.Choice(["generate", "score", "visualize", "all"]), default="all", show_default=True)
 @click.option("--demo/--no-demo", default=False, show_default=True, help="Use demo data for every matrix row")
 @click.option("--n-samples", default=None, type=int)
+@click.option(
+    "--max-new-tokens",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Temporary override; supersedes matrix and per-sample output limits",
+)
 @click.option("--output-root", default="output", show_default=True, type=click.Path())
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
 @click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
@@ -712,6 +727,7 @@ def matrix_command(
     stage: str,
     demo: bool,
     n_samples: int | None,
+    max_new_tokens: int | None,
     output_root: str,
     measure_compute: bool,
     require_all_metrics: bool,
@@ -768,7 +784,14 @@ def matrix_command(
         try:
             if stage in {"generate", "all"}:
                 ctx.invoke(
-                    generate, **common, max_new_tokens=job.max_new_tokens,
+                    generate,
+                    **common,
+                    max_new_tokens=(
+                        max_new_tokens
+                        if max_new_tokens is not None
+                        else job.max_new_tokens
+                    ),
+                    force_max_new_tokens=max_new_tokens is not None,
                     measure_compute=measure_compute,
                     require_all_metrics=require_all_metrics, resume=resume,
                 )

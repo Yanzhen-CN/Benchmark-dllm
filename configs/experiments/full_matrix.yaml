@@ -1,4 +1,4 @@
-# Reference list of the section-5 model x dataset matrix (7 model configs x
+# Reference list of the section-5 model x dataset matrix (8 model configs x
 # 7 task datasets plus one isolated context-capacity diagnostic).
 # This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
@@ -52,6 +52,11 @@ models:
     dataset_overrides:
       sudoku4:
         n_samples: 10
+  - config: configs/models/gemma_dflash.yaml
+    variants: [dflash] # deployment-optimized Gemma; not a native baseline
+    dataset_overrides:
+      sudoku4:
+        n_samples: 10
 
 datasets:
   - config: configs/datasets/gsm8k.yaml
@@ -61,7 +66,7 @@ datasets:
   - config: configs/datasets/structeval_t.yaml
     max_new_tokens: 256
   - config: configs/datasets/sudoku4.yaml
-    max_new_tokens: 128
+    max_new_tokens: 256
   - config: configs/datasets/sudoku9.yaml
     max_new_tokens: 256
   - config: configs/datasets/ruler.yaml

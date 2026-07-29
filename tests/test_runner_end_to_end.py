@@ -108,6 +108,44 @@ def test_resource_rates_include_timed_failed_samples_in_window_denominator():
     assert summary.peak_vram_gb == pytest.approx(4.0)
 
 
+def test_speculative_serving_metrics_aggregate_from_common_extra_interface():
+    dataset = GSM8KDataset()
+    samples = build_demo_samples("gsm8k", n=2)
+    records = []
+    for sample, drafts, drafted, accepted, ttft, tpot in (
+        (samples[0], 2, 30, 12, 0.1, 0.02),
+        (samples[1], 3, 45, 18, 0.2, 0.04),
+    ):
+        records.append(
+            SampleRecord(
+                sample=sample,
+                generation=GenerationResult(
+                    request=GenerationRequest(sample.prompt, 16),
+                    output_text="#### 0",
+                    status=RunStatus.SUCCESS,
+                    final_valid_length=5,
+                    timing=TimingResult(1.0),
+                    extra={
+                        "target_verification_passes": drafts,
+                        "drafted_tokens": drafted,
+                        "accepted_draft_tokens": accepted,
+                        "time_to_first_token_seconds": ttft,
+                        "time_per_output_token_seconds": tpot,
+                    },
+                ),
+                score=ScoreResult(0.0),
+            )
+        )
+
+    summary = summarize_records("gemma_dflash", "dflash", dataset, records)
+
+    assert summary.aux["speculative_target_verification_passes"] == 5
+    assert summary.aux["speculative_draft_acceptance_rate"] == pytest.approx(0.4)
+    assert summary.aux["speculative_mean_acceptance_length"] == pytest.approx(7.0)
+    assert summary.aux["mean_time_to_first_token_seconds"] == pytest.approx(0.15)
+    assert summary.aux["mean_time_per_output_token_seconds"] == pytest.approx(0.03)
+
+
 def test_resource_rates_are_unavailable_when_any_selected_sample_lacks_timing():
     dataset = GSM8KDataset()
     samples = build_demo_samples("gsm8k", n=2)

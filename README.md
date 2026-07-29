@@ -22,6 +22,7 @@ not just interface stubs:
 | iLLaDA | **Real, ported sampler** (`models/illada.py`) | Official `ML-GSAI/LLaDA` `generate.py` plus the iLLaDA checkpoint card — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, FP64 gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
 | DiffusionGemma | **Real** (`models/diffusiongemma.py`) | Verified against the upstream `DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` implementation. Trace capture wraps `accept_canvas` through `_prepare_sampler`. Tests live in `tests/test_diffusiongemma_sampling.py`. |
 | Gemma 4 26B-A4B AR | **Real** (`models/gemma4_ar.py`) | Official `AutoProcessor` + `AutoModelForMultimodalLM` path in native BF16. It matches DiffusionGemma's 25.2B-total/3.8B-active MoE scale and reuses the common AR generation/trace protocol. |
+| Gemma 4 + DFlash | **Real, deployment track** (`models/gemma_dflash.py`) | Official `google/gemma-4-26B-A4B-it` target plus `z-lab/gemma-4-26B-A4B-it-DFlash` draft through the official temporary vLLM Gemma4 build. It keeps the common result/score/resource interface and records vLLM acceptance counters, but is not a native AR baseline and exposes no per-token trace through the public serving API. |
 | DreamReasoner | **Real, ported sampler** (`models/dreamreasoner.py`) | GitHub's `DreamLM/DreamReasoner` repo (the design doc's own link) ships only a README + assets, no python — so verified instead by fetching the real `generation_utils.py`/`modeling_dream.py`/`config.json` from the `Dream-org/DreamReasoner-8B` HF repo directly. Confirmed from that source (not assumed): `block_diffusion_generate` returns only `sequences`/`nfe`, no per-step history at all (unlike regular Dream-7B's `output_history`), so this adapter ports the real `_denoise_current_block`/`_select_transfer_index` loop itself (like iLLaDA) rather than calling the model's own convenience method; default `block_length`=`config.block_size`=32; default per-block `denoising_steps`=`block_length` unless `remasking_strategy='low_confidence_static'`; the library's own default remasking strategy (`low_confidence_dynamic`) is already confidence-based, so — unlike regular Dream, where the library default was overridden — no override is applied; `mask_token_id`=`config.mask_token_id`=151669, shipped directly; the real default path uses a prefix KV cache (ported faithfully, since it directly affects real Time/Energy/Compute cost, not just trace fidelity); never revises (same structural reason as iLLaDA). This is a genuinely different, independently trained model from regular Dream-7B (`Dream-org/Dream-v0-Instruct-7B`) — not a config variant of it — and the design doc's own model roster (section 5) no longer includes regular Dream at all, so that adapter/config/tests were removed rather than kept alongside this one. Tests in `tests/test_dreamreasoner_sampling.py`. |
 
 The 2026-07-29 architecture audit also checked every formal checkpoint's
@@ -189,6 +190,7 @@ Available entry points and environments:
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
 | Gemma 4 26B-A4B AR | `venv_scripts/gemma.py` | `.venvs/gemma` |
+| Gemma 4 + DFlash | `venv_scripts/gemma_dflash.py` | `.venvs/gemma_dflash` |
 | W1 | `venv_scripts/w1.py` | `.venvs/w1` |
 | Local non-model stages | `venv_scripts/root.py` | `.venvs/root` |
 
@@ -211,7 +213,7 @@ python venv_scripts/qwen3_8b.py prepare
 python run_model.py -m qwen3_8b -d gsm8k --n-samples 1
 ```
 
-### A100 Gemma 4 Pair
+### A100 Gemma 4 comparison
 
 Use the same A100 80GB in native BF16 for the Gemma 4 AR vs DiffusionGemma
 comparison. A100 40GB cannot hold either roughly 50GB BF16 checkpoint entirely
@@ -242,6 +244,38 @@ python prepare_model.py -m gemma -m diffusiongemma
   --demo --n-samples 1 --max-new-tokens 64 \
   --output-root output/a100_pair_check --no-resume
 ```
+
+The deployment-optimized DFlash row is parallel to the other models but stays
+in `dg_comparison.yaml`, not `full_matrix.yaml`. Its isolated setup installs
+the official Gemma4 DFlash vLLM PR build, and preparation downloads both the
+Gemma target and 0.4B DFlash draft without loading either checkpoint:
+
+```bash
+python run_prepare.py \
+  --matrix configs/experiments/dg_comparison.yaml \
+  -m gemma_dflash --skip-data
+
+python run_model.py \
+  --matrix configs/experiments/dg_comparison.yaml \
+  -m gemma_dflash \
+  --output-root output/dflash --resume
+
+# Local scoring uses the normal root environment; it never starts vLLM.
+python run_score.py \
+  --matrix configs/experiments/dg_comparison.yaml \
+  -m gemma_dflash --output-root output/dflash --resume
+```
+
+Run on the same exclusive A100 80GB used by the native pair. DFlash keeps the
+normal measured timing, energy, peak-memory, TPS/SPS/EPS and dataset score
+fields. Peak memory is sampled as total NVML device-used memory so it includes
+both target and draft server processes; acceptance rate, mean acceptance
+length, target verification passes, TTFT and TPOT are persisted in each
+sample's `extra` object. Trace analysis is unavailable for this deployment row
+because vLLM exposes aggregate acceptance counters, not its internal per-token
+verification history. Set `DLLM_DFLASH_SERVER_URL` only when intentionally
+using an already-running compatible server; otherwise the adapter manages the
+local server itself.
 
 The separate compact Sudoku trace case study keeps the same frozen 5 Easy +
 5 Hard source rows and semantic scorer as `sudoku9`. Unlike the main reasoning
@@ -316,7 +350,8 @@ Sudoku is split into two non-interchangeable tracks. `sudoku4` follows d1's
 official zero-shot 4x4 prompt, `<reasoning>/<answer>` wrapper, test CSV, and
 blank-cell accuracy. Preparation freezes 100 seeded rows from the official
 500-row test file; every source puzzle has exactly eight blanks. The shared
-main output cap is 128 tokens. Whole-puzzle validity, reference exact match,
+main output cap is 256 tokens, the larger of d1's two reported settings, so
+reasoning-oriented checkpoints have room to reach the answer tag. Whole-puzzle validity, reference exact match,
 clue preservation, and answer-format compliance are reported alongside d1's
 partial-credit primary score. There is no Easy/Hard split for 4x4.
 
@@ -603,6 +638,17 @@ Sudoku4's primary score is d1 blank-cell accuracy. Its strict
 clue. Sudoku9 uses the inverse emphasis: strict whole-puzzle constraint
 validity is primary and blank-cell accuracy is diagnostic. Only Sudoku9 has
 the Easy/Hard reporting split.
+
+When a 256-token output ends in reasoning without a complete answer marker,
+do not interpret that row alone as pure instruction-following failure. Every
+model can run a temporary length probe through the normal entry point, for
+example `python run_model.py -m qwen3_4b -d sudoku9 --real-data --n-samples 1
+--max-new-tokens 512 --output-root output/sudoku_length_probe/qwen4b_512
+--no-resume`. If the answer appears only there, report output-budget/verbosity
+pressure; if it still does not appear, report persistent answer non-completion.
+Temporary overrides are diagnostic and are never pooled with formal scores or
+resource measurements. Use a fresh output root (recommended) or `--no-resume`;
+resume rejects an existing sample generated with a different output cap.
 
 For HelloBench, repeat `--hellobench-length` to select `2k`, `4k`, or both.
 `--n-samples` is the total across the selected output profiles: selecting only

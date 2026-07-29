@@ -429,6 +429,41 @@ def test_matrix_variants_option_filters_sampling_profile(tmp_path, monkeypatch):
     assert captured == ["fast"]
 
 
+def test_matrix_output_length_override_has_highest_priority(tmp_path, monkeypatch):
+    runner = CliRunner()
+    model_config = CONFIGS_DIR / "models" / "mock.yaml"
+    dataset_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
+    experiment_config = tmp_path / "experiment.yaml"
+    experiment_config.write_text(
+        "seed: 42\n"
+        "models:\n"
+        f"  - name: mock\n    config: {model_config}\n"
+        "    variants: [default]\n"
+        "datasets:\n"
+        f"  - config: {dataset_config}\n    max_new_tokens: 16\n"
+    )
+    captured = []
+
+    def fake_generate(**kwargs):
+        captured.append(
+            (kwargs["max_new_tokens"], kwargs["force_max_new_tokens"])
+        )
+
+    monkeypatch.setattr(cli_module, "generate", fake_generate)
+    result = runner.invoke(
+        main,
+        [
+            "matrix", "--experiment-config", str(experiment_config),
+            "--model", "mock", "--stage", "generate", "--demo",
+            "--max-new-tokens", "512",
+            "--output-root", str(tmp_path / "output"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured == [(512, True)]
+
+
 def test_matrix_still_aborts_on_a_non_oom_failure(tmp_path, monkeypatch):
     """Only an OOM-shaped failure is swallowed per-job — anything else is
     a real bug likely to affect every job, so it must still abort loudly."""

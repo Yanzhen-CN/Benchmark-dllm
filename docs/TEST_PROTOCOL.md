@@ -11,7 +11,9 @@ keeps every model on its own published inference path.
   share the already-loaded checkpoint weights.
 - Do not add quantization, CPU offload, automatic batch/input reduction,
   speculative decoding, custom KV caches, `torch.cuda.empty_cache()`, or an
-  OOM retry with changed settings.
+  OOM retry with changed settings to the **native-mechanism matrix**. The only
+  speculative-decoding exception is the separately labelled `gemma_dflash`
+  deployment row in `dg_comparison.yaml`; it must not replace native Gemma.
 - Keep model-native execution intact. iLLaDA uses its full-sequence official
   denoising loop without KV cache. DreamReasoner keeps its checkpoint's native
   prefix KV cache. AR models use their checkpoint `generate()` path.
@@ -30,7 +32,7 @@ keeps every model on its own published inference path.
 | GSM8K | 100 | Dataset protocol | Formal |
 | MBPP-Sanitized | 100 | Dataset protocol | Formal |
 | StructEval-T | 100 | Dataset protocol | Formal |
-| Sudoku4 | 4B/8B/W1: 100; DG/Gemma-4: 10 | d1 zero-shot prompt, 128 output tokens | Formal compact track / large-model probe |
+| Sudoku4 | 4B/8B/W1: 100; DG/Gemma-4: 10 | d1 zero-shot prompt, 256 output tokens | Formal compact track / large-model probe |
 | Sudoku9 | DG/Gemma-4: 100 (50 Easy + 50 Hard); 4B/8B/W1: 10 (5 + 5) | General-instruction prompt, 256 output tokens | Formal 9x9 track / small-model feasibility probe |
 | RULER | 30 | 4096 encoded-input target + at most 64 output tokens | Formal |
 | HelloBench, iLLaDA | 1 | 2K-word profile, 3072-token generation cap | Reference diagnostic |
@@ -40,7 +42,7 @@ keeps every model on its own published inference path.
 
 The generation ceilings are fixed by dataset rather than inherited from a
 mutable runner default: GSM8K 256, MBPP-Sanitized 256, StructEval-T 256,
-Sudoku4 128, Sudoku9 256, formal RULER 64, and the RULER context probe 64
+Sudoku4 256, Sudoku9 256, formal RULER 64, and the RULER context probe 64
 output tokens. HelloBench uses its per-sample profiles: 2K words / 3072 tokens
 and 4K words / 6144 tokens. StructEval upstream leaves `max_tokens` unset, so
 this suite's 256-token ceiling is a controlled cross-model setting.
@@ -52,7 +54,7 @@ this suite's 256-token ceiling is a controlled cross-model setting.
 | GSM8K | lm-eval `gsm8k_cot`, first four demonstrations, flexible last-number extraction, and generate-until strings | Seeded 100/1319 test subset; fixed per-model decoding profiles |
 | MBPP-Sanitized | Official tasks 2/3/4 three-shot prompt, `[BEGIN]`/`[DONE]`, execution of all tests, pass@1 | Sanitized source and seeded 100-row subset, so do not compare it directly with full-MBPP leaderboard numbers |
 | StructEval-T | Official query, marker wrapper, strict parser, required-path coverage, and `0.2 render + 0.8 key validation` score | Seeded 100/950 subset and suite-controlled decoding profiles |
-| Sudoku4 | d1's pinned 500-row test CSV, zero-shot prompt, `<reasoning>/<answer>` contract, and blank-cell accuracy | Seeded 100-row subset; strict complete-puzzle success is an auxiliary metric; one common 128-token setting rather than d1's 128/256 sweep |
+| Sudoku4 | d1's pinned 500-row test CSV, zero-shot prompt, `<reasoning>/<answer>` contract, and blank-cell accuracy | Seeded 100-row subset; strict complete-puzzle success is an auxiliary metric; the common point is d1's 256-token setting rather than its 128/256 sweep |
 | Sudoku9 | Ye et al. Park test split, zero-shot puzzle, clue preservation plus all Sudoku constraints as the primary 0/1 score | Easy/Hard is reporting-only; answer markers and tolerant extraction adapt the task to general instruction checkpoints |
 | RULER | RULER-style task concepts, answer prefix, and fractional `string_match_all` | Reduced three-family, explicit-position, single-4096-input diagnostic; **not** the official 13-task RULER suite |
 | HelloBench | Official length-constrained prompts and 2K/4K target profiles | 1 sample/profile and objective judge-free diagnostics; **not** official checklist-based HelloEval |
@@ -66,6 +68,14 @@ Sudoku4 and Sudoku9 are separate tasks with separate sample IDs, output
 directories, metrics, and report columns. Their scores must never be pooled.
 Sudoku4 has no Easy/Hard label: every pinned d1 test puzzle has eight blanks,
 and imposing a new difficulty classifier would create an unsupported split.
+Output-length attribution does not require a separate matrix. Every model can
+use the normal entry point with `--max-new-tokens`, for example
+`python run_model.py -m qwen3_4b -d sudoku9 --real-data --n-samples 1
+--max-new-tokens 512 --output-root output/sudoku_length_probe/qwen4b_512
+--no-resume`. The override has higher priority than matrix and per-sample
+defaults, applies only to that invocation, and must use a separate diagnostic
+output root. Its quality/resource results must not be merged with either
+formal 256-token row. Formal runs never pass this option.
 
 The formal RULER set contains 10 NIAH, 10 multi-hop, and 10 aggregation
 questions. Front, middle, and back answer positions are also balanced across
@@ -182,6 +192,24 @@ credentials and rate limits are confirmed:
 python run_model.py -m diffusiongemma gemma --output-root output/formal --resume
 python run_model.py -m w1 --output-root output/formal --resume
 ```
+
+Run the optional Gemma+DFlash deployment row independently on the same
+exclusive A100 80GB. It has its own environment and remains outside the main
+matrix:
+
+```bash
+python run_prepare.py --matrix configs/experiments/dg_comparison.yaml \
+  -m gemma_dflash --skip-data
+python run_model.py --matrix configs/experiments/dg_comparison.yaml \
+  -m gemma_dflash --output-root output/dflash --resume
+```
+
+This row uses the same generation/score JSON contract and records measured
+latency, energy, NVML total-device peak memory, TPS/SPS/EPS, TTFT/TPOT, draft
+acceptance rate, mean acceptance length, and target verification passes. The
+vLLM public API does not expose the complete per-token verification history,
+so `gemma_dflash` is excluded from Part 4 trace plots. It is a deployment
+comparison, not evidence about the native AR generation mechanism.
 
 After copying `output/formal/model_output` to the scoring machine:
 

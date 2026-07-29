@@ -86,6 +86,21 @@ def test_hellobench_length_and_total_count_are_forwarded(monkeypatch):
     assert captured["env_updates"]["N_SAMPLES"] == "3"
 
 
+def test_temporary_output_length_override_is_forwarded(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
+
+    assert run_bench.main([
+        "-m", "qwen3_4b", "-d", "sudoku9",
+        "--max-new-tokens", "512",
+    ]) == 0
+    assert captured["env_updates"]["MAX_NEW_TOKENS"] == "512"
+
+
 def test_variant_and_variants_are_mutually_exclusive():
     with pytest.raises(SystemExit):
         run_bench.main([

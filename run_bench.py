@@ -13,6 +13,7 @@ Python. This keeps incompatible torch/transformers versions isolated.
     python run_bench.py -m qwen3_8b
     python run_bench.py -m diffusiongemma
     python run_bench.py -m gemma
+    python run_bench.py --matrix configs/experiments/dg_comparison.yaml -m gemma_dflash
 """
 
 from __future__ import annotations
@@ -109,6 +110,15 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--real-data", dest="data_source", action="store_const", const="real")
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Temporary generation-length override for every selected dataset; "
+            "takes precedence over matrix and per-sample defaults"
+        ),
+    )
+    parser.add_argument(
         "--hellobench-length",
         action="append",
         choices=("2k", "4k", "2000", "4000"),
@@ -180,6 +190,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         env_updates["N_REPRESENTATIVE"] = str(args.n_representative)
     if args.n_samples is not None:
         env_updates["N_SAMPLES"] = str(args.n_samples)
+    if args.max_new_tokens is not None:
+        if args.max_new_tokens <= 0:
+            raise SystemExit("--max-new-tokens must be greater than zero")
+        env_updates["MAX_NEW_TOKENS"] = str(args.max_new_tokens)
     if args.hellobench_length:
         env_updates["HELLOBENCH_LENGTHS"] = ",".join(args.hellobench_length)
     selected_variants = args.variant or args.variants

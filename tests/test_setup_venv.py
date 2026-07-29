@@ -26,6 +26,7 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "w1",
         "diffusiongemma",
         "gemma",
+        "gemma_dflash",
     ):
         assert f"{model}.py setup" in output
 
@@ -36,6 +37,7 @@ def test_setup_venv_supports_separate_dg_comparison_matrix(capsys):
     output = capsys.readouterr().out
     assert "diffusiongemma.py setup" in output
     assert "gemma.py setup" in output
+    assert "gemma_dflash.py setup" in output
 
 
 @pytest.mark.parametrize(
@@ -115,6 +117,16 @@ def test_model_run_forwards_each_hellobench_length(monkeypatch):
     assert arguments[second + 1] == "4k"
 
 
+def test_model_run_forwards_temporary_output_length_override(monkeypatch):
+    monkeypatch.setenv("MAX_NEW_TOKENS", "512")
+    arguments = _model_script.benchmark_arguments(
+        _model_script.PROFILES["qwen3_4b"]
+    )
+
+    index = arguments.index("--max-new-tokens")
+    assert arguments[index + 1] == "512"
+
+
 def test_dreamreasoner_matches_checkpoint_transformers_version():
     assert _model_script.PROFILES["dreamreasoner"].transformers_version == "5.7.0"
 
@@ -126,6 +138,16 @@ def test_gemma4_ar_matches_diffusiongemma_runtime():
     assert gemma_ar.transformers_version == diffusion.transformers_version
     assert gemma_ar.torchvision_version == "0.21.0"
     assert diffusion.torchvision_version == "0.21.0"
+
+
+def test_gemma_dflash_uses_its_own_vllm_environment():
+    profile = _model_script.PROFILES["gemma_dflash"]
+
+    assert profile.venv_subdir == "gemma_dflash"
+    assert profile.model_config == "configs/models/gemma_dflash.yaml"
+    assert profile.torch_version is None
+    assert profile.required_distributions == ("vllm", "transformers", "torch")
+    assert "refs/pull/41703/head" in profile.setup_requirements[0]
 
 
 def test_diffusiongemma_repairs_missing_torchvision(monkeypatch):

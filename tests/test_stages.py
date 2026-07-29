@@ -216,6 +216,27 @@ def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):
     assert (out_dir / "_meta.json").exists()
 
 
+def test_run_generation_can_force_one_temporary_output_length(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
+    samples = build_demo_samples("gsm8k", n=2)
+    samples[0].meta["max_new_tokens"] = 7
+    samples[1].meta["max_new_tokens"] = 13
+    out_dir = tmp_path / "model_output"
+
+    run_generation(
+        adapter,
+        "gsm8k",
+        samples,
+        max_new_tokens=512,
+        out_dir=out_dir,
+        force_max_new_tokens=True,
+    )
+
+    for sample in samples:
+        result = load_generation_result(out_dir / f"{sample.sample_id}.json")
+        assert result.request.max_new_tokens == 512
+
+
 def test_run_generation_passes_ruler_input_budget_to_adapter(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
     sample = build_demo_samples("gsm8k", n=1)[0]
@@ -406,6 +427,24 @@ def test_run_generation_resumes_and_skips_existing_samples(tmp_path):
     assert second.skipped == 3
     assert second.generated == 0
     assert call_count["n"] == 0  # nothing re-generated
+
+
+def test_run_generation_refuses_to_resume_with_changed_output_budget(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
+    samples = build_demo_samples("gsm8k", n=1)
+    out_dir = tmp_path / "model_output"
+
+    run_generation(adapter, "gsm8k", samples, max_new_tokens=16, out_dir=out_dir)
+
+    with pytest.raises(RuntimeError, match="max_new_tokens=16.*requires 32.*--no-resume"):
+        run_generation(
+            adapter,
+            "gsm8k",
+            samples,
+            max_new_tokens=32,
+            out_dir=out_dir,
+            resume=True,
+        )
 
 
 def test_run_generation_refuses_to_mix_legacy_measurement_protocol(tmp_path):
