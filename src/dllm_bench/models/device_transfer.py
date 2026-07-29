@@ -2,15 +2,90 @@
 
 from __future__ import annotations
 
+from threading import Event, Thread
 from time import perf_counter
+
+
+_TRANSFER_HEARTBEAT_SECONDS = 1.0
+_GIB = 1024**3
+
+
+class _GpuVramMonitor:
+    """Best-effort NVML reader for live whole-device memory usage."""
+
+    def __init__(self) -> None:
+        self._pynvml = None
+        self._devices: list[tuple[int, object]] = []
+        try:
+            import pynvml
+
+            from ..resource.energy import _energy_gpu_indices
+
+            pynvml.nvmlInit()
+            self._pynvml = pynvml
+            indices = _energy_gpu_indices(pynvml.nvmlDeviceGetCount())
+            self._devices = [
+                (index, pynvml.nvmlDeviceGetHandleByIndex(index))
+                for index in indices
+            ]
+            if not self._devices:
+                self.close()
+        except Exception:
+            self.close()
+
+    def snapshot(self) -> str | None:
+        if self._pynvml is None:
+            return None
+        try:
+            parts = []
+            for index, device in self._devices:
+                memory = self._pynvml.nvmlDeviceGetMemoryInfo(device)
+                used = int(memory.used)
+                total = int(memory.total)
+                percent = (100.0 * used / total) if total else 0.0
+                parts.append(
+                    f"GPU {index} VRAM {used / _GIB:.1f}/{total / _GIB:.1f} GiB "
+                    f"({percent:.1f}%)"
+                )
+            return ", ".join(parts) or None
+        except Exception:
+            return None
+
+    def close(self) -> None:
+        pynvml = self._pynvml
+        self._pynvml = None
+        self._devices = []
+        if pynvml is not None:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
+
+
+def _transfer_status(label: str, elapsed: float, vram: _GpuVramMonitor) -> str:
+    status = f"Moving {label} to GPU ... {elapsed:.1f}s elapsed"
+    snapshot = vram.snapshot()
+    return f"{status} | {snapshot}" if snapshot else status
+
+
+def _report_transfer_heartbeat(
+    stop: Event,
+    *,
+    label: str,
+    started: float,
+    vram: _GpuVramMonitor,
+) -> None:
+    while not stop.wait(_TRANSFER_HEARTBEAT_SECONDS):
+        elapsed = perf_counter() - started
+        print(_transfer_status(label, elapsed, vram), flush=True)
 
 
 def move_model_to_device(model, device, *, model_name: str | None = None):
     """Run ``model.to(device)`` and report CUDA transfer wall time.
 
     PyTorch exposes no reliable fractional progress callback for a whole-model
-    ``to`` operation. Do not display a percentage bar that can only remain at
-    zero until the entire transfer finishes.
+    ``to`` operation. Report an elapsed-time heartbeat instead of displaying a
+    percentage bar that can only remain at zero until the transfer finishes.
     """
     device_type = getattr(device, "type", str(device).split(":", 1)[0])
     if str(device_type).lower() != "cuda":
@@ -18,9 +93,30 @@ def move_model_to_device(model, device, *, model_name: str | None = None):
         return model
 
     label = (model_name or model.__class__.__name__).rsplit("/", 1)[-1]
-    print(f"Moving {label} to GPU ...", flush=True)
     started = perf_counter()
-    model.to(device)
+    vram = _GpuVramMonitor()
+    print(_transfer_status(label, 0.0, vram), flush=True)
+    stop_heartbeat = Event()
+    heartbeat = Thread(
+        target=_report_transfer_heartbeat,
+        kwargs={
+            "stop": stop_heartbeat,
+            "label": label,
+            "started": started,
+            "vram": vram,
+        },
+        daemon=True,
+    )
+    heartbeat.start()
+    final_vram = None
+    try:
+        model.to(device)
+    finally:
+        stop_heartbeat.set()
+        heartbeat.join()
+        final_vram = vram.snapshot()
+        vram.close()
     elapsed = perf_counter() - started
-    print(f"Moved {label} to GPU in {elapsed:.1f}s", flush=True)
+    suffix = f" | {final_vram}" if final_vram else ""
+    print(f"Moved {label} to GPU in {elapsed:.1f}s{suffix}", flush=True)
     return model
