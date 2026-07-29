@@ -1,4 +1,6 @@
-# Reference-only reasoning-prompt variant; prepare 100 rows and run one at 2K.
+# Reference-only long-reasoning companion to the main direct-answer Sudoku9
+# track. It reuses the same Park/Ye split and scorer while forcing the original
+# marked reasoning prompt through Sudoku9ThinkingDataset.
 dataset: sudoku9_thinking
 dataset_class: dllm_bench.datasets.sudoku9.Sudoku9ThinkingDataset
 primary_metric: extracted_solution_constraint_accuracy
@@ -28,5 +30,3 @@ dataset_kwargs:
   easy_count: 50
   hard_count: 50
   seed: 42
-# Park 9x9 split used by Ye et al. Main large-model runs use all 50+50 rows;
-# compact-model overrides select a deterministic 5+5 diagnostic subset.
