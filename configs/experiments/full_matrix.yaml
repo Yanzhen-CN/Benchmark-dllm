@@ -1,5 +1,5 @@
 # Reference list of the section-5 model x dataset matrix (9 model configs x
-# 7 task datasets plus one isolated context-capacity diagnostic).
+# 9 task datasets plus one isolated context-capacity diagnostic).
 # This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
 # `config`, `samples_file`, and task-specific `max_new_tokens` fields.
@@ -77,6 +77,14 @@ datasets:
     max_new_tokens: 256
   - config: configs/datasets/sudoku9.yaml
     max_new_tokens: 256
+  # Reference-only long-reasoning rows: prepare all 100 prompt variants, then
+  # run the same deterministic first sample for every model.
+  - config: configs/datasets/sudoku4_thinking.yaml
+    max_new_tokens: 2048
+    n_samples: 1
+  - config: configs/datasets/sudoku9_thinking.yaml
+    max_new_tokens: 2048
+    n_samples: 1
   - config: configs/datasets/ruler.yaml
     max_new_tokens: 64  # fallback; formal samples also carry this per sample
   - config: configs/datasets/hellobench.yaml

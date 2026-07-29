@@ -10,7 +10,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "full_matrix.yaml")
 
     assert seed == 42
-    assert len(jobs) == 9 * 8
+    assert len(jobs) == 9 * 10
     assert {job.model_name for job in jobs} == {
         "qwen3_4b",
         "qwen3_8b",
@@ -28,6 +28,8 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         "structeval_t",
         "sudoku4",
         "sudoku9",
+        "sudoku4_thinking",
+        "sudoku9_thinking",
         "ruler",
         "hellobench",
         "ruler_context_probe",
@@ -58,6 +60,13 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     sudoku9_jobs = [job for job in jobs if job.dataset_config.stem == "sudoku9"]
     assert all(job.max_new_tokens == 256 for job in sudoku4_jobs)
     assert all(job.max_new_tokens == 256 for job in sudoku9_jobs)
+    thinking_jobs = [
+        job for job in jobs
+        if job.dataset_config.stem in {"sudoku4_thinking", "sudoku9_thinking"}
+    ]
+    assert len(thinking_jobs) == 18
+    assert all(job.max_new_tokens == 2048 for job in thinking_jobs)
+    assert all(job.n_samples == 1 for job in thinking_jobs)
     assert {
         job.model_name: job.n_samples for job in sudoku9_jobs
         if job.model_name in {
@@ -92,7 +101,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     assert all(job.max_new_tokens == 64 for job in probe_jobs)
 
 
-def test_dg_comparison_uses_sudoku9_main_and_ten_sudoku4_probes():
+def test_dg_comparison_uses_main_and_reference_sudoku_rows():
     jobs, _ = load_matrix_jobs(
         ROOT / "configs" / "experiments" / "dg_comparison.yaml"
     )
@@ -100,6 +109,11 @@ def test_dg_comparison_uses_sudoku9_main_and_ten_sudoku4_probes():
     sudoku4_jobs = [job for job in jobs if job.dataset_config.stem == "sudoku4"]
     assert all(job.max_new_tokens == 256 and job.n_samples is None for job in sudoku9_jobs)
     assert all(job.max_new_tokens == 256 and job.n_samples == 10 for job in sudoku4_jobs)
+    thinking_jobs = [
+        job for job in jobs
+        if job.dataset_config.stem in {"sudoku4_thinking", "sudoku9_thinking"}
+    ]
+    assert all(job.max_new_tokens == 2048 and job.n_samples == 1 for job in thinking_jobs)
 
 
 def test_matrix_can_filter_task2_datasets_for_selected_models():
@@ -118,13 +132,13 @@ def test_dg_comparison_matrix_contains_native_pair_and_dflash_deployment_row():
     jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "dg_comparison.yaml")
 
     assert seed == 42
-    assert len(jobs) == 3 * 8
+    assert len(jobs) == 3 * 9
     assert {job.model_name for job in jobs} == {
         "diffusiongemma",
         "gemma",
         "gemma_dflash",
     }
     assert {job.dataset_config.stem for job in jobs} == {
-        "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9", "sudoku_trace",
-        "ruler", "hellobench"
+        "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9",
+        "sudoku4_thinking", "sudoku9_thinking", "ruler", "hellobench"
     }

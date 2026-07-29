@@ -253,6 +253,25 @@ class Sudoku4Dataset(Dataset):
         return summary
 
 
+class Sudoku4ThinkingDataset(Sudoku4Dataset):
+    """The same 100-row Sudoku4 set with the original reasoning prompt."""
+
+    name = "sudoku4_thinking"
+
+    def __init__(
+        self,
+        samples: list[Sample] | None = None,
+        sample_count: int = 100,
+        seed: int = 42,
+    ) -> None:
+        super().__init__(
+            samples=samples,
+            sample_count=sample_count,
+            seed=seed,
+            enable_reasoning=True,
+        )
+
+
 def _load_d1_samples(
     path: Path, *, enable_reasoning: bool | None = None
 ) -> list[Sample]:

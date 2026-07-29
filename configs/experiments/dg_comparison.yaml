@@ -20,7 +20,12 @@ datasets:
     max_new_tokens: 256
   - config: configs/datasets/sudoku9.yaml
     max_new_tokens: 256
-  - configs/datasets/sudoku_trace.yaml
+  - config: configs/datasets/sudoku4_thinking.yaml
+    max_new_tokens: 2048
+    n_samples: 1
+  - config: configs/datasets/sudoku9_thinking.yaml
+    max_new_tokens: 2048
+    n_samples: 1
   - config: configs/datasets/ruler.yaml
     max_new_tokens: 64
   - config: configs/datasets/hellobench.yaml

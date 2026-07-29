@@ -124,7 +124,8 @@ def test_full_matrix_prepare_visits_all_formal_and_probe_datasets(tmp_path, monk
     second = prepare_matrix_datasets(FULL_MATRIX_CONFIG)
 
     assert [item.dataset_name for item in first] == [
-        "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9", "ruler", "hellobench",
+        "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9",
+        "sudoku4_thinking", "sudoku9_thinking", "ruler", "hellobench",
         "ruler_context_probe",
     ]
     assert all(item.sample_count == 1 and item.prepared_now for item in first)

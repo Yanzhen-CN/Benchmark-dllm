@@ -411,6 +411,29 @@ class Sudoku9Dataset(Dataset):
         }
 
 
+class Sudoku9ThinkingDataset(Sudoku9Dataset):
+    """The same 100-row Sudoku9 set with the original reasoning prompt."""
+
+    name = "sudoku9_thinking"
+
+    def __init__(
+        self,
+        samples: list[Sample] | None = None,
+        cache_dir: str | Path | None = None,
+        easy_count: int = 50,
+        hard_count: int = 50,
+        seed: int = 42,
+    ) -> None:
+        super().__init__(
+            samples=samples,
+            cache_dir=cache_dir,
+            easy_count=easy_count,
+            hard_count=hard_count,
+            seed=seed,
+            enable_reasoning=True,
+        )
+
+
 def group_by_difficulty(
     samples: list[Sample], results: list[ScoreResult]
 ) -> dict[str, list[ScoreResult]]:
