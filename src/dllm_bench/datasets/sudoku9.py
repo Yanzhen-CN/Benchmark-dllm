@@ -35,7 +35,7 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
-SUDOKU_PROTOCOL_REVISION = "direct-copy-fill-raw-answer-v6"
+SUDOKU_PROTOCOL_REVISION = "direct-copy-fill-raw-answer-v7"
 SUDOKU_REASONING_PROTOCOL_REVISION = "grid-prompt-marked-answer-v3"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
@@ -490,7 +490,7 @@ def _build_prompt(
         "an empty cell.\n"
         "Directly output the COMPLETE 81-character string answer. Copy the "
         "puzzle to the output and replace every 0 with the correct digit.\n"
-        "Your output must contain exactly 81 digits using only 1-9 and nothing else."
+        "Your output must be exactly 81 digits using only 1-9 and nothing else."
     )
 
 
