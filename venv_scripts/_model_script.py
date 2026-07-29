@@ -149,6 +149,58 @@ def installation_environment(
     return environment
 
 
+def check_installed_dependencies(
+    profile: ModelProfile,
+    python: Path,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> None:
+    """Run pip check while allowing DFlash's known optional XGrammar mismatch."""
+    command = [str(python), "-m", "pip", "check"]
+    print(f"+ {' '.join(command)}", flush=True)
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output_lines = [
+        line.strip()
+        for stream in (completed.stdout, completed.stderr)
+        for line in stream.splitlines()
+        if line.strip()
+    ]
+    if completed.returncode == 0:
+        if output_lines:
+            print("\n".join(output_lines), flush=True)
+        return
+
+    unexpected = [
+        line
+        for line in output_lines
+        if not (
+            profile.model_id == "gemma_dflash"
+            and line.startswith("xgrammar ")
+            and "has requirement transformers<5" in line
+            and "but you have transformers 5." in line
+        )
+    ]
+    if output_lines and not unexpected:
+        for line in output_lines:
+            print(
+                "WARNING: accepted Gemma DFlash dependency metadata conflict: "
+                f"{line}",
+                flush=True,
+            )
+        return
+
+    if output_lines:
+        print("\n".join(output_lines), file=sys.stderr, flush=True)
+    raise subprocess.CalledProcessError(completed.returncode, command)
+
+
 def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
     if cuda_index not in CUDA_INDEXES:
         raise SystemExit(f"unsupported CUDA index {cuda_index}; use {', '.join(CUDA_INDEXES)}")
@@ -221,7 +273,7 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
             check=False,
         )
     run([python, "-m", "pip", "install", "-e", f".[{profile.extras}]"], env=install_env)
-    run([python, "-m", "pip", "check"], env=install_env)
+    check_installed_dependencies(profile, python, env=install_env)
     run([python, "-c", _IMPORT_CHECK])
     print(f"Environment ready: {profile.model_id}\nPath: {directory}")
     return python
@@ -415,7 +467,7 @@ def repair_profile_dependencies(
             [python, "-m", "pip", "install", "--upgrade", "nvidia-ml-py>=12.0"],
             env=install_env,
         )
-    run([python, "-m", "pip", "check"], env=install_env)
+    check_installed_dependencies(profile, python, env=install_env)
     run([python, "-c", _IMPORT_CHECK], env=install_env)
 
 
@@ -430,7 +482,7 @@ def model_environment(profile: ModelProfile) -> dict[str, str]:
 
 
 def check_environment(profile: ModelProfile, python: Path) -> None:
-    run([python, "-m", "pip", "check"])
+    check_installed_dependencies(profile, python)
     code = (
         "from dllm_bench.registry import build_model_adapter, list_model_variants\n"
         f"config = {profile.model_config!r}\n"

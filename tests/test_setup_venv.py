@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -220,6 +221,44 @@ def test_installation_environment_respects_explicit_build_overrides(
     assert environment["UV_CACHE_DIR"] == str(custom_uv)
     assert environment["VLLM_USE_PRECOMPILED"] == "0"
     assert environment["UV_NO_CACHE"] == "0"
+
+
+def test_gemma_dflash_allows_known_xgrammar_transformers_metadata_conflict(
+    monkeypatch, capsys
+):
+    conflict = (
+        "xgrammar 0.2.4 has requirement transformers<5,>=4.38.0, "
+        "but you have transformers 5.14.1."
+    )
+    monkeypatch.setattr(
+        _model_script.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout=f"{conflict}\n", stderr=""
+        ),
+    )
+
+    _model_script.check_installed_dependencies(
+        _model_script.PROFILES["gemma_dflash"], Path("python")
+    )
+
+    assert conflict in capsys.readouterr().out
+
+
+def test_gemma_dflash_still_rejects_other_dependency_conflicts(monkeypatch):
+    conflict = "some-package requires other-package<2, but you have other-package 3.0."
+    monkeypatch.setattr(
+        _model_script.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], 1, stdout=f"{conflict}\n", stderr=""
+        ),
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        _model_script.check_installed_dependencies(
+            _model_script.PROFILES["gemma_dflash"], Path("python")
+        )
 
 
 def test_diffusiongemma_repairs_missing_torchvision(monkeypatch):

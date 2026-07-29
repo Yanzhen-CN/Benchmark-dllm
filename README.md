@@ -278,7 +278,10 @@ the build location with `DLLM_BUILD_TMPDIR` when needed. DFlash setup uses the
 compatible precompiled vLLM wheel and disables its persistent uv cache by
 default, avoiding a second expanded copy of Torch on quota-limited volumes.
 Set `VLLM_USE_PRECOMPILED=0` only when intentionally compiling vLLM from
-source.
+source. Gemma 4 requires Transformers 5; the environment check allows only
+XGrammar's known conservative `transformers<5` metadata warning because this
+plain-text benchmark does not request XGrammar structured generation. Every
+other dependency conflict remains fatal.
 
 Run on the same exclusive A100 80GB used by the native pair. DFlash keeps the
 normal measured timing, energy, peak-memory, TPS/SPS/EPS and dataset score
