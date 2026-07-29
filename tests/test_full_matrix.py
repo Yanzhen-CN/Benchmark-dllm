@@ -118,13 +118,13 @@ def test_dg_comparison_matrix_contains_native_pair_and_dflash_deployment_row():
     jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "dg_comparison.yaml")
 
     assert seed == 42
-    assert len(jobs) == 3 * 7
+    assert len(jobs) == 3 * 8
     assert {job.model_name for job in jobs} == {
         "diffusiongemma",
         "gemma",
         "gemma_dflash",
     }
     assert {job.dataset_config.stem for job in jobs} == {
-        "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9",
+        "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9", "sudoku_trace",
         "ruler", "hellobench"
     }

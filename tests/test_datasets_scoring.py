@@ -491,7 +491,7 @@ def test_sudoku_score_correct_solution():
     assert result.valid is True
     assert result.aux["official_exact_match_accuracy"] == 1.0
     assert result.aux["official_format_valid"] == 1.0
-    assert result.aux["direct_answer_instruction_following_rate"] == 0.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 1.0
     assert result.aux["exact_solve_rate"] == 1.0
     assert result.aux["blank_cell_accuracy"] == 1.0
     assert result.aux["cell_accuracy"] == 1.0
@@ -516,7 +516,7 @@ def test_sudoku_score_tolerates_reasoning_with_marked_final_answer():
     assert result.valid is True
     assert result.aux["answer_marker_present"] == 1.0
     assert result.aux["answer_marker_complete_rate"] == 1.0
-    assert result.aux["direct_answer_instruction_following_rate"] == 1.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 0.0
     assert result.aux["reference_exact_match"] == 1.0
     assert result.aux["blank_cell_accuracy"] == 1.0
 

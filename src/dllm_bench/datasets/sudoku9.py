@@ -3,10 +3,11 @@
 The paper uses Park's one-million-game dataset, rows 0..99,999 for training
 and rows 100,000..100,999 for testing. This benchmark preserves the official
 81-digit puzzle/solution representation and zero-shot constraint-validity
-score. The shared protocol requests only the completed grid; an opt-in
-reasoning protocol retains the earlier marked-answer format. The scorer
-tolerates either form, incidental wrappers, or row formatting, extracts the
-final complete grid, and checks its legality.
+score. The prompt asks checkpoints to copy the puzzle and replace only its
+zeros, returning the completed grid directly without a reasoning process.
+The scorer tolerates missing markers, incidental wrappers, or row formatting,
+extracts the final complete grid, and checks its legality; direct-output/marker
+compliance is a separate diagnostic.
 Blank-cell accuracy, exact reference match, given preservation, completion,
 and constraint satisfaction are retained as diagnostics. Easy/Hard is a
 reporting stratum only; it never changes the source puzzle or score protocol.
@@ -34,7 +35,7 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
-SUDOKU_PROTOCOL_REVISION = "direct-copy-fill-raw-9x9-v4"
+SUDOKU_PROTOCOL_REVISION = "direct-copy-fill-raw-answer-v6"
 SUDOKU_REASONING_PROTOCOL_REVISION = "grid-prompt-marked-answer-v3"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
@@ -278,8 +279,18 @@ class Sudoku9Dataset(Dataset):
             output_text
         )
         marked_answer = answer_region.strip()
-        official_format_valid = bool(re.fullmatch(r"[1-9]{81}", marked_answer))
-        official_exact = 1.0 if marked_answer == target else 0.0
+        direct_answer = (
+            prediction if re.fullmatch(r"[1-9]{81}", prediction) else None
+        )
+        submitted_answer = (
+            marked_answer
+            if self._enable_reasoning or direct_answer is None
+            else direct_answer
+        )
+        official_format_valid = bool(
+            re.fullmatch(r"[1-9]{81}", submitted_answer)
+        )
+        official_exact = 1.0 if submitted_answer == target else 0.0
         grid, marker_present = extract_final_grid(output_text)
 
         if grid is None:
@@ -316,6 +327,8 @@ class Sudoku9Dataset(Dataset):
                 "official_format_valid": float(official_format_valid),
                 "direct_answer_instruction_following_rate": float(
                     marker_complete and official_format_valid
+                    if self._enable_reasoning
+                    else direct_answer is not None
                 ),
                 "exact_solve_rate": exact,
                 "blank_cell_accuracy": partial_credit,
@@ -458,31 +471,26 @@ def _build_prompt(
         " ".join(puzzle_digits[row * 9 : (row + 1) * 9])
         for row in range(9)
     ]
-    puzzle = (
-        "Solve the following 9x9 Sudoku puzzle. Each displayed row contains "
-        "exactly 9 cells, and 0 represents a blank cell. Fill every blank.\n"
-        "Puzzle:\n"
-        + "\n".join(rows)
-    )
-    if not _reasoning_enabled(enable_reasoning):
+    if _reasoning_enabled(enable_reasoning):
         return (
-            puzzle
-            + "\n\nCopy the puzzle into your output in the same row-major order, "
-            "replacing every 0 with its correct digit. Keep every non-zero "
-            "clue unchanged.\n\nYour output should only be the completed "
-            "81-number puzzle: exactly 81 digits using only 1-9, with no "
-            "spaces, answer tags, reasoning, analysis, intermediate grids, "
-            "explanations, or other text."
+            "Solve the following 9x9 Sudoku puzzle. Each displayed row contains "
+            "exactly 9 cells, and 0 represents a blank cell. Fill every blank.\n"
+            "Puzzle:\n"
+            + "\n".join(rows)
+            + "\n\nSolve the puzzle and return the completed grid as one row-major "
+            "81-digit string using only digits 1-9; do not leave any 0. You may "
+            "reason before the final answer if useful. Put only the 81 digits "
+            "between the answer markers, exactly as follows:\n"
+            f"{SUDOKU_ANSWER_BEGIN}\n"
+            "<81 digits>\n"
+            f"{SUDOKU_ANSWER_END}"
         )
     return (
-        puzzle
-        + "\n\nSolve the puzzle and return the completed grid as one row-major "
-        "81-digit string using only digits 1-9; do not leave any 0. You may "
-        "reason before the final answer if useful. Put only the 81 digits "
-        "between the answer markers, exactly as follows:\n"
-        f"{SUDOKU_ANSWER_BEGIN}\n"
-        "<81 digits>\n"
-        f"{SUDOKU_ANSWER_END}"
+        f"Solve this 9x9 Sudoku puzzle: {puzzle_digits}, where '0' represents "
+        "an empty cell.\n"
+        "Directly output the COMPLETE 81-character string answer. Copy the "
+        "puzzle to the output and replace every 0 with the correct digit.\n"
+        "Your output must contain exactly 81 digits using only 1-9 and nothing else."
     )
 
 
@@ -612,11 +620,6 @@ def _load_official_test_samples(
     enable_reasoning: bool | None = None,
 ) -> list[Sample]:
     reasoning = _reasoning_enabled(enable_reasoning)
-    protocol_revision = (
-        SUDOKU_REASONING_PROTOCOL_REVISION
-        if reasoning
-        else SUDOKU_PROTOCOL_REVISION
-    )
     samples: list[Sample] = []
     with zipfile.ZipFile(path) as archive:
         with archive.open("sudoku.csv") as raw:
@@ -648,20 +651,25 @@ def _load_official_test_samples(
                     Sample(
                         sample_id=f"sudoku-test-{test_index:04d}",
                         prompt=_build_prompt(
-                            puzzle_digits, enable_reasoning=reasoning
+                            puzzle_digits,
+                            enable_reasoning=reasoning,
                         ),
                         reference=SudokuReference(puzzle, solution, difficulty),
                         meta={
                             "source": "bryanpark/sudoku",
                             "source_revision": SUDOKU_SOURCE_REVISION,
-                            "protocol_revision": protocol_revision,
+                            "protocol_revision": (
+                                SUDOKU_REASONING_PROTOCOL_REVISION
+                                if reasoning
+                                else SUDOKU_PROTOCOL_REVISION
+                            ),
                             "source_index": train_rows + test_index,
                             "official_split": "test",
                             "source_input_format": "81_digits_zero_is_blank",
                             "prompt_protocol": (
-                                "nine-row reasoning with marked answer"
+                                "nine_row_grid_reasoning_then_81_digits"
                                 if reasoning
-                                else "direct raw copy-and-fill"
+                                else "nine_row_grid_direct_raw_copy_fill_81_digits"
                             ),
                             "enable_reasoning": reasoning,
                             "official_output_format": "81_solution_digits",

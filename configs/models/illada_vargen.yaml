@@ -1,0 +1,28 @@
+# Same checkpoint and Best/Fast denoising schedules as configs/models/illada.yaml.
+# The only experimental variable is the official var_generate canvas policy:
+# append one active block at a time instead of exposing future mask blocks.
+model: illada_vargen
+max_context_tokens: 8192
+configs:
+  best:
+    adapter: dllm_bench.models.illada_vargen.IlladaVarGenAdapter
+    init_kwargs:
+      model_name_or_path: GSAI-ML/iLLaDA-8B-Instruct
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 32
+      extra:
+        temperature: 0.0
+        remasking: low_confidence
+  fast:
+    adapter: dllm_bench.models.illada_vargen.IlladaVarGenAdapter
+    init_kwargs:
+      model_name_or_path: GSAI-ML/iLLaDA-8B-Instruct
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 16
+      extra:
+        temperature: 0.0
+        remasking: low_confidence
