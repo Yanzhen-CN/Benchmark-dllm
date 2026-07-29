@@ -40,6 +40,8 @@ so pass matching source/count/seed values to every stage.
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event, Lock, Thread
+from time import perf_counter
 
 import click
 
@@ -103,6 +105,9 @@ from .runner.data_preparation import (
     load_prepared_samples,
     prepare_dataset,
 )
+
+
+_SAMPLE_PROGRESS_HEARTBEAT_SECONDS = 1.0
 
 
 @click.group()
@@ -410,16 +415,47 @@ def generate(
                     item_show_func=lambda item: str(item or ""),
                     file=output_stream,
                 ) as sample_bar:
+                    progress_lock = Lock()
+                    stop_heartbeat = Event()
+                    active_sample_id: str | None = None
+                    active_phase: str | None = None
+                    active_started = 0.0
+
+                    def render_active_sample() -> None:
+                        if active_sample_id is None:
+                            return
+                        elapsed = perf_counter() - active_started
+                        sample_bar.update(
+                            0,
+                            current_item=(
+                                f"{active_sample_id} {active_phase} "
+                                f"{elapsed:.1f}s elapsed"
+                            ),
+                        )
+                        sample_bar.render_progress()
+
+                    def report_elapsed_heartbeat() -> None:
+                        while not stop_heartbeat.wait(
+                            _SAMPLE_PROGRESS_HEARTBEAT_SECONDS
+                        ):
+                            with progress_lock:
+                                render_active_sample()
+
                     def bar_progress(event, index, total, sample, generation):
+                        nonlocal active_sample_id, active_phase, active_started
                         if event == "start":
-                            sample_bar.update(0, current_item=f"{sample.sample_id} generating")
-                            sample_bar.render_progress()
+                            with progress_lock:
+                                active_sample_id = sample.sample_id
+                                active_phase = "generating"
+                                active_started = perf_counter()
+                                render_active_sample()
                             return
                         if event == "compute":
-                            sample_bar.update(
-                                0, current_item=f"{sample.sample_id} compute replay"
-                            )
-                            sample_bar.render_progress()
+                            with progress_lock:
+                                active_sample_id = sample.sample_id
+                                active_phase = "compute replay"
+                                active_started = perf_counter()
+                                render_active_sample()
                             return
                         elapsed = (
                             generation.timing.wall_clock_seconds
@@ -427,19 +463,34 @@ def generate(
                             else 0.0
                         )
                         status = generation.status.value if generation is not None else "unknown"
-                        sample_bar.update(
-                            1,
-                            current_item=f"{sample.sample_id} {status} {elapsed:.2f}s",
-                        )
+                        with progress_lock:
+                            active_sample_id = None
+                            active_phase = None
+                            sample_bar.update(
+                                1,
+                                current_item=(
+                                    f"{sample.sample_id} {status} {elapsed:.2f}s"
+                                ),
+                            )
 
-                    summary = run_generation(
-                        adapter, dataset.name, samples, max_new_tokens,
-                        out_dir=out_dir, measure_compute=measure_compute,
-                        require_all_metrics=require_all_metrics, seed=resolved_seed,
-                        capture_trace=capture_trace, resume=resume,
-                        force_max_new_tokens=force_max_new_tokens,
-                        progress=bar_progress,
+                    heartbeat = Thread(
+                        target=report_elapsed_heartbeat,
+                        name="sample-progress-heartbeat",
+                        daemon=True,
                     )
+                    heartbeat.start()
+                    try:
+                        summary = run_generation(
+                            adapter, dataset.name, samples, max_new_tokens,
+                            out_dir=out_dir, measure_compute=measure_compute,
+                            require_all_metrics=require_all_metrics, seed=resolved_seed,
+                            capture_trace=capture_trace, resume=resume,
+                            force_max_new_tokens=force_max_new_tokens,
+                            progress=bar_progress,
+                        )
+                    finally:
+                        stop_heartbeat.set()
+                        heartbeat.join()
             else:
                 summary = run_generation(
                     adapter, dataset.name, samples, max_new_tokens,

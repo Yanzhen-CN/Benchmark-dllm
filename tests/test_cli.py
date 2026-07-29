@@ -6,6 +6,8 @@ from __future__ import annotations
 import io
 import json
 import random
+import re
+import time
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -120,6 +122,21 @@ def test_generate_uses_sample_progress_bar_on_interactive_terminal(
         "get_text_stream",
         lambda name: terminal if name == "stdout" else io.StringIO(),
     )
+    real_run_generation = cli_module.run_generation
+
+    def slow_run_generation(*args, **kwargs):
+        real_progress = kwargs["progress"]
+
+        def slow_progress(event, *progress_args):
+            real_progress(event, *progress_args)
+            if event == "start":
+                time.sleep(0.12)
+
+        kwargs["progress"] = slow_progress
+        return real_run_generation(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "run_generation", slow_run_generation)
+    monkeypatch.setattr(cli_module, "_SAMPLE_PROGRESS_HEARTBEAT_SECONDS", 0.005)
     runner = CliRunner()
 
     _run(runner, [
@@ -135,6 +152,11 @@ def test_generate_uses_sample_progress_bar_on_interactive_terminal(
     assert "[default] gsm8k" in rendered
     assert "2/2" in rendered
     assert "gsm8k-demo-1" in rendered
+    elapsed_updates = [
+        float(value) for value in re.findall(r"(\d+\.\d+)s elapsed", rendered)
+    ]
+    assert elapsed_updates
+    assert max(elapsed_updates) > 0
 
 
 def test_long_task_warmup_uses_short_prompt_without_formal_context_budget(
