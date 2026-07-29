@@ -1,0 +1,17 @@
+# Reference-only long-reasoning companion to the main direct-answer Sudoku4
+# track. It uses the same frozen source rows and scoring metrics while forcing
+# the original d1 reasoning prompt through Sudoku4ThinkingDataset.
+dataset: sudoku4_thinking
+dataset_class: dllm_bench.datasets.sudoku4.Sudoku4ThinkingDataset
+primary_metric: d1_blank_cell_accuracy
+aux_metrics:
+  - puzzle_success_rate
+  - reference_exact_match
+  - given_preservation_rate
+  - answer_format_valid
+  - answer_marker_complete_rate
+sample_size: 100
+seed: 42
+dataset_kwargs:
+  sample_count: 100
+  seed: 42
