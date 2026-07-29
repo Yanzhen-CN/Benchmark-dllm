@@ -166,6 +166,32 @@ def test_long_task_warmup_uses_short_prompt_without_formal_context_budget(
     assert captured[0].config == {}
 
 
+def test_warmup_honors_adapter_minimum_valid_generation_length(
+    tmp_path, monkeypatch
+):
+    captured = []
+    real_warmup = MockDiffusionAdapter.warmup_generation
+
+    def capture_warmup(self, request):
+        captured.append(request)
+        return real_warmup(self, request)
+
+    monkeypatch.setattr(MockDiffusionAdapter, "warmup_new_tokens", 32, raising=False)
+    monkeypatch.setattr(MockDiffusionAdapter, "warmup_generation", capture_warmup)
+    runner = CliRunner()
+    _run(runner, [
+        "generate",
+        "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
+        "--variant", "default",
+        "--dataset-config", str(CONFIGS_DIR / "datasets" / "gsm8k.yaml"),
+        "--demo", "--n-samples", "1", "--max-new-tokens", "64",
+        "--output-root", str(tmp_path / "output"),
+    ])
+
+    assert len(captured) == 1
+    assert captured[0].max_new_tokens == 32
+
+
 def test_dataset_oom_stops_later_samples_but_other_variant_is_still_attempted(
     tmp_path, monkeypatch
 ):

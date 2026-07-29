@@ -74,12 +74,23 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
             "dreamreasoner", "w1",
         }
     } == {
-        "qwen3_4b": 10,
+        "qwen3_4b": 1,
         "qwen3_8b": 10,
-        "illada": 10,
-        "illada_vargen": 10,
-        "dreamreasoner": 10,
+        "illada": 1,
+        "illada_vargen": 1,
+        "dreamreasoner": 1,
         "w1": 10,
+    }
+    assert {
+        job.model_name: job.n_samples for job in sudoku4_jobs
+        if job.model_name in {
+            "qwen3_4b", "illada", "illada_vargen", "dreamreasoner"
+        }
+    } == {
+        "qwen3_4b": 1,
+        "illada": 1,
+        "illada_vargen": 1,
+        "dreamreasoner": 1,
     }
     assert {
         job.model_name: job.n_samples for job in sudoku4_jobs

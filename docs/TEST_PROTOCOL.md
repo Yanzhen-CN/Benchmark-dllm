@@ -34,8 +34,10 @@ keeps every model on its own published inference path.
 | GSM8K | 100 | Dataset protocol | Formal |
 | MBPP-Sanitized | 100 | Dataset protocol | Formal |
 | StructEval-T | 100 | Dataset protocol | Formal |
-| Sudoku4 | 4B/8B/W1: 100; DG/Gemma-4: 10 | d1 zero-shot prompt, 256 output tokens | Formal compact track / large-model probe |
-| Sudoku9 | DG/Gemma-4: 100 (50 Easy + 50 Hard); 4B/8B/W1: 10 (5 + 5) | General-instruction prompt, 256 output tokens | Formal 9x9 track / small-model feasibility probe |
+| Sudoku4 direct | Qwen3-4B/iLLaDA/iLLaDA VarGen/DreamReasoner: 1; Qwen3-8B/W1: 100; DG/Gemma-4: 10 | Copy-and-fill prompt, 256 output tokens | Single-sample behavior reference for the first group; formal/probe rows for the others |
+| Sudoku9 direct | Qwen3-4B/iLLaDA/iLLaDA VarGen/DreamReasoner: 1; Qwen3-8B/W1: 10 (5 + 5); DG/Gemma-4: 100 (50 + 50) | Copy-and-fill prompt, 256 output tokens | Single-sample behavior reference for the first group; formal/probe rows for the others |
+| Sudoku4 thinking | 1 per model/variant | Original reasoning prompt, 2048 output tokens | Reference diagnostic |
+| Sudoku9 thinking | 1 per model/variant | Original reasoning prompt, 2048 output tokens | Reference diagnostic |
 | RULER | 30 | 4096 encoded-input target + at most 64 output tokens | Formal |
 | HelloBench, iLLaDA | 1 | 2K-word profile, 3072-token generation cap | Reference diagnostic |
 | HelloBench, iLLaDA VarGen | 1 | 2K-word profile, 3072-token generation cap | Execution-path diagnostic |
@@ -57,8 +59,8 @@ this suite's 256-token ceiling is a controlled cross-model setting.
 | GSM8K | lm-eval `gsm8k_cot`, first four demonstrations, flexible last-number extraction, and generate-until strings | Seeded 100/1319 test subset; fixed per-model decoding profiles |
 | MBPP-Sanitized | Official tasks 2/3/4 three-shot prompt, `[BEGIN]`/`[DONE]`, execution of all tests, pass@1 | Sanitized source and seeded 100-row subset, so do not compare it directly with full-MBPP leaderboard numbers |
 | StructEval-T | Official query, marker wrapper, strict parser, required-path coverage, and `0.2 render + 0.8 key validation` score | Seeded 100/950 subset and suite-controlled decoding profiles |
-| Sudoku4 | d1's pinned 500-row test CSV, zero-shot prompt, `<reasoning>/<answer>` contract, and blank-cell accuracy | Seeded 100-row subset; strict complete-puzzle success is an auxiliary metric; the common point is d1's 256-token setting rather than its 128/256 sweep |
-| Sudoku9 | Ye et al. Park test split, zero-shot puzzle, clue preservation plus all Sudoku constraints as the primary 0/1 score | Easy/Hard is reporting-only; answer markers and tolerant extraction adapt the task to general instruction checkpoints |
+| Sudoku4 | d1's pinned 500-row test CSV and blank-cell accuracy | Direct track uses a marker-free 16-digit copy-and-fill answer; thinking companion retains the original reasoning contract on one fixed sample |
+| Sudoku9 | Ye et al. Park test split, clue preservation plus all Sudoku constraints as the primary 0/1 score | Direct track uses a marker-free 81-digit copy-and-fill answer; thinking companion retains the marked reasoning prompt on one fixed sample; Easy/Hard is reporting-only |
 | RULER | RULER-style task concepts, answer prefix, and fractional `string_match_all` | Reduced three-family, explicit-position, single-4096-input diagnostic; **not** the official 13-task RULER suite |
 | HelloBench | Official length-constrained prompts and 2K/4K target profiles | 1 sample/profile and objective judge-free diagnostics; **not** official checklist-based HelloEval |
 
@@ -69,6 +71,11 @@ official leaderboard scores.
 
 Sudoku4 and Sudoku9 are separate tasks with separate sample IDs, output
 directories, metrics, and report columns. Their scores must never be pooled.
+Pilot runs show that Qwen3-4B, iLLaDA fixed-canvas, iLLaDA VarGen, and
+DreamReasoner still emit extended reasoning under the direct-answer prompt.
+For those four model rows, both direct Sudoku datasets are therefore limited
+to one fixed behavior-reference sample, matching the already single-sample
+2048-token thinking companions. These rows are not batch accuracy estimates.
 Sudoku4 has no Easy/Hard label: every pinned d1 test puzzle has eight blanks,
 and imposing a new difficulty classifier would create an unsupported split.
 Output-length attribution does not require a separate matrix. Every model can
@@ -107,7 +114,9 @@ aggregates. For the current declarations its target inputs are:
 Each model subprocess executes jobs in this order:
 
 1. Prepare/reuse normalized datasets and checkpoint files outside timing.
-2. Load the checkpoint once and run an untimed eight-token warmup.
+2. Load the checkpoint once and run a short untimed warmup: eight tokens for
+   normal adapters, or one complete 32-token block for official iLLaDA
+   `var_generate`, whose generation length must be divisible by block length.
 3. Run all regular formal datasets, persisting every sample immediately.
 4. Run formal RULER at 4096 input tokens for all 30 samples.
 5. Run the configured HelloBench reference profile(s). iLLaDA,

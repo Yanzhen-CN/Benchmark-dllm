@@ -330,8 +330,16 @@ def generate(
                 sample for sample in samples
                 if not resume or not (out_dir / f"{sample.sample_id}.json").exists()
             )
+            adapter_warmup_tokens = int(
+                getattr(adapter, "warmup_new_tokens", 8)
+            )
+            if adapter_warmup_tokens <= 0:
+                raise ValueError(
+                    f"{adapter.name} declares invalid "
+                    f"warmup_new_tokens={adapter_warmup_tokens}"
+                )
             warmup_tokens = min(
-                8,
+                adapter_warmup_tokens,
                 (
                     max_new_tokens
                     if force_max_new_tokens

@@ -26,6 +26,10 @@ from .prompting import tokenize_instruction_prompt
 class IlladaVarGenAdapter(HFDiffusionAdapter):
     """Official per-block variable-canvas execution with benchmark tracing."""
 
+    # Official var_generate only accepts complete blocks. The suite's generic
+    # 8-token warmup is therefore invalid for this block_length=32 adapter.
+    warmup_new_tokens = 32
+
     def __init__(
         self,
         model_name_or_path: str,

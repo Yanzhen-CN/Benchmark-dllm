@@ -364,7 +364,10 @@ partial-credit primary score. There is no Easy/Hard split for 4x4.
 general-instruction prompt, and strict whole-puzzle constraint validity as its
 primary score. Its output cap is 256 tokens. The prepared bank contains 50
 Easy + 50 Hard rows; a 10-row override deterministically selects 5 + 5. The
-4B/8B/W1 group runs `sudoku4` on 100 rows and `sudoku9` on the 10-row probe.
+Qwen3-4B, iLLaDA, iLLaDA VarGen, and DreamReasoner run one fixed row from each
+direct Sudoku dataset because pilot runs show that they still expand into
+reasoning instead of following the compact-answer request. Qwen3-8B and W1
+run `sudoku4` on 100 rows and `sudoku9` on the 10-row probe.
 DiffusionGemma and its Gemma-4 control reverse those budgets: `sudoku9` on
 100 rows and `sudoku4` on 10 unstratified rows. Scores from 4x4 and 9x9 are
 never merged or placed in the same Sudoku column. RULER selects 30
@@ -558,7 +561,8 @@ resume skips every persisted generation and profiles only successful sample
 JSON files whose `compute_tflops` is still missing. Existing compute values are
 left untouched.
 Before the first measured sample
-of each model/config/dataset, an 8-token untimed warmup initializes kernels;
+of each model/config/dataset, a short untimed warmup initializes kernels
+(8 tokens normally; one valid 32-token block for `illada_vargen`);
 tokenization, model loading, warmup, progress output, and persistence stay
 outside the measured wall-clock window. Iterative adapters also pause the
 aligned time/energy/VRAM measurement around trace-only entropy calculation,
@@ -642,8 +646,9 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 | GSM8K | 100 |
 | MBPP-Sanitized | 100 |
 | StructEval-T | 100 |
-| Sudoku4 | 4B/8B/W1: 100; DG/Gemma-4: 10; no Easy/Hard split |
-| Sudoku9 | DG/Gemma-4: 100 (50 Easy + 50 Hard); 4B/8B/W1: 10 (5 + 5) |
+| Sudoku4 direct | Qwen3-4B/iLLaDA/iLLaDA VarGen/DreamReasoner: 1 reference; Qwen3-8B/W1: 100; DG/Gemma-4: 10; no Easy/Hard split |
+| Sudoku9 direct | Qwen3-4B/iLLaDA/iLLaDA VarGen/DreamReasoner: 1 reference; Qwen3-8B/W1: 10 (5 + 5); DG/Gemma-4: 100 (50 + 50) |
+| Sudoku4/9 thinking | One fixed sample per model/variant and dataset, 2048-token cap; reference only |
 | RULER | 30 at 4096 encoded input tokens (10 per task type) |
 | HelloBench | iLLaDA/DreamReasoner: one 2K-word sample; others: one per configured profile |
 | RULER half-context probe | one isolated capacity sample, excluded from formal aggregates |

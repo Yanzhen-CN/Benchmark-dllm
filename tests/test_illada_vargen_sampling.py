@@ -98,6 +98,12 @@ def test_vargen_matches_official_block_divisibility_requirement():
         adapter._run_denoising("prompt", adapter._step_config)
 
 
+def test_vargen_declares_one_complete_block_for_warmup():
+    adapter, _ = _adapter(gen_length=4)
+
+    assert adapter.warmup_new_tokens == 32
+
+
 def test_vargen_rejects_remasking_modes_not_supported_by_official_sampler():
     adapter, _ = _adapter(gen_length=2)
     adapter._step_config.extra["remasking"] = "unknown"
