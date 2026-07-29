@@ -1,9 +1,4 @@
-"""GSM8K: Accuracy, plus valid-answer-rate and complete-output-rate (section 1).
-
-Answer extraction follows the common GSM8K convention: a gold-style
-``#### <number>`` marker if the model emits one, otherwise the last number
-that appears in the response.
-"""
+"""GSM8K 4-shot CoT with lm-eval's flexible final-number extraction."""
 
 from __future__ import annotations
 
@@ -18,8 +13,8 @@ from urllib.request import Request, urlopen
 from .base import Dataset, Sample, ScoreResult
 from ..data_paths import ensure_data_layout
 
-_GOLD_MARKER_RE = re.compile(r"####\s*(-?[\d,]+(?:\.\d+)?)")
-_NUMBER_RE = re.compile(r"-?\$?[\d,]+(?:\.\d+)?%?")
+_FLEXIBLE_NUMBER_RE = re.compile(r"-?[$0-9.,]{2,}|-?[0-9]+")
+_GENERATE_UNTIL = ("Q:", "</s>", "<|im_end|>")
 
 GSM8K_REVISION = "3101c7d5072418e28b9008a6636bde82a006892c"
 GSM8K_TEST_SHA256 = "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14"
@@ -28,28 +23,71 @@ GSM8K_TEST_URL = (
     f"{GSM8K_REVISION}/grade_school_math/data/test.jsonl"
 )
 
+# The first four fixed demonstrations from lm-evaluation-harness' gsm8k_cot
+# task. Bertolani et al. explicitly run that task with num_fewshot=4 and the
+# flexible-extract filter rather than the task YAML's default eight shots.
+GSM8K_FOUR_SHOT = (
+    (
+        "There are 15 trees in the grove. Grove workers will plant trees in the "
+        "grove today. After they are done, there will be 21 trees. How many trees "
+        "did the grove workers plant today?",
+        "There are 15 trees originally. Then there were 21 trees after some more "
+        "were planted. So there must have been 21 - 15 = 6. The answer is 6.",
+    ),
+    (
+        "If there are 3 cars in the parking lot and 2 more cars arrive, how many "
+        "cars are in the parking lot?",
+        "There are originally 3 cars. 2 more cars arrive. 3 + 2 = 5. The answer "
+        "is 5.",
+    ),
+    (
+        "Leah had 32 chocolates and her sister had 42. If they ate 35, how many "
+        "pieces do they have left in total?",
+        "Originally, Leah had 32 chocolates. Her sister had 42. So in total they "
+        "had 32 + 42 = 74. After eating 35, they had 74 - 35 = 39. The answer is 39.",
+    ),
+    (
+        "Jason had 20 lollipops. He gave Denny some lollipops. Now Jason has 12 "
+        "lollipops. How many lollipops did Jason give to Denny?",
+        "Jason started with 20 lollipops. Then he had 12 after giving some to "
+        "Denny. So he gave Denny 20 - 12 = 8. The answer is 8.",
+    ),
+)
+
+
+def format_gsm8k_four_shot(question: str) -> str:
+    turns = [f"Q: {q}\nA: {answer}" for q, answer in GSM8K_FOUR_SHOT]
+    turns.append(f"Q: {question}\nA:")
+    return "\n\n".join(turns)
+
 
 def extract_final_number(text: str) -> float | None:
-    gold_match = _GOLD_MARKER_RE.search(text)
-    if gold_match:
-        return _to_float(gold_match.group(1))
-
-    numbers = _NUMBER_RE.findall(text)
+    """Port lm-eval ``gsm8k_cot``'s ``flexible-extract`` last match."""
+    numbers = _FLEXIBLE_NUMBER_RE.findall(truncate_generate_until(text))
     if not numbers:
         return None
     return _to_float(numbers[-1])
 
 
+def truncate_generate_until(text: str) -> str:
+    """Apply ``gsm8k_cot``'s earliest generate-until delimiter.
+
+    Autoregressive backends normally stop before these strings. Fixed-canvas
+    diffusion backends may decode text after the answer, so applying the same
+    truncation before the official regex keeps scoring backend-independent.
+    """
+    stops = [text.find(marker) for marker in _GENERATE_UNTIL]
+    stops = [index for index in stops if index >= 0]
+    return text[: min(stops)] if stops else text
+
+
 def _to_float(token: str) -> float | None:
     cleaned = token.replace(",", "").replace("$", "")
-    is_percent = cleaned.endswith("%")
-    if is_percent:
-        cleaned = cleaned[:-1]
     try:
         value = float(cleaned)
     except ValueError:
         return None
-    return value / 100.0 if is_percent else value
+    return value
 
 
 def _looks_complete(text: str) -> bool:
@@ -86,12 +124,13 @@ class GSM8KDataset(Dataset):
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         predicted = extract_final_number(output_text)
+        scored_text = truncate_generate_until(output_text)
         valid = predicted is not None
         correct = valid and abs(predicted - float(sample.reference)) < 1e-4
         return ScoreResult(
             primary_score=1.0 if correct else 0.0,
             valid=valid,
-            complete=_looks_complete(output_text),
+            complete=_looks_complete(scored_text),
         )
 
 
@@ -137,13 +176,14 @@ def _load_official_test_samples(path: Path) -> list[Sample]:
             samples.append(
                 Sample(
                     sample_id=f"gsm8k-test-{index:04d}",
-                    prompt=row["question"],
+                    prompt=format_gsm8k_four_shot(row["question"]),
                     reference=reference,
                     meta={
                         "source": "openai/grade-school-math",
                         "source_revision": GSM8K_REVISION,
                         "source_index": index,
                         "gold_solution": row["answer"],
+                        "prompt_protocol": "lm-eval gsm8k_cot 4-shot first_n",
                     },
                 )
             )

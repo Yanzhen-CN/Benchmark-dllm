@@ -12,9 +12,11 @@ from dllm_bench.report.plots import (
 )
 from dllm_bench.report.tables import (
     compute_converted_row,
+    is_resource_baseline,
     raw_results_row,
     render_converted_results_table,
     render_raw_results_table,
+    select_resource_baselines,
 )
 from dllm_bench.report.trace_report import render_sample_report
 
@@ -83,6 +85,30 @@ def test_compute_converted_row_missing_energy_leaves_energy_fields_none():
     assert row["r_energy"] is None
     assert row["Q_energy"] is None
     assert row["Energy-priority"] is None
+
+
+def test_resource_baseline_is_qwen3_4b_not_every_ar_baseline():
+    qwen4 = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
+    qwen8 = _summary("qwen3_8b", "ar-baseline", 0.6, tps=12.0)
+    gemma = _summary("gemma4_26b_a4b", "ar-baseline", 0.7, tps=8.0)
+
+    selected = select_resource_baselines([qwen8, gemma, qwen4])
+
+    assert selected == {"gsm8k": qwen4}
+    assert is_resource_baseline(qwen4)
+    assert not is_resource_baseline(qwen8)
+    assert not is_resource_baseline(gemma)
+
+
+def test_self_reported_timing_is_not_compared_with_measured_baseline():
+    baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
+    w1 = _summary("w1", "standard", 0.6, tps=50.0)
+    w1["timing_source"] = "self_reported"
+
+    row = compute_converted_row(w1, baseline)
+
+    assert row["r_speed"] is None
+    assert row["Q_speed"] is None
 
 
 def test_render_converted_results_table_smoke():
@@ -221,7 +247,7 @@ def test_render_sample_report_renders_sudoku_gif_for_81_position_trace(tmp_path)
         trace=trace,
         final_valid_length=81,
         out_dir=str(tmp_path),
-        dataset_name="sudoku",
+        dataset_name="sudoku9",
         sample=sample,
     )
     assert "sudoku_gif" in written

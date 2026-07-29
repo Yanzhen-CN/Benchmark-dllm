@@ -9,6 +9,7 @@ import platform
 import random
 import subprocess
 import sys
+import os
 from typing import Any, TypeVar
 
 from ..interfaces import ModelAdapter
@@ -56,13 +57,60 @@ def collect_run_metadata(adapter: ModelAdapter, extra: dict[str, Any] | None = N
             torch.cuda.get_device_name(index)
             for index in range(torch.cuda.device_count())
         ]
+        metadata["cuda_visible_devices"] = os.environ.get("CUDA_VISIBLE_DEVICES")
+        metadata["cuda_device_details"] = []
+        for index in range(torch.cuda.device_count()):
+            properties = torch.cuda.get_device_properties(index)
+            total_memory_bytes = int(properties.total_memory)
+            metadata["cuda_device_details"].append(
+                {
+                    "index": index,
+                    "name": properties.name,
+                    "total_memory_bytes": total_memory_bytes,
+                    "total_memory_gb": total_memory_bytes / (1024 ** 3),
+                    "compute_capability": f"{properties.major}.{properties.minor}",
+                }
+            )
+        metadata["cuda_current_device"] = (
+            torch.cuda.current_device() if torch.cuda.is_available() else None
+        )
     except ImportError:
         metadata["torch_version"] = None
         metadata["cuda_available"] = False
 
-    checkpoint = getattr(adapter, "_model_name", None)
+    try:
+        import transformers
+
+        metadata["transformers_version"] = transformers.__version__
+    except ImportError:
+        metadata["transformers_version"] = None
+
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        try:
+            driver_version = pynvml.nvmlSystemGetDriverVersion()
+            metadata["nvidia_driver_version"] = (
+                driver_version.decode()
+                if isinstance(driver_version, bytes)
+                else str(driver_version)
+            )
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:
+        metadata["nvidia_driver_version"] = None
+
+    checkpoint = getattr(adapter, "_model_name", None) or getattr(
+        adapter, "_checkpoint", None
+    )
     if checkpoint:
         metadata["checkpoint"] = checkpoint
+    loaded_model = getattr(adapter, "_model", None)
+    loaded_config = getattr(loaded_model, "config", None)
+    checkpoint_revision = getattr(loaded_config, "_commit_hash", None)
+    if checkpoint_revision:
+        metadata["checkpoint_revision"] = str(checkpoint_revision)
     inference_dtype = getattr(adapter, "_inference_dtype", None)
     if inference_dtype:
         metadata["inference_dtype"] = inference_dtype

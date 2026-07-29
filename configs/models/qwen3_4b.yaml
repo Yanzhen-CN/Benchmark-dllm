@@ -3,6 +3,8 @@
 # dLLM output budget), not hardcoded here. Only one config (no Best/Fast
 # split for the AR baseline), but kept under the same `configs:` schema as
 # every other model for a uniform loader.
+# The adapter loads checkpoint-native BF16 weights and reconstructs the AR
+# trace after timing, without requesting or retaining per-token logits.
 #
 # `model_name_or_path` is an HF Hub repo id — `from_pretrained` downloads it
 # on first use into ./data/huggingface (see dllm_bench/hf_cache.py), not a local

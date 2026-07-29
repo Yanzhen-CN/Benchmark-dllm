@@ -77,9 +77,21 @@ def run_in_root_venv(script: str | Path, argv: Sequence[str]) -> None:
     environment = os.environ.copy()
     environment[INSIDE_ROOT_VENV] = "1"
     script = Path(script).resolve()
+    command = [str(python), str(script), *argv]
+    if os.name == "nt":
+        # CPython's os.execve() can crash while replacing a venv interpreter
+        # on Windows (observed as 0xC0000005). Preserve the same isolation and
+        # exit status through a child process; POSIX keeps true exec below.
+        completed = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            env=environment,
+            check=False,
+        )
+        raise SystemExit(completed.returncode)
     os.execve(
         str(python),
-        [str(python), str(script), *argv],
+        command,
         environment,
     )
 

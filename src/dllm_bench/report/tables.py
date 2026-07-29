@@ -43,6 +43,28 @@ CONVERTED_COLUMNS = [
     "Energy-priority",
 ]
 
+RESOURCE_BASELINE_MODEL = "qwen3_4b"
+RESOURCE_BASELINE_CONFIG = "ar-baseline"
+
+
+def is_resource_baseline(summary: dict[str, Any]) -> bool:
+    """Whether a row is the design document's one resource baseline."""
+    return (
+        summary.get("model_name") == RESOURCE_BASELINE_MODEL
+        and summary.get("config_name") == RESOURCE_BASELINE_CONFIG
+    )
+
+
+def select_resource_baselines(
+    summaries: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Select Qwen3-4B only, never another model named ``ar-baseline``."""
+    return {
+        summary["dataset_name"]: summary
+        for summary in summaries
+        if is_resource_baseline(summary)
+    }
+
 
 def raw_results_row(summary: dict[str, Any]) -> dict[str, Any]:
     """``summary`` is a run_summary_to_dict()-shaped dict (or an equivalent
@@ -89,7 +111,13 @@ def compute_converted_row(
     model_tps = model_summary.get("tps")
     baseline_tps = baseline_summary.get("tps")
     q_ar = baseline_summary["q"]
-    if model_tps and baseline_tps:
+    model_timing_source = model_summary.get("timing_source")
+    baseline_timing_source = baseline_summary.get("timing_source")
+    timing_is_comparable = (
+        model_timing_source == "measured"
+        and baseline_timing_source == "measured"
+    )
+    if model_tps and baseline_tps and timing_is_comparable:
         r_speed = speed_ratio(model_tps, baseline_tps)
         row["r_speed"] = r_speed
         row["Q_speed"] = resource_equivalent_quality(q, r_speed, q_ar=q_ar)

@@ -1,16 +1,19 @@
-"""RULER: Accuracy, Position Robustness, Completion, and Truncation.
+"""RULER-inspired controlled long-context diagnostic.
 
-The formal matrix uses one controlled 8192-token context window for every
-model. The reusable sampling layer can still select additional configured
-windows for a separate capacity study. Completion/Truncation are derived
+The formal matrix uses one controlled 4096-token input for every model.
+A separate one-sample dataset probes half of each model's declared context
+without mixing that capacity result into formal quality/resource aggregates.
+Completion/Truncation are derived
 from each run's :class:`~dllm_bench.interfaces.RunStatus` at the orchestrator
 level (a run that hit ``RunStatus.TRUNCATED`` did not finish naturally), not
 computed here. This module owns per-sample accuracy and the Position
 Robustness aggregate across front/middle/back placements.
 
-The prepare phase deterministically builds the configured NIAH,
-variable-tracking multi-hop, and common-word aggregation bank. Its source
-revision and target context window are recorded on every sample.
+The task families and ``string_match_all`` scorer follow RULER's design, but
+the explicit front/middle/back strata and reduced three-task bank are this
+project's controlled diagnostic rather than NVIDIA's official 13-task suite.
+Prepared prompts use a whitespace proxy; every local model adapter performs
+last-mile fitting with that checkpoint's chat template and tokenizer.
 """
 
 from __future__ import annotations
@@ -24,7 +27,8 @@ from .base import Dataset, Sample, ScoreResult
 TaskType = Literal["niah", "multi_hop", "aggregation"]
 Position = Literal["front", "middle", "back"]
 
-RULER_REVISION = "c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a"
+RULER_UPSTREAM_REVISION = "c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a"
+RULER_DIAGNOSTIC_REVISION = "ruler-inspired-controlled-v2"
 DEFAULT_CONTEXT_WINDOWS = (8192, 32768, 40960, 262144)
 
 
@@ -69,6 +73,7 @@ class RulerDataset(Dataset):
     def preparation_signature(self) -> dict[str, object]:
         """Resolved inputs that must invalidate an existing prepared bank."""
         return {
+            "protocol_revision": RULER_DIAGNOSTIC_REVISION,
             "context_windows": self._context_windows,
             "samples_per_context_window_position": self._samples_per_group,
             "max_output_tokens": self._max_output_tokens,
@@ -94,6 +99,7 @@ class RulerDataset(Dataset):
         self, samples: list[Sample], results: list[ScoreResult]
     ) -> dict[str, float]:
         summary = super().aggregate_records(samples, results)
+        summary["ruler_string_match_all"] = summary["ruler_score"]
         grouped: dict[tuple[int, str, str], list[float]] = {}
         for sample, result in zip(samples, results):
             window = int(sample.meta.get("context_window_tokens", sample.reference.context_length))
@@ -134,6 +140,51 @@ class RulerDataset(Dataset):
             max_score = summary[f"accuracy_context_{windows[1]}"]
             summary["context_retention"] = max_score / common_score if common_score > 0 else 0.0
         return summary
+
+
+class RulerContextProbeDataset(RulerDataset):
+    """One oversized source prompt, fitted per model to its half-context target."""
+
+    name = "ruler_context_probe"
+
+    def __init__(
+        self,
+        samples: list[Sample] | None = None,
+        source_input_tokens: int = 131072,
+        max_output_tokens: int = 64,
+        seed: int = 42,
+    ) -> None:
+        self._probe_samples = list(samples) if samples is not None else None
+        self._source_input_tokens = int(source_input_tokens)
+        self._max_output_tokens = int(max_output_tokens)
+        self._seed = int(seed)
+
+    def load_samples(self, n: int | None = None) -> list[Sample]:
+        if self._probe_samples is not None:
+            samples = list(self._probe_samples)
+        else:
+            rng = random.Random(self._seed)
+            answer = f"P{rng.randrange(10**11, 10**12)}"
+            samples = [
+                _make_generated_sample(
+                    "ruler-context-probe-000",
+                    "niah",
+                    "middle",
+                    [answer],
+                    f"The hidden access code is {answer}.",
+                    "What is the hidden access code? Answer with only the code.",
+                    self._source_input_tokens + self._max_output_tokens,
+                    self._max_output_tokens,
+                )
+            ]
+        return samples[:n] if n is not None else samples
+
+    def preparation_signature(self) -> dict[str, object]:
+        return {
+            "source_input_tokens": self._source_input_tokens,
+            "max_output_tokens": self._max_output_tokens,
+            "seed": self._seed,
+        }
 
 
 def position_robustness(scores_by_position: dict[str, float]) -> float:
@@ -204,11 +255,15 @@ def _make_generated_sample(
         prompt=_fit_prompt(payload, question, target_input, position),
         reference=RulerReference(task_type, position, answers, target_input),
         meta={
-            "source": "NVIDIA/RULER deterministic task generator",
-            "source_revision": RULER_REVISION,
+            "source": "dllm-bench RULER-inspired controlled diagnostic",
+            "source_revision": RULER_DIAGNOSTIC_REVISION,
+            "upstream_reference": "NVIDIA/RULER",
+            "upstream_revision": RULER_UPSTREAM_REVISION,
+            "official_ruler_compatible": False,
             "context_window_tokens": window,
             "target_input_tokens": target_input,
-            "length_unit": "whitespace_proxy",
+            "prepared_length_unit": "whitespace_proxy",
+            "runtime_length_unit": "model_tokenizer_after_chat_template",
         },
     )
 

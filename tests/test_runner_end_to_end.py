@@ -10,13 +10,19 @@ import re
 
 import pytest
 
+from dllm_bench.datasets.base import ScoreResult
 from dllm_bench.datasets.gsm8k import GSM8KDataset
-from dllm_bench.interfaces import GenerationRequest, RunStatus
+from dllm_bench.interfaces import (
+    GenerationRequest,
+    GenerationResult,
+    RunStatus,
+    TimingResult,
+)
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.report.tables import compute_converted_row, raw_results_row, render_raw_results_table
 from dllm_bench.report.trace_report import render_sample_report
 from dllm_bench.runner.demo_samples import build_demo_samples
-from dllm_bench.runner.orchestrator import run_experiment
+from dllm_bench.runner.orchestrator import SampleRecord, run_experiment, summarize_records
 from dllm_bench.runner.persistence import load_run_summary_dict, save_run_summary
 
 
@@ -58,6 +64,82 @@ def test_mock_adapter_wrong_answers_give_zero_quality():
 
     summary = run_experiment(adapter=adapter, dataset=dataset, samples=samples, max_new_tokens=16)
     assert summary.q == 0.0
+
+
+def test_resource_rates_include_timed_failed_samples_in_window_denominator():
+    dataset = GSM8KDataset()
+    samples = build_demo_samples("gsm8k", n=2)
+    records = [
+        SampleRecord(
+            sample=samples[0],
+            generation=GenerationResult(
+                request=GenerationRequest("one", 16),
+                output_text="ok",
+                status=RunStatus.SUCCESS,
+                final_valid_length=10,
+                timing=TimingResult(2.0),
+                energy_joules=4.0,
+                peak_vram_gb=3.0,
+            ),
+            score=ScoreResult(1.0),
+        ),
+        SampleRecord(
+            sample=samples[1],
+            generation=GenerationResult(
+                request=GenerationRequest("two", 16),
+                output_text="",
+                status=RunStatus.FAILED,
+                final_valid_length=0,
+                timing=TimingResult(3.0),
+                energy_joules=6.0,
+                peak_vram_gb=4.0,
+            ),
+            score=ScoreResult(0.0, valid=False, complete=False),
+        ),
+    ]
+
+    summary = summarize_records("model", "config", dataset, records)
+
+    assert summary.time_per_sample == pytest.approx(2.5)
+    assert summary.energy_per_sample == pytest.approx(5.0)
+    assert summary.tps == pytest.approx(10 / 5)
+    assert summary.sps == pytest.approx(2 / 5)
+    assert summary.eps == pytest.approx(10 / 5)
+    assert summary.peak_vram_gb == pytest.approx(4.0)
+
+
+def test_resource_rates_are_unavailable_when_any_selected_sample_lacks_timing():
+    dataset = GSM8KDataset()
+    samples = build_demo_samples("gsm8k", n=2)
+    records = [
+        SampleRecord(
+            sample=samples[0],
+            generation=GenerationResult(
+                request=GenerationRequest("one", 16),
+                output_text="ok",
+                status=RunStatus.SUCCESS,
+                final_valid_length=10,
+                timing=TimingResult(2.0),
+            ),
+            score=ScoreResult(1.0),
+        ),
+        SampleRecord(
+            sample=samples[1],
+            generation=GenerationResult(
+                request=GenerationRequest("two", 16),
+                output_text="",
+                status=RunStatus.FAILED,
+            ),
+            score=ScoreResult(0.0, valid=False, complete=False),
+        ),
+    ]
+
+    summary = summarize_records("model", "config", dataset, records)
+
+    assert summary.time_per_sample is None
+    assert summary.tps is None
+    assert summary.sps is None
+    assert summary.eps is None
 
 
 def test_run_summary_round_trips_through_persistence_and_report(tmp_path):

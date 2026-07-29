@@ -41,6 +41,7 @@ configs:
     adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
     init_kwargs:
       model_name_or_path: Dream-org/DreamReasoner-8B
+      enable_thinking: true  # official GitHub quick-start
     step_config:
       gen_length: null  # falls back to request.max_new_tokens (see hf_diffusion.py)
       block_length: 32
@@ -51,6 +52,7 @@ configs:
     adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
     init_kwargs:
       model_name_or_path: Dream-org/DreamReasoner-8B
+      enable_thinking: true
     step_config:
       gen_length: null
       block_length: 32

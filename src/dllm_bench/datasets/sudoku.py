@@ -2,10 +2,11 @@
 
 The paper uses Park's one-million-game dataset, rows 0..99,999 for training
 and rows 100,000..100,999 for testing. This benchmark preserves the official
-81-digit puzzle/solution representation. The evaluated checkpoint must return
-only the completed 81-digit solution. The scorer tolerates incidental wrappers
-or row formatting, extracts the final complete grid, and checks its legality;
-strict direct-output compliance is retained as a separate diagnostic.
+81-digit puzzle/solution representation and zero-shot constraint-validity
+score. General instruction checkpoints may reason before placing the final
+completed grid in answer markers. The scorer tolerates missing markers,
+incidental wrappers, or row formatting, extracts the final complete grid, and
+checks its legality; direct-output/marker compliance is a separate diagnostic.
 Blank-cell accuracy, exact reference match, given preservation, completion,
 and constraint satisfaction are retained as diagnostics. Easy/Hard is a
 reporting stratum only; it never changes the source puzzle or score protocol.
@@ -33,7 +34,7 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
-SUDOKU_PROTOCOL_REVISION = "grid-prompt-direct-answer-v2"
+SUDOKU_PROTOCOL_REVISION = "grid-prompt-marked-answer-v3"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
 SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
@@ -42,7 +43,12 @@ SUDOKU_TEST_ROWS = 1_000
 SUDOKU_TRACE_MAX_NEW_TOKENS = 128
 SUDOKU_TRACE_PROTOCOL = "compact-trace-81-digit-v1"
 
-_FINAL_ANSWER_MARKER_RE = re.compile(
+SUDOKU_ANSWER_BEGIN = "<|BEGIN_ANSWER|>"
+SUDOKU_ANSWER_END = "<|END_ANSWER|>"
+_ANSWER_BLOCK_RE = re.compile(
+    r"<\|BEGIN_ANSWER\|>\s*(.*?)(?:\s*<\|END_ANSWER\|>|\Z)", re.DOTALL
+)
+_LEGACY_FINAL_ANSWER_MARKER_RE = re.compile(
     r"(?im)^\s*(?:####|final\s+answer\s*:)\s*"
 )
 _COMPACT_SOLUTION_RE = re.compile(r"(?<![0-9])([1-9]{81})(?![0-9])")
@@ -199,8 +205,8 @@ class SudokuReference:
     """Defaults to classify_difficulty(puzzle) if not given explicitly."""
 
 
-class SudokuDataset(Dataset):
-    name = "sudoku"
+class Sudoku9Dataset(Dataset):
+    name = "sudoku9"
 
     def __init__(
         self,
@@ -251,8 +257,12 @@ class SudokuDataset(Dataset):
         ref: SudokuReference = sample.reference
         prediction = output_text.strip()
         target = _grid_to_digits(ref.solution)
-        official_format_valid = bool(re.fullmatch(r"[1-9]{81}", prediction))
-        official_exact = 1.0 if prediction == target else 0.0
+        answer_region, marker_present, marker_complete = _extract_answer_region(
+            output_text
+        )
+        marked_answer = answer_region.strip()
+        official_format_valid = bool(re.fullmatch(r"[1-9]{81}", marked_answer))
+        official_exact = 1.0 if marked_answer == target else 0.0
         grid, marker_present = extract_final_grid(output_text)
 
         if grid is None:
@@ -261,6 +271,7 @@ class SudokuDataset(Dataset):
                 aux={
                     "official_exact_match_accuracy": official_exact,
                     "official_format_valid": 0.0,
+                    "direct_answer_instruction_following_rate": 0.0,
                     "exact_solve_rate": 0.0,
                     "blank_cell_accuracy": 0.0,
                     "cell_accuracy": 0.0,
@@ -271,6 +282,7 @@ class SudokuDataset(Dataset):
                     "constraint_valid": 0.0,
                     "reference_exact_match": 0.0,
                     "answer_marker_present": float(marker_present),
+                    "answer_marker_complete_rate": float(marker_complete),
                 },
                 valid=False,
                 complete=False,
@@ -285,6 +297,9 @@ class SudokuDataset(Dataset):
             aux={
                 "official_exact_match_accuracy": official_exact,
                 "official_format_valid": float(official_format_valid),
+                "direct_answer_instruction_following_rate": float(
+                    marker_complete and official_format_valid
+                ),
                 "exact_solve_rate": exact,
                 "blank_cell_accuracy": partial_credit,
                 "cell_accuracy": cell_accuracy(grid, ref.solution),
@@ -297,6 +312,7 @@ class SudokuDataset(Dataset):
                 "constraint_valid": float(constraint_valid),
                 "reference_exact_match": exact,
                 "answer_marker_present": float(marker_present),
+                "answer_marker_complete_rate": float(marker_complete),
             },
             valid=True,
             complete=completion_rate(grid) == 1.0,
@@ -428,33 +444,45 @@ def _build_prompt(puzzle_digits: str) -> str:
         "exactly 9 cells, and 0 represents a blank cell. Fill every blank.\n"
         "Puzzle:\n"
         + "\n".join(rows)
-        + "\n\nDirectly return the 81 numbers answer. Return ONLY the completed "
-        "grid as one row-major 81-digit string. "
-        "Your entire response must contain exactly 81 digits (1-9), with no "
-        "spaces, separators, labels, explanation, reasoning, or other text. "
-        "Do not leave any 0.\n"
-        "Answer (81 digits only):"
+        + "\n\nSolve the puzzle and return the completed grid as one row-major "
+        "81-digit string using only digits 1-9; do not leave any 0. You may "
+        "reason before the final answer if useful. Put only the 81 digits "
+        "between the answer markers, exactly as follows:\n"
+        f"{SUDOKU_ANSWER_BEGIN}\n"
+        "<81 digits>\n"
+        f"{SUDOKU_ANSWER_END}"
     )
 
 
+def _extract_answer_region(text: str) -> tuple[str, bool, bool]:
+    blocks = list(_ANSWER_BLOCK_RE.finditer(text))
+    if blocks:
+        block = blocks[-1]
+        complete = SUDOKU_ANSWER_END in text[block.start() :]
+        return block.group(1), True, complete
+    legacy = list(_LEGACY_FINAL_ANSWER_MARKER_RE.finditer(text))
+    if legacy:
+        return text[legacy[-1].end() :], True, False
+    return text, False, False
+
+
 def extract_final_grid(text: str) -> tuple[Grid | None, bool]:
-    """Extract the final Sudoku grid, preferring the last ``####`` marker.
+    """Extract the final grid, preferring the explicit answer-marker block.
 
     This mirrors GSM8K's marker-first/fallback-last-answer convention.  If a
     marker is present, only text after the last marker is considered so digits
     in the model's reasoning cannot be mistaken for the submitted solution.
     Without a marker, the last complete compact solution or 9-row grid is used.
     """
-    markers = list(_FINAL_ANSWER_MARKER_RE.finditer(text))
-    candidate_text = text[markers[-1].end() :] if markers else text
+    candidate_text, marker_present, _ = _extract_answer_region(text)
     compact = _COMPACT_SOLUTION_RE.findall(candidate_text)
     if compact:
         digits = compact[-1]
         return (
             [[int(digits[row * 9 + col]) for col in range(9)] for row in range(9)],
-            bool(markers),
+            marker_present,
         )
-    return parse_grid(candidate_text), bool(markers)
+    return parse_grid(candidate_text), marker_present
 
 
 def is_valid_solution(grid: Grid, puzzle: Grid) -> bool:
@@ -599,7 +627,7 @@ def _load_official_test_samples(
     return samples
 
 
-class SudokuTraceDataset(SudokuDataset):
+class SudokuTraceDataset(Sudoku9Dataset):
     """The same frozen rows with a compact protocol for revision analysis."""
 
     name = "sudoku_trace"
@@ -628,3 +656,7 @@ class SudokuTraceDataset(SudokuDataset):
             "prompt_protocol": SUDOKU_TRACE_PROTOCOL,
             "max_new_tokens": SUDOKU_TRACE_MAX_NEW_TOKENS,
         }
+
+
+# Compatibility import for external callers; canonical matrix name is sudoku9.
+SudokuDataset = Sudoku9Dataset

@@ -18,6 +18,7 @@ from dllm_bench.datasets.io import _records, load_samples_file
 from dllm_bench.datasets.mbpp import MbppSample
 from dllm_bench.datasets.ruler import RulerReference
 from dllm_bench.datasets.sudoku import SudokuReference
+from dllm_bench.datasets.sudoku4 import Sudoku4Reference
 
 
 def _write(path, text: str) -> str:
@@ -152,7 +153,7 @@ def test_load_samples_file_reconstructs_the_sudoku_reference_dataclass(tmp_path)
         '"difficulty": "easy"}}\n',
     )
 
-    samples = load_samples_file(path, "sudoku")
+    samples = load_samples_file(path, "sudoku9")
     reference = samples[0].reference
     assert isinstance(reference, SudokuReference)
     assert reference.difficulty == "easy"
@@ -170,6 +171,19 @@ def test_load_samples_file_reconstructs_instructed_sudoku_reference(tmp_path):
 
     assert isinstance(samples[0].reference, SudokuReference)
     assert samples[0].reference.difficulty == "hard"
+
+
+def test_load_samples_file_reconstructs_sudoku4_reference(tmp_path):
+    path = tmp_path / "samples.jsonl"
+    path.write_text(
+        '{"sample_id":"s4","prompt":"solve","reference":'
+        '{"puzzle":"3102200002100320","solution":"3142243142131324"}}\n',
+        encoding="utf-8",
+    )
+
+    samples = load_samples_file(path, "sudoku4")
+
+    assert isinstance(samples[0].reference, Sudoku4Reference)
 
 
 def test_load_samples_file_reconstructs_the_mbpp_reference_dataclass(tmp_path):

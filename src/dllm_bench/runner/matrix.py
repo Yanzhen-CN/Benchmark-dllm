@@ -17,6 +17,8 @@ class MatrixJob:
     dataset_config: Path
     samples_file: Path | None = None
     max_new_tokens: int = 256
+    n_samples: int | None = None
+    hellobench_lengths: tuple[str, ...] = ()
 
 
 def _resolve(base: Path, value: str) -> Path:
@@ -72,6 +74,7 @@ def load_matrix_jobs(
         if requested and model_name not in requested:
             continue
         model_path = _resolve(base, model["config"])
+        dataset_overrides = model.get("dataset_overrides", {})
         for dataset_entry in config["datasets"]:
             if isinstance(dataset_entry, str):
                 dataset_entry = {"config": dataset_entry}
@@ -80,18 +83,44 @@ def load_matrix_jobs(
             )
             if requested_datasets and dataset_name not in requested_datasets:
                 continue
+            override = dataset_overrides.get(dataset_name, {})
+            if not isinstance(override, dict):
+                raise ValueError(
+                    f"dataset override for {model_name} x {dataset_name} must be a mapping"
+                )
             jobs.append(
                 MatrixJob(
                     model_name=model_name,
                     model_config=model_path,
-                    variants=tuple(model["variants"]),
+                    variants=tuple(override.get("variants", model["variants"])),
                     dataset_config=_resolve(base, dataset_entry["config"]),
                     samples_file=(
                         _resolve(base, dataset_entry["samples_file"])
                         if dataset_entry.get("samples_file")
                         else None
                     ),
-                    max_new_tokens=int(dataset_entry.get("max_new_tokens", 256)),
+                    max_new_tokens=int(
+                        override.get(
+                            "max_new_tokens",
+                            dataset_entry.get("max_new_tokens", 256),
+                        )
+                    ),
+                    n_samples=(
+                        int(override["n_samples"])
+                        if override.get("n_samples") is not None
+                        else (
+                            int(dataset_entry["n_samples"])
+                            if dataset_entry.get("n_samples") is not None
+                            else None
+                        )
+                    ),
+                    hellobench_lengths=tuple(
+                        str(value)
+                        for value in override.get(
+                            "hellobench_lengths",
+                            dataset_entry.get("hellobench_lengths", ()),
+                        )
+                    ),
                 )
             )
     return jobs, int(config.get("seed", 42))

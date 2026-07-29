@@ -45,6 +45,7 @@ def test_gumbel_noise_perturbs_at_nonzero_temperature():
     logits = torch.zeros(1, 3, VOCAB_SIZE)
     perturbed = _add_gumbel_noise(logits, 1.0)
     assert not torch.equal(perturbed, logits)
+    assert perturbed.dtype == torch.float64
 
 
 def test_selected_token_probabilities_match_full_softmax():
@@ -53,7 +54,10 @@ def test_selected_token_probabilities_match_full_softmax():
 
     expected = torch.softmax(logits, dim=-1).gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
 
-    assert torch.allclose(_selected_token_probabilities(logits, token_ids), expected)
+    probabilities, selected = _selected_token_probabilities(logits, token_ids)
+
+    assert torch.allclose(probabilities, torch.softmax(logits, dim=-1))
+    assert torch.allclose(selected, expected)
 
 
 class _FakeLogitsModel:

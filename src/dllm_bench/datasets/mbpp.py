@@ -34,6 +34,7 @@ MBPP_SANITIZED_URL = (
 
 _CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 _TRAILING_CONTINUATION_RE = re.compile(r"(\\|[+\-*/,(\[{]|\band\b|\bor\b)\s*$")
+_BEGIN_DONE_RE = re.compile(r"\[BEGIN\]\s*(.*?)(?:\s*\[DONE\]|\Z)", re.DOTALL)
 
 
 @dataclass
@@ -45,6 +46,9 @@ class MbppSample:
 
 
 def extract_code(output_text: str) -> str:
+    delimited = _BEGIN_DONE_RE.search(output_text)
+    if delimited:
+        return delimited.group(1).strip()
     fence_match = _CODE_FENCE_RE.search(output_text)
     if fence_match:
         return fence_match.group(1).strip()
@@ -97,6 +101,18 @@ def _is_assertion_only_failure(stderr_text: str) -> bool:
     return "AssertionError" in stderr_text and "SyntaxError" not in stderr_text
 
 
+def _format_official_prompt(row: dict, *, include_solution: bool) -> str:
+    """Format one task exactly as documented by the upstream MBPP README."""
+    tests = "\n".join(str(test) for test in row["test_list"])
+    prefix = (
+        "You are an expert Python programmer, and here is your task: "
+        f"{row['prompt']} Your code should pass these tests:\n\n{tests}\n[BEGIN]\n"
+    )
+    if include_solution:
+        return f"{prefix}{row['code']}\n[DONE]"
+    return prefix
+
+
 class MBPPDataset(Dataset):
     name = "mbpp"
 
@@ -113,13 +129,22 @@ class MBPPDataset(Dataset):
                 url=MBPP_SANITIZED_URL, sha256=MBPP_SANITIZED_SHA256,
             )
             rows = json.loads(source.read_text(encoding="utf-8"))
+            row_by_id = {int(row["task_id"]): row for row in rows}
+            prompt_rows = [row_by_id[task_id] for task_id in (2, 3, 4)]
+            few_shot_prefix = "\n\n".join(
+                _format_official_prompt(row, include_solution=True)
+                for row in prompt_rows
+            )
             # The official evaluation split is task_id 11..510. The sanitized
             # set inherits those split boundaries from the original MBPP.
             rows = [row for row in rows if 11 <= int(row["task_id"]) <= 510]
             samples = [
                 Sample(
                     sample_id=f"mbpp-sanitized-{int(row['task_id']):04d}",
-                    prompt=str(row["prompt"]),
+                    prompt=(
+                        f"{few_shot_prefix}\n\n"
+                        f"{_format_official_prompt(row, include_solution=False)}"
+                    ),
                     reference=MbppSample(
                         test_list=list(row["test_list"]),
                         test_setup_code="\n".join(row.get("test_imports", [])),
@@ -129,6 +154,7 @@ class MBPPDataset(Dataset):
                         "source_revision": MBPP_REVISION,
                         "task_id": int(row["task_id"]),
                         "reference_code": row.get("code", ""),
+                        "prompt_protocol": "official MBPP 3-shot tasks 2/3/4",
                     },
                 )
                 for row in rows

@@ -56,6 +56,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         self._model_name = model_name_or_path
         self._device = device
         self._default_steps = steps
+        self._inference_dtype = "bfloat16"
         self._model = None
         self._processor = None
 
@@ -145,7 +146,6 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
                     **encoded,
                     max_new_tokens=gen_length,
                     max_denoising_steps=steps,
-                    disable_compile=True,
                     return_dict_in_generate=True,
                 )
             self._stop_measurement()
@@ -155,9 +155,27 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         sequences = getattr(output, "sequences", output)
         generated_ids = sequences[0][prompt_len:].tolist()
         output_text = self._processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        pad_token_id = getattr(
+            getattr(self._model, "generation_config", None),
+            "pad_token_id",
+            None,
+        )
+        final_valid_length = (
+            len(generated_ids)
+            if pad_token_id is None
+            else sum(token_id != pad_token_id for token_id in generated_ids)
+        )
+        official_tokens_per_forward = _scalar_tokens_per_forward(output)
+        if official_tokens_per_forward is not None and official_tokens_per_forward > 0:
+            official_forward_count = round(
+                final_valid_length / official_tokens_per_forward
+            )
+            if official_forward_count > 0:
+                forward_count = official_forward_count
 
         canvas_length = getattr(self._model.config, "canvas_length", gen_length)
         trace = _build_trace_from_captured_steps(captured_steps, canvas_length, self._processor.tokenizer)
+        trace = _truncate_trace(trace, final_valid_length, self._processor.tokenizer)
 
         return GenerationResult(
             request=request,
@@ -165,9 +183,74 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             status=RunStatus.SUCCESS,
             trace=trace,
             num_forward_passes=forward_count,
-            final_valid_length=len(generated_ids),
-            extra={"input_tokens": int(prompt_len)},
+            final_valid_length=final_valid_length,
+            extra={
+                "input_tokens": int(prompt_len),
+                "official_tokens_per_forward": official_tokens_per_forward,
+            },
         )
+
+
+def _scalar_tokens_per_forward(output) -> float | None:
+    """Read the official DiffusionGemma generation metric for batch size 1."""
+    value = getattr(output, "tokens_per_forward", None)
+    if value is None:
+        return None
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "reshape"):
+        value = value.reshape(-1)[0]
+    if hasattr(value, "item"):
+        value = value.item()
+    return float(value)
+
+
+def _truncate_trace(
+    trace: list[TraceStep], final_valid_length: int, tokenizer
+) -> list[TraceStep]:
+    """Drop post-EOS padding positions from every persisted trace row."""
+    if not trace or all(len(step.token_ids) <= final_valid_length for step in trace):
+        return trace
+    truncated: list[TraceStep] = []
+    for step in trace:
+        token_ids = step.token_ids[:final_valid_length]
+        truncated.append(
+            TraceStep(
+                forward_index=step.forward_index,
+                token_ids=token_ids,
+                position_states=step.position_states[:final_valid_length],
+                committed_positions=[
+                    position
+                    for position in step.committed_positions
+                    if position < final_valid_length
+                ],
+                decoded_text=tokenizer.decode(token_ids, skip_special_tokens=True),
+                entropy_by_position=(
+                    {
+                        position: value
+                        for position, value in step.entropy_by_position.items()
+                        if position < final_valid_length
+                    }
+                    if step.entropy_by_position
+                    else None
+                ),
+                top1_confidence_by_position=(
+                    {
+                        position: value
+                        for position, value in step.top1_confidence_by_position.items()
+                        if position < final_valid_length
+                    }
+                    if step.top1_confidence_by_position
+                    else None
+                ),
+                token_texts=(
+                    step.token_texts[:final_valid_length]
+                    if step.token_texts is not None
+                    else None
+                ),
+            )
+        )
+    return truncated
 
 
 def _assign_canvas_indices(captured_steps: list[dict]) -> list[int]:

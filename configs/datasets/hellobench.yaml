@@ -1,6 +1,6 @@
-# Diagnostic long-output evaluation: 10 shared samples at each of the
-# 2K/4K-word targets (20 total per model configuration). This remains a
-# focused system evaluation rather than a full HelloBench leaderboard run.
+# Diagnostic long-output feasibility evaluation: one shared sample at each of
+# the 2K/4K-word targets by default. The full matrix restricts iLLaDA and
+# DreamReasoner to the 2K-word profile only (one sample per variant).
 # Generation caps are per sample, not a matrix-wide 256.
 dataset: hellobench
 dataset_class: dllm_bench.datasets.hellobench.HelloBenchDataset
@@ -10,7 +10,7 @@ dataset_class: dllm_bench.datasets.hellobench.HelloBenchDataset
 # observable failure penalties.
 primary_metric: objective_quality_score
 aux_metrics: [length_compliance_rate, seq_rep_4, repeated_segment_fraction, major_issue_free_rate, refusal_issue_rate, prompt_echo_issue_rate, corrupt_text_issue_rate, generation_time_mean_seconds_by_length, generation_time_median_seconds_by_length, generation_success_rate_by_length]
-samples_per_length: 10
+samples_per_length: 1
 output_profiles:
   - target_words: 2000
     max_new_tokens: 3072

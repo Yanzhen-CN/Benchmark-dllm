@@ -113,7 +113,7 @@ def test_prepare_data_cli_is_idempotent(tmp_path, monkeypatch):
     assert "cached: 4 samples" in second.output
 
 
-def test_full_matrix_prepare_visits_all_six_datasets(tmp_path, monkeypatch):
+def test_full_matrix_prepare_visits_all_formal_and_probe_datasets(tmp_path, monkeypatch):
     monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
     monkeypatch.setattr(
         "dllm_bench.runner.data_preparation.build_dataset",
@@ -124,14 +124,15 @@ def test_full_matrix_prepare_visits_all_six_datasets(tmp_path, monkeypatch):
     second = prepare_matrix_datasets(FULL_MATRIX_CONFIG)
 
     assert [item.dataset_name for item in first] == [
-        "gsm8k", "mbpp", "structeval_t", "sudoku", "ruler", "hellobench"
+        "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9", "ruler", "hellobench",
+        "ruler_context_probe",
     ]
     assert all(item.sample_count == 1 and item.prepared_now for item in first)
     assert all(not item.prepared_now for item in second)
     assert all(item.samples_path.is_file() and item.manifest_path.is_file() for item in first)
 
 
-def test_full_matrix_prepare_can_filter_to_sudoku(tmp_path, monkeypatch):
+def test_full_matrix_prepare_can_filter_to_sudoku9(tmp_path, monkeypatch):
     monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
     monkeypatch.setattr(
         "dllm_bench.runner.data_preparation.build_dataset",
@@ -139,10 +140,10 @@ def test_full_matrix_prepare_can_filter_to_sudoku(tmp_path, monkeypatch):
     )
 
     prepared = prepare_matrix_datasets(
-        FULL_MATRIX_CONFIG, dataset_names=["sudoku"]
+        FULL_MATRIX_CONFIG, dataset_names=["sudoku9"]
     )
 
-    assert [item.dataset_name for item in prepared] == ["sudoku"]
+    assert [item.dataset_name for item in prepared] == ["sudoku9"]
 
 
 def test_prepare_data_public_dataset_flag_is_forwarded(monkeypatch):
@@ -153,8 +154,8 @@ def test_prepare_data_public_dataset_flag_is_forwarded(monkeypatch):
         lambda experiment_config, **kwargs: captured.update(kwargs) or [],
     )
 
-    assert prepare_data.main(["-d", "sudoku"]) == 0
-    assert captured["dataset_names"] == ["sudoku"]
+    assert prepare_data.main(["-d", "sudoku9"]) == 0
+    assert captured["dataset_names"] == ["sudoku9"]
 
 
 def test_prepare_data_help_works_outside_repository_without_creating_venv(tmp_path):
@@ -196,8 +197,13 @@ def test_prepare_data_creates_and_reexecutes_in_root_venv(tmp_path, monkeypatch)
         lambda *args: (_ for _ in ()).throw(RuntimeError("reexec")),
     )
 
-    with pytest.raises(RuntimeError, match="reexec"):
-        root_venv.run_in_root_venv(PREPARE_SCRIPT, [])
+    if root_venv.os.name == "nt":
+        with pytest.raises(SystemExit) as raised:
+            root_venv.run_in_root_venv(PREPARE_SCRIPT, [])
+        assert raised.value.code == 0
+    else:
+        with pytest.raises(RuntimeError, match="reexec"):
+            root_venv.run_in_root_venv(PREPARE_SCRIPT, [])
 
     assert any(command[1:3] == ["-m", "venv"] for command in commands)
     assert any(command[-4:] == ["pip", "install", "-e", "."] for command in commands)

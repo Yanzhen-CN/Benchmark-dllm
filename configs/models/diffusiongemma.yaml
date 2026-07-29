@@ -23,6 +23,9 @@
 # sampler and Google's recommended maximum of 48 denoising steps per canvas.
 # The checkpoint generation config supplies temperature 0.8 -> 0.4, entropy
 # bound 0.1, confidence 0.005, and stability threshold 1.
+# The adapter does not override `disable_compile`; cache/compile behavior is
+# left to the upstream generation config. The official `tokens_per_forward`
+# output is persisted, and post-EOS pads are excluded from valid length/trace.
 model: diffusiongemma
 max_context_tokens: 262144
 configs:

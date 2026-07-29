@@ -41,6 +41,15 @@ STRUCTEVAL_T_URL = (
 Format = Literal["json", "yaml", "xml", "toml", "csv"]
 
 _CODE_FENCE_RE = re.compile(r"```(?:\w+)?\s*\n(.*?)```", re.DOTALL)
+_OFFICIAL_CODE_MARKER_RE = re.compile(
+    r"<\|BEGIN_CODE\|>\s*(.*?)(?:\s*<\|END_CODE\|>|\Z)", re.DOTALL
+)
+STRUCTEVAL_OUTPUT_INSTRUCTION = (
+    "IMPORTANT: Only output the required output format.\n"
+    "You must start the format/code with <|BEGIN_CODE|> and end the "
+    "format/code with <|END_CODE|>. No other text output (explanation, "
+    "comments, etc.) are allowed. Do not use markdown code fences."
+)
 
 
 @dataclass
@@ -85,6 +94,24 @@ class StructProgressResult:
 def _strip_code_fence(text: str) -> str:
     match = _CODE_FENCE_RE.search(text)
     return match.group(1).strip() if match else text.strip()
+
+
+def extract_official_payload(text: str) -> str:
+    """Extract the payload with StructEval's upstream precedence.
+
+    The official evaluator first accepts the BEGIN/END marker wrapper, then
+    a markdown fence for compatibility, and finally treats the complete raw
+    response as the payload.  A missing closing marker/fence extends to EOS.
+    """
+    marker_match = _OFFICIAL_CODE_MARKER_RE.search(text)
+    if marker_match:
+        return marker_match.group(1).strip()
+    fence_start = re.search(r"```(?:\w+)?\s*\n", text)
+    if fence_start:
+        remainder = text[fence_start.end() :]
+        fence_end = remainder.find("```")
+        return (remainder[:fence_end] if fence_end >= 0 else remainder).strip()
+    return text.strip()
 
 
 def _auto_close_json(text: str) -> str | None:
@@ -244,7 +271,7 @@ def _parse_official_strict(text: str, fmt: Format) -> Any | None:
     malformed output.  A fenced payload is extracted because StructEval's
     render stage likewise extracts the generated code before saving it.
     """
-    payload = _strip_code_fence(text)
+    payload = extract_official_payload(text)
     try:
         if fmt == "json":
             return json.loads(payload)
@@ -349,7 +376,10 @@ def official_structeval_nonrenderable_score(
 ) -> tuple[float, float, float]:
     """Return upstream ``(final, render, key_validation)`` scores."""
     parsed = _parse_official_strict(text, schema.format)
-    render_score = 1.0 if parsed is not None else 0.0
+    # Upstream ``score_non_renderable`` assigns render=1 only when the parsed
+    # object is truthy. Empty JSON/YAML/TOML structures therefore score zero
+    # even though their syntax is valid.
+    render_score = 1.0 if parsed is not None and bool(parsed) else 0.0
     if parsed is None or not schema.required_keys:
         key_validation_score = 0.0
     else:
@@ -666,7 +696,7 @@ def _official_structeval_sample(row: dict[str, Any]) -> Sample:
     )
     return Sample(
         sample_id=f"structeval-t-{row['task_id']}",
-        prompt=str(row["query"]),
+        prompt=f"{str(row['query']).rstrip()}\n\n{STRUCTEVAL_OUTPUT_INSTRUCTION}",
         reference=schema,
         meta={
             "source": "TIGER-AI-Lab/StructEval",
@@ -674,5 +704,6 @@ def _official_structeval_sample(row: dict[str, Any]) -> Sample:
             "task_name": row.get("task_name"),
             "input_type": row.get("input_type"),
             "output_type": row.get("output_type"),
+            "prompt_protocol": "StructEval official CLI marker wrapper",
         },
     )

@@ -62,7 +62,12 @@ class _FakeLogitsModel:
         self.calls: list[dict] = []
 
     def __call__(self, x, attention_mask=None, position_ids=None, past_key_values=None, use_cache=None, store_kv=None):
-        self.calls.append({"store_kv": store_kv, "shape": tuple(x.shape), "attention_mask": attention_mask})
+        self.calls.append({
+            "store_kv": store_kv,
+            "shape": tuple(x.shape),
+            "attention_mask": attention_mask,
+            "grad_enabled": torch.is_grad_enabled(),
+        })
 
         class _Output:
             pass
@@ -172,6 +177,7 @@ def test_dreamreasoner_kv_cache_call_pattern_matches_real_source():
 
     store_kv_sequence = [c["store_kv"] for c in fake_model.calls]
     assert store_kv_sequence == [True, False, False, False, False, True]
+    assert all(not call["grad_enabled"] for call in fake_model.calls)
 
 
 def test_dreamreasoner_force_accept_commits_everything_remaining_on_last_step():

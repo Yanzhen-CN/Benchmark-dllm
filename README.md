@@ -19,10 +19,24 @@ not just interface stubs:
 
 | Model | Status | Verified against |
 | --- | --- | --- |
-| iLLaDA | **Real, ported sampler** (`models/illada.py`) | `iLLaDAtest`'s reference `generate.py` — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
+| iLLaDA | **Real, ported sampler** (`models/illada.py`) | Official `ML-GSAI/LLaDA` `generate.py` plus the iLLaDA checkpoint card — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, FP64 gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
 | DiffusionGemma | **Real** (`models/diffusiongemma.py`) | Verified against the upstream `DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` implementation. Trace capture wraps `accept_canvas` through `_prepare_sampler`. Tests live in `tests/test_diffusiongemma_sampling.py`. |
 | Gemma 4 26B-A4B AR | **Real** (`models/gemma4_ar.py`) | Official `AutoProcessor` + `AutoModelForMultimodalLM` path in native BF16. It matches DiffusionGemma's 25.2B-total/3.8B-active MoE scale and reuses the common AR generation/trace protocol. |
 | DreamReasoner | **Real, ported sampler** (`models/dreamreasoner.py`) | GitHub's `DreamLM/DreamReasoner` repo (the design doc's own link) ships only a README + assets, no python — so verified instead by fetching the real `generation_utils.py`/`modeling_dream.py`/`config.json` from the `Dream-org/DreamReasoner-8B` HF repo directly. Confirmed from that source (not assumed): `block_diffusion_generate` returns only `sequences`/`nfe`, no per-step history at all (unlike regular Dream-7B's `output_history`), so this adapter ports the real `_denoise_current_block`/`_select_transfer_index` loop itself (like iLLaDA) rather than calling the model's own convenience method; default `block_length`=`config.block_size`=32; default per-block `denoising_steps`=`block_length` unless `remasking_strategy='low_confidence_static'`; the library's own default remasking strategy (`low_confidence_dynamic`) is already confidence-based, so — unlike regular Dream, where the library default was overridden — no override is applied; `mask_token_id`=`config.mask_token_id`=151669, shipped directly; the real default path uses a prefix KV cache (ported faithfully, since it directly affects real Time/Energy/Compute cost, not just trace fidelity); never revises (same structural reason as iLLaDA). This is a genuinely different, independently trained model from regular Dream-7B (`Dream-org/Dream-v0-Instruct-7B`) — not a config variant of it — and the design doc's own model roster (section 5) no longer includes regular Dream at all, so that adapter/config/tests were removed rather than kept alongside this one. Tests in `tests/test_dreamreasoner_sampling.py`. |
+
+The 2026-07-29 architecture audit also checked every formal checkpoint's
+published config and generation path. Qwen3-4B/8B now load explicitly in
+checkpoint-native BF16 and reconstruct their one-token AR trace after the
+timed `generate()` call; they no longer retain full-vocabulary `output_scores`
+inside the latency window. DreamReasoner explicitly uses the official
+thinking template and restores the official `torch.no_grad()` inference
+boundary. iLLaDA/DreamReasoner now honor exact tokenizer-level RULER input
+targets and retain denoising-forward counts even when HelloBench trace capture
+is disabled. DiffusionGemma no longer forces `disable_compile`; it records the
+upstream `tokens_per_forward` result and removes post-EOS pad positions from
+its final length and trace. Gemma 4 AR intentionally keeps its checkpoint's
+shipped sampling config. W1 remains reference-only until the private API and
+trace schema exist to validate.
 
 What's still open, and why:
 
@@ -63,7 +77,7 @@ src/dllm_bench/
                      # hf_diffusion.py (iLLaDA/DreamReasoner shared base + DiffusionStepConfig),
                      # illada.py, dreamreasoner.py (each model's real sampler — see Status),
                      # diffusiongemma.py, gemma4_ar.py, w1_api.py, mock.py
-  datasets/         # base.py + gsm8k/mbpp/structeval_t/sudoku/ruler/hellobench
+  datasets/         # base.py + gsm8k/mbpp/structeval_t/sudoku4/sudoku9/ruler/hellobench
   resource/         # timing.py/energy.py/compute.py/vram.py (Appendix B protocol)
   metrics/          # quality_resource.py/long_context.py (Part 3),
                      # trace_parallelism.py/strategy_score.py/commit_order.py/
@@ -115,9 +129,7 @@ python run_model.py --list-models
 python run_model.py --dry-run -m illada
 python run_model.py -m illada --n-samples 20
 python run_model.py -m illada -v fast
-python run_model.py -m illada -d hellobench --hellobench-length 2k --n-samples 3
-python run_model.py -m illada -d hellobench --hellobench-length 4k --n-samples 3
-python run_model.py -m illada -d hellobench --hellobench-length 2k --hellobench-length 4k --n-samples 6
+python run_model.py -m illada -d ruler hellobench ruler_context_probe
 python run_score.py --dry-run -m illada
 python run_score.py -m dreamreasoner -d ruler hellobench --no-resume  # force re-score; never regenerates model output
 ```
@@ -127,6 +139,16 @@ python run_score.py -m dreamreasoner -d ruler hellobench --no-resume  # force re
 Runs are resumable by default. The built-in demo dataset is the default. A
 real-data run checks the normalized cache first and automatically invokes the
 same preparation logic as `prepare_data.py` only when its artifact is absent.
+Any sample OOM invalidates the complete `model × variant × dataset` output
+directory: generation stops before later samples in that directory, writes
+`oom_info.json`, and resume does not retry it. Other variants remain independent
+dataset rows and may still run. Local scoring recognizes the marker and refuses
+to create a score or aggregate summary for that invalid directory. OOM during
+model loading or warmup follows the same rule and records `failure_stage` with
+zero attempted formal samples. Matrix execution prints the invalid-test error
+and continues later datasets. Scoring, visualization, and reporting exclude
+only the marked row; even a stale score summary from an earlier run cannot enter
+aggregate quality, latency, TPS/SPS/EPS, energy, or ranking statistics.
 
 ## Environment setup
 
@@ -220,12 +242,12 @@ python prepare_model.py -m gemma4_26b_a4b -m diffusiongemma
   --output-root output/a100_pair_check --no-resume
 ```
 
-The separate compact Sudoku trace case study keeps the same frozen 50 Easy +
-50 Hard source rows and semantic scorer as `sudoku`. Unlike the main reasoning
+The separate compact Sudoku trace case study keeps the same frozen 5 Easy +
+5 Hard source rows and semantic scorer as `sudoku9`. Unlike the main reasoning
 protocol, it forbids explanation and requests only the final 81 digits, writing
 to its own `sudoku_trace` output/cache namespace. It is included in
-`dg_comparison.yaml`, not the six-task main matrix. After the pair smoke test,
-validate three real puzzles before spending the full 100-sample budget:
+`dg_comparison.yaml`, not the main matrix. After the pair smoke test,
+validate three real puzzles before spending the full 10-sample budget:
 
 ```bash
 python run_model.py \
@@ -261,9 +283,11 @@ wrong-to-correct outcomes, and the fraction of trace steps with a parseable
 board; visualization emits the generic token trace plus a decoded 9x9 GIF.
 
 For formal comparisons, keep GPU type, precision, dataset sample set, output
-caps, trace policy, and compute-profiling flag identical. The formal RULER comparison uses one shared
-8192-token context window; model-advertised maximum context is metadata, not a
-second task point mixed into the primary resource comparison.
+caps, trace policy, and compute-profiling flag identical. Formal RULER uses a
+shared 4096-token encoded input plus a 64-token answer allowance. A separate
+one-sample diagnostic probes half of each model's declared context and is not
+mixed into primary quality or resource aggregates. The complete execution
+contract and acceptance checklist are in `docs/TEST_PROTOCOL.md`.
 `run_model.py` creates the environment automatically when it is missing, then
 launches the model's generation rows with that venv's Python executable. It does
 not depend on shell activation. Override settings with environment variables:
@@ -287,38 +311,34 @@ DATA_SOURCE=real OUTPUT_ROOT=output/formal \
   python venv_scripts/qwen3_4b.py run
 ```
 
-The default diagnostic suite uses 100 samples for each regular-capability
-dataset. Sudoku is stratified 50 easy / 50 hard. It uses the Park split from
-Ye et al. (ICLR 2025): rows 100000--100999 are the test split and each source
-puzzle is an 81-digit sequence (`0` = blank). Unlike Ye et al.'s task-specific
-models, the evaluated checkpoint receives the puzzle as nine explicit 9-cell
-rows (`0` = blank), avoiding error-prone self-segmentation of a raw 81-digit
-input. Its entire response must be only the row-major 81-digit solution and
-leave no zeros; reasoning, labels, spaces, and separators are forbidden.
-Formal samples reserve 96 output tokens, providing tokenizer headroom for the
-81 digits while remaining aligned to the dLLMs' 32-token generation blocks.
-Scoring deliberately remains tolerant: it prefers the marked answer and falls
-back to the final complete 81-digit answer or 9-row grid, then
-checks that the grid preserves every clue and satisfies all row, column, and box
-constraints. Strict direct-format compliance, reference exact match, blank-cell
-accuracy, given preservation, completion, and conflict rate are auxiliary
-diagnostics.
-Easy/Hard is a reporting-only split on this unchanged official test set
-(at most 5 versus at least 6 synchronous naked-single rounds). Data preparation
-materializes the seeded formal subset itself (50 Easy + 50 Hard), so every
-model reads the same frozen 100-row prepared file. RULER selects 10 samples for
-each position cell at the shared 8192-token point; NIAH, multi-hop tracing,
-and aggregation are balanced inside those cells. The 64-token answer allowance
-is included in that window, so every RULER prompt targets 8128 tokens. This
-produces 30 samples per model configuration.
+Sudoku is split into two non-interchangeable tracks. `sudoku4` follows d1's
+official zero-shot 4x4 prompt, `<reasoning>/<answer>` wrapper, test CSV, and
+blank-cell accuracy. Preparation freezes 100 seeded rows from the official
+500-row test file; every source puzzle has exactly eight blanks. The shared
+main output cap is 128 tokens. Whole-puzzle validity, reference exact match,
+clue preservation, and answer-format compliance are reported alongside d1's
+partial-credit primary score. There is no Easy/Hard split for 4x4.
+
+`sudoku9` retains the Park split used by Ye et al. (ICLR 2025), the adapted
+general-instruction prompt, and strict whole-puzzle constraint validity as its
+primary score. Its output cap is 256 tokens. The prepared bank contains 50
+Easy + 50 Hard rows; a 10-row override deterministically selects 5 + 5. The
+4B/8B/W1 group runs `sudoku4` on 100 rows and `sudoku9` on the 10-row probe.
+DiffusionGemma and its Gemma-4 control reverse those budgets: `sudoku9` on
+100 rows and `sudoku4` on 10 unstratified rows. Scores from 4x4 and 9x9 are
+never merged or placed in the same Sudoku column. RULER selects 30
+samples at a 4096 encoded-input target: 10 each for NIAH, multi-hop,
+and aggregation, also balanced over front/middle/back answer positions. A
+64-token answer allowance is added after the input target.
 
 HelloBench is a focused long-output diagnostic rather than a full leaderboard
-run: 10 shared samples target 2K words with `max_new_tokens=3072`, and 10
-shared samples target 4K words with `max_new_tokens=6144` (20 total per model
-configuration). These generation caps are attached
+run. The default is one shared sample at each of 2K words
+(`max_new_tokens=3072`) and 4K words (`max_new_tokens=6144`). In the formal
+matrix, iLLaDA and DreamReasoner run only the 2K profile, one sample per
+variant. These generation caps are attached
 per sample by the runner, so the matrix-wide fallback cannot accidentally
 reduce both groups to 256 tokens. Every model uses the same deterministic
-20-sample subset. Per-sample wall-clock, output length, TPS, energy, peak VRAM,
+configured shared subset. Per-sample wall-clock, output length, TPS, energy, peak VRAM,
 objective quality, and major-failure flags describe long-output feasibility
 and cost; the subset is not presented as a full HelloBench leaderboard score.
 Its primary `objective_quality_score` is explicitly not official HelloEval:
@@ -335,7 +355,8 @@ and `pip-cache/`). This makes the cache follow the project onto a mounted
 cloud volume. Set `DLLM_DATA_ROOT=/mounted/path/data` to override it. W1
 additionally requires `W1_API_BASE_URL` and, when applicable, `W1_API_KEY` at
 run time; data preparation does not need either. Reference-only W1 uses the
-common/base 8192-token RULER point.
+same formal 4096-token RULER input and its separate half-context probe also
+targets 4096 input tokens because W1 declares an 8192-token maximum.
 
 ## Data preparation
 
@@ -343,8 +364,8 @@ Prepare every real dataset declared in the matrix before allocating a GPU:
 
 ```bash
 python prepare_data.py
-python prepare_data.py -d sudoku
-python prepare_data.py -d sudoku ruler
+python prepare_data.py -d sudoku4
+python prepare_data.py -d sudoku9 ruler
 python prepare_data.py --force  # rebuild matching prepared artifacts
 ```
 
@@ -552,12 +573,14 @@ profile.
 `score`/`visualize` deterministically reconstruct the same
 sample list from `--demo`/`--no-demo`, `--n-samples`, and `--seed`; pass matching
 values to every stage. The official GSM8K loader uses stable source indices as
-sample IDs and a pinned source revision.
+sample IDs and a pinned source revision. It prepends the first four fixed
+`gsm8k_cot` demonstrations from lm-evaluation-harness and applies the paper's
+flexible final-number extraction.
 
 Formal RULER records must provide `task_type`, `position`, `required_answers`,
-and `context_length` in `reference`. `context_length` may be either the target
-prompt-token count (for example 8128) or the named context-window point (8192);
-`meta.context_window_tokens` or `meta.input_tokens` can state it explicitly.
+and `context_length` in `reference`. The formal target is 4096 encoded prompt
+tokens with a separate 64-token output allowance; `meta.context_window_tokens`
+and `meta.input_tokens` state the total allowance and input target explicitly.
 Formal HelloBench records provide `reference.target_length_words` as either
 2000 or 4000. Dataset-aware sampling is deterministic under `--seed`.
 
@@ -568,37 +591,40 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 | GSM8K | 100 |
 | MBPP-Sanitized | 100 |
 | StructEval-T | 100 |
-| Sudoku | 100 (50 Easy + 50 Hard) |
-| RULER | 10 per context-window x position cell |
-| HelloBench | 10 at 2K words + 10 at 4K words (20 total) |
+| Sudoku4 | 4B/8B/W1: 100; DG/Gemma-4: 10; no Easy/Hard split |
+| Sudoku9 | DG/Gemma-4: 100 (50 Easy + 50 Hard); 4B/8B/W1: 10 (5 + 5) |
+| RULER | 30 at 4096 encoded input tokens (10 per task type) |
+| HelloBench | iLLaDA/DreamReasoner: one 2K-word sample; others: one per configured profile |
+| RULER half-context probe | one isolated capacity sample, excluded from formal aggregates |
 
-Sudoku's primary score is partial credit over the cells that were blank in
-the prompt: `correct blank cells / all blank cells`. A copied, unsolved
-puzzle therefore scores zero, while a partially correct solution receives
-proportional credit. Reports also retain strict `exact_solve_rate`, legacy
-all-cell `cell_accuracy`, given-cell preservation, completion, and
-constraint/conflict rates. Partial credit and exact solve rate are both
-reported separately for Easy and Hard puzzles.
+Sudoku4's primary score is d1 blank-cell accuracy. Its strict
+`puzzle_success_rate` requires a complete legal 4x4 board preserving every
+clue. Sudoku9 uses the inverse emphasis: strict whole-puzzle constraint
+validity is primary and blank-cell accuracy is diagnostic. Only Sudoku9 has
+the Easy/Hard reporting split.
 
 For HelloBench, repeat `--hellobench-length` to select `2k`, `4k`, or both.
 `--n-samples` is the total across the selected output profiles: selecting only
 `4k --n-samples 3` runs three 4K samples, while selecting both with
 `--n-samples 6` deterministically balances the run as three 2K plus three 4K.
-With neither option, the formal default remains 10 plus 10.
+With neither option, model-specific matrix defaults apply.
 
-MBPP's primary metric is official pass@1: one candidate passes only when all
-official tests pass, and the dataset score is the mean pass rate. Its
+MBPP uses the official fixed 3-shot examples (task IDs 2, 3, and 4), includes
+the public tests in the prompt, delimits code with `[BEGIN]` / `[DONE]`, and
+reports pass@1: one candidate passes only when all official tests pass. Its
 structure/content progress values are trace-only auxiliary diagnostics.
-StructEval-T uses the official non-renderable formula as its primary metric,
+StructEval-T appends the upstream CLI's `<|BEGIN_CODE|>` / `<|END_CODE|>`
+instruction and uses the official non-renderable formula as its primary metric,
 `round(0.2 * strict_parse_success + 0.8 * required_path_coverage, 2)`; the
 fault-tolerant formation score and strict all-fields-complete 0/1 result are
 retained only as auxiliary diagnostics.
 
-RULER runs only the shared 8192-token context-window point. It contains 30
-samples: 10 at each of front/middle/back, balanced so that NIAH, multi-hop,
-and aggregation also have 10 samples each. Model-advertised context maxima are
-not additional formal task points. RULER keeps 64 tokens inside the total model window for its
-short answer; the input target is therefore `context_window - 64`. The
+Formal RULER contains 30 samples at a shared 4096-token encoded-input target: 10 at
+each of front/middle/back, balanced so that NIAH, multi-hop, and aggregation
+also have 10 samples each. A separate `ruler_context_probe` sample uses half
+of each model's declared maximum as input and runs last; it is a capacity/OOM
+diagnostic, not an additional formal quality point. RULER allows 64 tokens for
+the short answer. The
 prompt ends with the official-style `Answer:` prefix. Its primary score follows
 NVIDIA RULER's `string_match_all`: each required reference found in the output
 receives equal fractional credit; `all_answers_match` is retained separately.
@@ -640,6 +666,7 @@ off a GPU box:
 output/
   model_output/<model>_<config>/<dataset>/
     _meta.json          # model/config/dataset name + run metadata (section 6)
+    oom_info.json       # only when OOM marks the complete test invalid
     <sample_id>.json    # full GenerationResult, including trace
   score_output/<model>_<config>/<dataset>/
     <sample_id>.json    # ScoreResult for that sample
@@ -735,7 +762,7 @@ generation preference, while 0.5 means synchronized or order-balanced
 formation. It is a trace diagnostic only and never replaces official
 StructEval `final_eval_score` or MBPP `pass_at_1`.
 
-**Sudoku** gets one more artifact on top: an animated 9x9 grid walking
+**Sudoku9** gets one more artifact on top: an animated 9x9 grid walking
 through the solve (`report/sudoku_trace_viz.py`). Easy/Hard here means the
 analysis-only naked-single-round stratum; it is not an official source label
 and does not assert that a puzzle requires backtracking. Per-cell coloring:
@@ -749,10 +776,9 @@ and does not assert that a puzzle requires backtracking. Per-cell coloring:
   that need to revise a wrong trial before landing on the right digit)
 
 This requires the trace's canvas to be exactly 81 positions, row-major
-(`derive_sudoku_frames`) — no Sudoku-capable model is wired in yet, so
-`simulate_sudoku_frames` is a self-contained demo/test fixture (the same
-role `models/mock.py` plays for the rest of the framework) used to exercise
-and demo the renderer today.
+(`derive_sudoku_frames`). `simulate_sudoku_frames` remains a self-contained
+demo/test fixture (the same role `models/mock.py` plays for the rest of the
+framework); real Sudoku9 runs use decoded model trace canvases when available.
 
 ## Configuration: what lives where
 

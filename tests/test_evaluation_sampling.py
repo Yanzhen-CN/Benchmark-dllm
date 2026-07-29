@@ -30,7 +30,7 @@ def test_sudoku_uses_configured_difficulty_split():
         *[_sudoku_sample(index, "easy") for index in range(8)],
         *[_sudoku_sample(index, "hard") for index in range(8)],
     ]
-    config = {"dataset": "sudoku", "difficulty_counts": {"easy": 5, "hard": 3}}
+    config = {"dataset": "sudoku9", "difficulty_counts": {"easy": 5, "hard": 3}}
 
     selected = select_configured_samples(samples, config, {}, seed=7)
 
@@ -49,7 +49,7 @@ def test_explicit_sudoku_count_stays_balanced():
         *[_sudoku_sample(index, "easy") for index in range(5)],
         *[_sudoku_sample(index, "hard") for index in range(5)],
     ]
-    config = {"dataset": "sudoku", "difficulty_counts": {"easy": 50, "hard": 50}}
+    config = {"dataset": "sudoku9", "difficulty_counts": {"easy": 50, "hard": 50}}
 
     selected = select_configured_samples(samples, config, {}, n_samples=3)
 
@@ -201,16 +201,33 @@ def test_ruler_deduplicates_equal_common_and_model_windows():
     assert len(selected) == 30
 
 
-def test_formal_ruler_config_uses_only_shared_8192_window_for_large_models():
+def test_formal_ruler_config_uses_only_shared_4096_input_for_large_models():
     selected = select_configured_samples(
-        _ruler_samples((8192, 262144)),
+        _ruler_samples((4160, 262208)),
         load_yaml("configs/datasets/ruler.yaml"),
         {"max_context_tokens": 262144},
         seed=3,
     )
 
     assert len(selected) == 30
-    assert {sample.meta["context_window_tokens"] for sample in selected} == {8192}
+    assert {sample.meta["context_window_tokens"] for sample in selected} == {4160}
+    assert {sample.meta["target_input_tokens"] for sample in selected} == {4096}
+
+
+def test_ruler_context_probe_uses_half_declared_model_context():
+    selected = select_configured_samples(
+        _ruler_samples((131136,), per_position=1),
+        load_yaml("configs/datasets/ruler_context_probe.yaml"),
+        {"max_context_tokens": 32768},
+        seed=3,
+    )
+
+    assert len(selected) == 1
+    assert selected[0].meta["target_input_tokens"] == 16384
+    assert selected[0].meta["context_window_tokens"] == 16448
+    assert selected[0].meta["max_new_tokens"] == 64
+    assert selected[0].meta["measurement_role"] == "capacity_probe"
+    assert selected[0].meta["declared_max_context_tokens"] == 32768
 
 
 def test_ruler_reports_missing_stratum_clearly():

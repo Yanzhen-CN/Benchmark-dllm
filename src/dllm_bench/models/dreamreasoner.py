@@ -114,8 +114,10 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         step_config: DiffusionStepConfig,
         config_name: str,
         device: str | None = None,
+        enable_thinking: bool = True,
     ) -> None:
         super().__init__(model_name_or_path, step_config, name="dreamreasoner", config_name=config_name, device=device)
+        self._enable_thinking = enable_thinking
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
@@ -193,9 +195,14 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
 
         device = self._device
         input_ids = tokenize_instruction_prompt(
-            self._tokenizer, prompt, device=device
+            self._tokenizer,
+            prompt,
+            device=device,
+            chat_template_kwargs={"enable_thinking": self._enable_thinking},
+            target_input_tokens=target_input_tokens,
         )["input_ids"]
         prompt_len = input_ids.shape[1]
+        self._last_input_tokens = int(prompt_len)
         self._start_measurement()
 
         num_blocks = max(1, math.ceil((prompt_len + gen_length) / block_length))
@@ -212,14 +219,15 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         past_key_values = DynamicCache()
 
         if prefill_length > 0:
-            self._model(
-                x[:, :prefill_length],
-                attention_mask=attention_mask[:, :prefill_length, :prefill_length],
-                position_ids=position_ids[:, :prefill_length],
-                past_key_values=past_key_values,
-                use_cache=True,
-                store_kv=True,
-            )
+            with torch.no_grad():
+                self._model(
+                    x[:, :prefill_length],
+                    attention_mask=attention_mask[:, :prefill_length, :prefill_length],
+                    position_ids=position_ids[:, :prefill_length],
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                    store_kv=True,
+                )
 
         num_transfer_tokens = _get_num_transfer_tokens(block_length, denoising_steps)
         trace: list[TraceStep] = []
@@ -239,25 +247,27 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     # force_accept) — one clean forward to push its final
                     # tokens into the KV cache before the next block attends
                     # to them. No positions change, so no TraceStep.
-                    self._model(
+                    with torch.no_grad():
+                        self._model(
+                            cur_x,
+                            attention_mask=cur_attn,
+                            position_ids=cur_pos,
+                            past_key_values=past_key_values,
+                            use_cache=True,
+                            store_kv=True,
+                        )
+                    break
+
+                force_accept = step == denoising_steps - 1
+                with torch.no_grad():
+                    logits = self._model(
                         cur_x,
                         attention_mask=cur_attn,
                         position_ids=cur_pos,
                         past_key_values=past_key_values,
                         use_cache=True,
-                        store_kv=True,
-                    )
-                    break
-
-                force_accept = step == denoising_steps - 1
-                logits = self._model(
-                    cur_x,
-                    attention_mask=cur_attn,
-                    position_ids=cur_pos,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    store_kv=False,
-                ).logits
+                        store_kv=False,
+                    ).logits
 
                 x0, x0_p = _sample_with_temperature_topk_topp(logits, temperature, top_k, top_p)
                 x0 = torch.where(mask_index, x0, cur_x)
@@ -299,6 +309,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
             x[:, block_start:block_end] = cur_x
 
         self._stop_measurement()
+        self._last_num_forward_passes = global_step
         output_length = min(total_length, prompt_len + gen_length)
         final_ids = x[0, prompt_len:output_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)

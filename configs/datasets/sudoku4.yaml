@@ -1,0 +1,20 @@
+# Main compact Sudoku track for 4B/8B general checkpoints. Source/prompt and
+# primary blank-cell metric follow d1. Whole-puzzle validity is also reported
+# so partial cell credit cannot be mistaken for a solved board.
+dataset: sudoku4
+dataset_class: dllm_bench.datasets.sudoku4.Sudoku4Dataset
+primary_metric: d1_blank_cell_accuracy
+aux_metrics:
+  - puzzle_success_rate
+  - reference_exact_match
+  - given_preservation_rate
+  - answer_format_valid
+  - answer_marker_complete_rate
+sample_size: 100
+seed: 42
+dataset_kwargs:
+  sample_count: 100
+  seed: 42
+# d1 evaluates LLaDA at 128 and 256 output tokens. The shared main point uses
+# 128 to keep this compact task resource-proportionate; any 256 sweep must be
+# reported as a separate output-length profile.

@@ -55,9 +55,11 @@ from .registry import (
 )
 from .report.tables import (
     compute_converted_row,
+    is_resource_baseline,
     raw_results_row,
     render_converted_results_table,
     render_raw_results_table,
+    select_resource_baselines,
 )
 from .report.dataset_trace_report import render_dataset_trace_report
 from .report.plots import (
@@ -68,7 +70,13 @@ from .report.plots import (
 )
 from .report.trace_report import render_sample_report
 from .runner.demo_samples import build_demo_samples
-from .runner.generate_stage import run_generation
+from .runner.generate_stage import (
+    OOMInvalidTestError,
+    is_cuda_oom_error,
+    oom_invalid_test_error,
+    persist_setup_oom_invalidation,
+    run_generation,
+)
 from .runner.output_layout import (
     model_output_dir,
     resolve_model_output_dir,
@@ -76,8 +84,18 @@ from .runner.output_layout import (
     score_output_dir,
     visualization_output_dir,
 )
-from .runner.persistence import load_generation_result, load_run_summary_dict, load_score_result
-from .runner.score_stage import run_scoring
+from .runner.persistence import (
+    load_generation_result,
+    load_meta,
+    load_run_summary_dict,
+    load_score_result,
+)
+from .runner.score_stage import (
+    IncompleteTestError,
+    InvalidTestError,
+    ensure_test_valid,
+    run_scoring,
+)
 from .runner.matrix import load_matrix_jobs
 from .runner.evaluation_sampling import select_configured_samples
 from .runner.data_preparation import (
@@ -243,9 +261,29 @@ def generate(
     samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
 
     click.echo(f"Sweeping variants {variant_list} of {model_config} on {dataset.name} ({len(samples)} samples)")
+    invalid_variant_errors: list[str] = []
     for v in variant_list:
         adapter = build_model_adapter(model_config, variant=v)
         out_dir = model_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
+        meta_path = out_dir / "_meta.json"
+        if (
+            resume
+            and meta_path.exists()
+        ):
+            early_stop = load_meta(meta_path).get("early_stop")
+            if early_stop and early_stop.get("reason") == "oom":
+                oom_info_path = out_dir / "oom_info.json"
+                detail = (
+                    load_meta(oom_info_path)
+                    if oom_info_path.exists()
+                    else {
+                        **early_stop,
+                        "error_message": "CUDA out of memory",
+                    }
+                )
+                invalid_variant_errors.append(str(oom_invalid_test_error(out_dir, detail)))
+                click.echo(f"[{v}] INVALID OOM DATASET: {invalid_variant_errors[-1]}", err=True)
+                continue
         needs_generation = not resume or any(
             not (out_dir / f"{sample.sample_id}.json").exists()
             for sample in samples
@@ -261,7 +299,26 @@ def generate(
         warm = getattr(adapter, "warm", None)
         if needs_generation and callable(warm):
             click.echo(f"[{v}] loading model into runtime device (outside sample timing) ...")
-            warm()
+            try:
+                warm()
+            except Exception as exc:
+                if not is_cuda_oom_error(exc):
+                    raise
+                detail = persist_setup_oom_invalidation(
+                    adapter=adapter,
+                    dataset_name=dataset.name,
+                    out_dir=out_dir,
+                    selected_samples=len(samples),
+                    failure_stage="model_load",
+                    error=exc,
+                    seed=resolved_seed,
+                    measure_compute=measure_compute,
+                    require_all_metrics=require_all_metrics,
+                    capture_trace=capture_trace,
+                )
+                invalid_variant_errors.append(str(oom_invalid_test_error(out_dir, detail)))
+                click.echo(f"[{v}] INVALID OOM DATASET: {invalid_variant_errors[-1]}", err=True)
+                continue
             click.echo(f"[{v}] model ready")
         elif not needs_generation:
             click.echo(f"[{v}] all sample outputs already exist; model load skipped")
@@ -277,23 +334,38 @@ def generate(
                 int(warmup_sample.meta.get("max_new_tokens", max_new_tokens)),
             )
             click.echo(f"[{v}] running untimed {warmup_tokens}-token warmup ...")
-            warmup_generation(
-                GenerationRequest(
-                    prompt=warmup_sample.prompt,
-                    max_new_tokens=warmup_tokens,
-                    config=(
-                        {
-                            "target_input_tokens": int(
-                                warmup_sample.meta["target_input_tokens"]
-                            )
-                        }
-                        if "target_input_tokens" in warmup_sample.meta
-                        else {}
-                    ),
-                    sample_id="__warmup__",
-                    seed=resolved_seed,
+            try:
+                warmup_generation(
+                    GenerationRequest(
+                        # Warmup initializes kernels/caches only. Reusing the first
+                        # 8K RULER prompt here can OOM before the formal sample is
+                        # timed and persisted, which loses the actual failure
+                        # boundary and duplicates the long-context workload.
+                        prompt="Warm up.",
+                        max_new_tokens=warmup_tokens,
+                        config={},
+                        sample_id="__warmup__",
+                        seed=resolved_seed,
+                    )
                 )
-            )
+            except Exception as exc:
+                if not is_cuda_oom_error(exc):
+                    raise
+                detail = persist_setup_oom_invalidation(
+                    adapter=adapter,
+                    dataset_name=dataset.name,
+                    out_dir=out_dir,
+                    selected_samples=len(samples),
+                    failure_stage="warmup",
+                    error=exc,
+                    seed=resolved_seed,
+                    measure_compute=measure_compute,
+                    require_all_metrics=require_all_metrics,
+                    capture_trace=capture_trace,
+                )
+                invalid_variant_errors.append(str(oom_invalid_test_error(out_dir, detail)))
+                click.echo(f"[{v}] INVALID OOM DATASET: {invalid_variant_errors[-1]}", err=True)
+                continue
             click.echo(f"[{v}] warmup complete")
 
         def log_progress(event, index, total, sample, generation):
@@ -313,53 +385,70 @@ def generate(
             click.echo(f"{prefix}: {status} ({elapsed:.2f}s)")
 
         output_stream = click.get_text_stream("stdout")
-        if pending_count and output_stream.isatty():
-            with click.progressbar(
-                length=pending_count,
-                label=f"[{v}] {dataset.name}",
-                show_pos=True,
-                show_percent=True,
-                item_show_func=lambda item: str(item or ""),
-                file=output_stream,
-            ) as sample_bar:
-                def bar_progress(event, index, total, sample, generation):
-                    if event == "start":
-                        sample_bar.update(0, current_item=f"{sample.sample_id} generating")
-                        sample_bar.render_progress()
-                        return
-                    if event == "compute":
-                        sample_bar.update(
-                            0, current_item=f"{sample.sample_id} compute replay"
+        try:
+            if pending_count and output_stream.isatty():
+                with click.progressbar(
+                    length=pending_count,
+                    label=f"[{v}] {dataset.name}",
+                    show_pos=True,
+                    show_percent=True,
+                    item_show_func=lambda item: str(item or ""),
+                    file=output_stream,
+                ) as sample_bar:
+                    def bar_progress(event, index, total, sample, generation):
+                        if event == "start":
+                            sample_bar.update(0, current_item=f"{sample.sample_id} generating")
+                            sample_bar.render_progress()
+                            return
+                        if event == "compute":
+                            sample_bar.update(
+                                0, current_item=f"{sample.sample_id} compute replay"
+                            )
+                            sample_bar.render_progress()
+                            return
+                        elapsed = (
+                            generation.timing.wall_clock_seconds
+                            if generation is not None and generation.timing is not None
+                            else 0.0
                         )
-                        sample_bar.render_progress()
-                        return
-                    elapsed = (
-                        generation.timing.wall_clock_seconds
-                        if generation is not None and generation.timing is not None
-                        else 0.0
-                    )
-                    status = generation.status.value if generation is not None else "unknown"
-                    sample_bar.update(
-                        1,
-                        current_item=f"{sample.sample_id} {status} {elapsed:.2f}s",
-                    )
+                        status = generation.status.value if generation is not None else "unknown"
+                        sample_bar.update(
+                            1,
+                            current_item=f"{sample.sample_id} {status} {elapsed:.2f}s",
+                        )
 
+                    summary = run_generation(
+                        adapter, dataset.name, samples, max_new_tokens,
+                        out_dir=out_dir, measure_compute=measure_compute,
+                        require_all_metrics=require_all_metrics, seed=resolved_seed,
+                        capture_trace=capture_trace, resume=resume,
+                        progress=bar_progress,
+                    )
+            else:
                 summary = run_generation(
                     adapter, dataset.name, samples, max_new_tokens,
                     out_dir=out_dir, measure_compute=measure_compute,
                     require_all_metrics=require_all_metrics, seed=resolved_seed,
                     capture_trace=capture_trace, resume=resume,
-                    progress=bar_progress,
+                    progress=log_progress,
                 )
-        else:
-            summary = run_generation(
-                adapter, dataset.name, samples, max_new_tokens,
-                out_dir=out_dir, measure_compute=measure_compute,
-                require_all_metrics=require_all_metrics, seed=resolved_seed,
-                capture_trace=capture_trace, resume=resume,
-                progress=log_progress,
-            )
+        except OOMInvalidTestError as exc:
+            invalid_variant_errors.append(str(exc))
+            click.echo(f"[{v}] INVALID OOM DATASET: {exc}", err=True)
+            continue
         click.echo(f"[{v}] generated={summary.generated} skipped={summary.skipped} total={summary.total} -> {out_dir}")
+        if summary.stopped_early:
+            click.echo(
+                f"[{v}] stopped after first long-task OOM at sample "
+                f"{summary.first_oom_ordinal}/{summary.total} "
+                f"({summary.first_oom_sample_id}); later samples were not attempted"
+            )
+            invalid_variant_errors.append(
+                f"{adapter.name} x {adapter.config_name} x {dataset.name} OOM"
+            )
+
+    if invalid_variant_errors:
+        raise OOMInvalidTestError("; ".join(invalid_variant_errors))
 
 
 @main.command()
@@ -383,14 +472,30 @@ def score(
     samples, _ = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
     configured_model = model_name(model_config)
 
+    invalid_rows: list[str] = []
+    incomplete_rows: list[str] = []
     for v in variant_list:
         model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
         score_out = score_output_dir(output_root, configured_model, v, dataset.name)
-        result = run_scoring(dataset, samples, model_out, score_out, resume=resume)
+        try:
+            result = run_scoring(dataset, samples, model_out, score_out, resume=resume)
+        except InvalidTestError as exc:
+            invalid_rows.append(str(exc))
+            click.echo(f"[{v}] INVALID OOM DATASET: {exc}")
+            continue
+        except IncompleteTestError as exc:
+            incomplete_rows.append(str(exc))
+            click.echo(f"[{v}] INCOMPLETE DATASET: {exc}")
+            continue
 
         click.echo(f"[{v}] q={result.summary.q:.4f}  scored={result.scored}  skipped={result.skipped}  -> {score_out / 'summary.json'}")
         if result.missing_sample_ids:
             click.echo(f"[{v}] WARNING: {len(result.missing_sample_ids)} sample(s) not yet generated: {result.missing_sample_ids}")
+
+    if invalid_rows:
+        raise InvalidTestError("; ".join(invalid_rows))
+    if incomplete_rows:
+        raise IncompleteTestError("; ".join(incomplete_rows))
 
 
 @main.command()
@@ -429,6 +534,8 @@ def visualize(
     else:
         representative_ids = {sample.sample_id for sample in all_samples}
 
+    invalid_rows: list[str] = []
+    incomplete_rows: list[str] = []
     for v in variant_list:
         model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
         score_out = resolve_score_output_dir(output_root, configured_model, v, dataset.name)
@@ -436,6 +543,16 @@ def visualize(
 
         if not (model_out / "_meta.json").exists():
             raise click.UsageError(f"no _meta.json under {model_out} — run `dllm-bench generate` first")
+        try:
+            ensure_test_valid(model_out)
+        except InvalidTestError as exc:
+            invalid_rows.append(str(exc))
+            click.echo(f"[{v}] INVALID OOM DATASET: {exc}")
+            continue
+        except IncompleteTestError as exc:
+            incomplete_rows.append(str(exc))
+            click.echo(f"[{v}] INCOMPLETE DATASET: {exc}")
+            continue
 
         rendered = 0
         trace_records = []
@@ -470,6 +587,11 @@ def visualize(
 
         click.echo(f"[{v}] rendered {rendered} sample(s) -> {viz_out}")
 
+    if invalid_rows:
+        raise InvalidTestError("; ".join(invalid_rows))
+    if incomplete_rows:
+        raise IncompleteTestError("; ".join(incomplete_rows))
+
 
 @main.command()
 @click.option("--run", "run_paths", multiple=True, type=click.Path(exists=True), help="One or more summary.json files from `dllm-bench score`")
@@ -485,19 +607,52 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
     if not paths:
         raise click.UsageError("no summary.json files found (pass --run, or --output-root [--dataset])")
 
+    valid_paths = []
+    for raw_path in paths:
+        summary_path = Path(raw_path)
+        dataset_dir = summary_path.parent
+        run_dir = dataset_dir.parent
+        score_root = run_dir.parent
+        model_out = (
+            score_root.parent
+            / "model_output"
+            / run_dir.name
+            / dataset_dir.name
+        )
+        if score_root.name == "score_output" and (model_out / "_meta.json").exists():
+            try:
+                ensure_test_valid(model_out)
+            except InvalidTestError as exc:
+                click.echo(
+                    f"WARNING: excluding OOM-invalid test from report: "
+                    f"{summary_path} ({exc})",
+                    err=True,
+                )
+                continue
+            except IncompleteTestError as exc:
+                click.echo(
+                    f"WARNING: excluding incomplete test from report: "
+                    f"{summary_path} ({exc})",
+                    err=True,
+                )
+                continue
+        valid_paths.append(raw_path)
+    paths = valid_paths
+    if not paths:
+        raise click.UsageError("no valid summary.json files remain after exclusions")
+
     summaries = [load_run_summary_dict(p) for p in paths]
     rows = [raw_results_row(s) for s in summaries]
     click.echo(render_raw_results_table(rows))
 
-    baselines = {
-        summary["dataset_name"]: summary
-        for summary in summaries
-        if summary.get("config_name") == "ar-baseline"
-    }
+    baselines = select_resource_baselines(summaries)
+    non_ranked_diagnostics = {"hellobench", "ruler_context_probe"}
     converted = [
         compute_converted_row(summary, baselines[summary["dataset_name"]])
         for summary in summaries
-        if summary.get("config_name") != "ar-baseline" and summary["dataset_name"] in baselines
+        if not is_resource_baseline(summary)
+        and summary["dataset_name"] in baselines
+        and summary["dataset_name"] not in non_ranked_diagnostics
     ]
     if converted:
         click.echo("\nAR-relative converted results:\n")
@@ -511,6 +666,8 @@ def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: st
             dataset_converted = [row for row in converted if row["Dataset"] == name]
             out_dir = report_root / name
             out_dir.mkdir(parents=True, exist_ok=True)
+            if name in non_ranked_diagnostics:
+                continue
             for key, filename in (
                 ("TPS", "quality_tps.png"),
                 ("SPS", "quality_sps.png"),
@@ -576,6 +733,8 @@ def matrix_command(
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
     click.echo(f"Matrix contains {len(jobs)} model x dataset jobs")
+    valid_jobs = 0
+    invalid_jobs = 0
     for index, job in enumerate(jobs, start=1):
         selected_variants = job.variants
         if variant_names:
@@ -595,29 +754,49 @@ def matrix_command(
         common = dict(
             model_config=str(job.model_config), variant=None, variants=variants,
             dataset_config=str(job.dataset_config), demo=demo,
-            samples_file=samples_file, n_samples=n_samples, seed=seed,
+            samples_file=samples_file,
+            n_samples=n_samples if n_samples is not None else job.n_samples,
+            seed=seed,
             output_root=output_root,
             hellobench_lengths=(
-                hellobench_lengths
+                hellobench_lengths or job.hellobench_lengths
                 if job.dataset_config.stem == "hellobench"
                 else ()
             ),
         )
         click.echo(f"[{index}/{len(jobs)}] {job.model_config.name} x {job.dataset_config.name}")
-        if stage in {"generate", "all"}:
-            ctx.invoke(
-                generate, **common, max_new_tokens=job.max_new_tokens,
-                measure_compute=measure_compute,
-                require_all_metrics=require_all_metrics, resume=resume,
+        try:
+            if stage in {"generate", "all"}:
+                ctx.invoke(
+                    generate, **common, max_new_tokens=job.max_new_tokens,
+                    measure_compute=measure_compute,
+                    require_all_metrics=require_all_metrics, resume=resume,
+                )
+            if stage in {"score", "all"}:
+                ctx.invoke(score, **common, resume=resume)
+            if stage in {"visualize", "all"}:
+                ctx.invoke(
+                    visualize, **common, n_representative=n_representative, sample_ids=None,
+                )
+        except (OOMInvalidTestError, InvalidTestError, IncompleteTestError) as exc:
+            invalid_jobs += 1
+            click.echo(
+                f"ERROR: {job.model_name} x {job.dataset_config.stem} is invalid; "
+                f"skipping this test and continuing. {exc}",
+                err=True,
             )
-        if stage in {"score", "all"}:
-            ctx.invoke(score, **common, resume=resume)
-        if stage in {"visualize", "all"}:
-            ctx.invoke(
-                visualize, **common, n_representative=n_representative, sample_ids=None,
-            )
+            continue
+        valid_jobs += 1
     if stage == "all":
-        ctx.invoke(report, run_paths=(), output_root=output_root, dataset_name=None)
+        if valid_jobs:
+            ctx.invoke(report, run_paths=(), output_root=output_root, dataset_name=None)
+        else:
+            click.echo("WARNING: no valid tests completed; aggregate report skipped", err=True)
+    if invalid_jobs:
+        click.echo(
+            f"Matrix completed with {invalid_jobs} OOM-invalid test(s) excluded "
+            f"and {valid_jobs} valid test(s)."
+        )
 
 
 if __name__ == "__main__":

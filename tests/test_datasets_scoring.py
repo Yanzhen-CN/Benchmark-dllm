@@ -4,7 +4,13 @@ import zipfile
 import pytest
 
 from dllm_bench.datasets.base import Sample
-from dllm_bench.datasets.gsm8k import GSM8K_REVISION, GSM8KDataset, _load_official_test_samples, extract_final_number
+from dllm_bench.datasets.gsm8k import (
+    GSM8K_REVISION,
+    GSM8KDataset,
+    _load_official_test_samples,
+    extract_final_number,
+    format_gsm8k_four_shot,
+)
 from dllm_bench.datasets.hellobench import (
     HelloBenchDataset,
     HelloBenchReference,
@@ -12,7 +18,12 @@ from dllm_bench.datasets.hellobench import (
     repeated_segment_fraction,
     seq_rep_n,
 )
-from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample, extract_code
+from dllm_bench.datasets.mbpp import (
+    MBPPDataset,
+    MbppSample,
+    _format_official_prompt,
+    extract_code,
+)
 from dllm_bench.datasets.ruler import (
     RulerDataset,
     RulerReference,
@@ -20,14 +31,18 @@ from dllm_bench.datasets.ruler import (
     position_robustness,
 )
 from dllm_bench.datasets.structeval_t import (
+    STRUCTEVAL_OUTPUT_INSTRUCTION,
     StructEvalSchema,
     StructEvalTDataset,
+    _official_structeval_sample,
     evaluate_struct_progress,
 )
 from dllm_bench.datasets.sudoku import (
     SudokuDataset,
     SudokuTraceDataset,
     SudokuReference,
+    SUDOKU_ANSWER_BEGIN,
+    SUDOKU_ANSWER_END,
     _build_prompt,
     extract_final_grid,
     is_valid_solution,
@@ -37,6 +52,13 @@ from dllm_bench.datasets.sudoku import (
     group_by_difficulty,
     naked_single_rounds,
     parse_grid,
+)
+from dllm_bench.datasets.sudoku4 import (
+    Sudoku4Dataset,
+    Sudoku4Reference,
+    _load_d1_samples,
+    extract_sudoku4_answer,
+    is_valid_sudoku4,
 )
 from dllm_bench.interfaces import (
     GenerationRequest,
@@ -51,9 +73,17 @@ from dllm_bench.interfaces import (
 # GSM8K
 # ---------------------------------------------------------------------------
 
-def test_gsm8k_extracts_gold_marker_over_other_numbers():
-    text = "First we compute 12 + 3 = 15. Then double it. #### 30"
+def test_gsm8k_flexible_extract_uses_last_number():
+    text = "First we compute 12 + 3 = 15. The answer is 30."
     assert extract_final_number(text) == 30.0
+
+
+def test_gsm8k_flexible_extract_matches_number_after_marker_if_present():
+    assert extract_final_number("#### 30\nVerification: 5 * 6 = 30.") == 30.0
+
+
+def test_gsm8k_flexible_extract_stops_before_next_question():
+    assert extract_final_number("The answer is 6.\nQ: unrelated 999") == 6.0
 
 
 def test_gsm8k_falls_back_to_last_number_without_marker():
@@ -103,7 +133,9 @@ def test_gsm8k_official_jsonl_loader_builds_stable_samples(tmp_path):
     assert len(samples) == 1319
     assert samples[0].sample_id == "gsm8k-test-0000"
     assert samples[-1].sample_id == "gsm8k-test-1318"
-    assert samples[0].prompt == "Question 0"
+    assert samples[0].prompt == format_gsm8k_four_shot("Question 0")
+    assert samples[0].prompt.count("Q: ") == 5
+    assert samples[0].prompt.endswith("Q: Question 0\nA:")
     assert samples[0].reference == 10.0
     assert samples[0].meta["source_revision"] == GSM8K_REVISION
     assert samples[0].meta["gold_solution"] == "Reasoning for 0.\n#### 10"
@@ -117,6 +149,20 @@ def test_mbpp_extract_code_from_fence():
     text = "Here is the code:\n```python\ndef add(a, b):\n    return a + b\n```\nDone."
     code = extract_code(text)
     assert code == "def add(a, b):\n    return a + b"
+
+
+def test_mbpp_official_prompt_uses_begin_done_delimiters():
+    row = {
+        "prompt": "Write add.",
+        "test_list": ["assert add(1, 2) == 3"],
+        "code": "def add(a, b): return a + b",
+    }
+    demonstration = _format_official_prompt(row, include_solution=True)
+    candidate = _format_official_prompt(row, include_solution=False)
+
+    assert demonstration.endswith("def add(a, b): return a + b\n[DONE]")
+    assert candidate.endswith("[BEGIN]\n")
+    assert "assert add(1, 2) == 3" in candidate
 
 
 def test_mbpp_score_passing_solution():
@@ -214,16 +260,43 @@ def test_structeval_official_score_does_not_repair_malformed_output():
     assert evaluate_struct_progress('{"name": "Alice"', schema).parseability == 1.0
 
 
-def test_structeval_malformed_yaml_is_strict_zero_instead_of_crashing():
+def test_structeval_empty_parsed_structure_has_zero_official_render_score():
+    ds = StructEvalTDataset()
+    schema = StructEvalSchema(format="json", required_keys=["name"])
+    sample = Sample(sample_id="1", prompt="p", reference=schema)
+
+    result = ds.score(sample, "{}")
+
+    assert result.primary_score == 0.0
+    assert result.aux["official_render_score"] == 0.0
+    assert result.aux["official_key_validation_score"] == 0.0
+
+
+def test_structeval_official_extractor_accepts_unclosed_fence_to_eos():
     ds = StructEvalTDataset()
     schema = StructEvalSchema(format="yaml", required_keys=["name"])
     sample = Sample(sample_id="1", prompt="p", reference=schema)
 
     result = ds.score(sample, "Here is the result:\n\n```yaml\nname: Alice")
 
-    assert result.primary_score == 0.0
-    assert result.aux["official_render_score"] == 0.0
-    assert result.aux["official_key_validation_score"] == 0.0
+    assert result.primary_score == 1.0
+    assert result.aux["official_render_score"] == 1.0
+    assert result.aux["official_key_validation_score"] == 1.0
+
+
+def test_structeval_sample_appends_official_marker_instruction():
+    sample = _official_structeval_sample(
+        {
+            "task_id": 1,
+            "query": "Output JSON.",
+            "output_type": "json",
+            "raw_output_metric": ["name"],
+        }
+    )
+
+    assert sample.prompt == f"Output JSON.\n\n{STRUCTEVAL_OUTPUT_INSTRUCTION}"
+    assert "<|BEGIN_CODE|>" in sample.prompt
+    assert "<|END_CODE|>" in sample.prompt
 
 
 def test_structeval_json_tolerates_unclosed_structure():
@@ -284,7 +357,78 @@ def test_structeval_official_xml_preserves_root_and_repeated_elements():
 
 
 # ---------------------------------------------------------------------------
-# Sudoku
+# Sudoku 4x4 (d1)
+# ---------------------------------------------------------------------------
+
+def test_sudoku4_extracts_last_tagged_answer_and_tolerates_reasoning():
+    text = (
+        "<reasoning>try 1234</reasoning>\n"
+        "<answer>3142243142131324</answer>"
+    )
+
+    answer, marker_present, marker_complete = extract_sudoku4_answer(text)
+
+    assert answer == "3142243142131324"
+    assert marker_present is True
+    assert marker_complete is True
+
+
+def test_sudoku4_reports_d1_cell_accuracy_and_strict_puzzle_success():
+    dataset = Sudoku4Dataset()
+    reference = Sudoku4Reference(
+        puzzle="3102200002100320",
+        solution="3142243142131324",
+    )
+    sample = Sample("s4", "prompt", reference)
+
+    correct = dataset.score(sample, "<answer>3142243142131324</answer>")
+    one_blank_wrong = dataset.score(sample, "<answer>3142243142131321</answer>")
+
+    assert correct.primary_score == 1.0
+    assert correct.aux["puzzle_success_rate"] == 1.0
+    assert one_blank_wrong.primary_score == pytest.approx(7 / 8)
+    assert one_blank_wrong.aux["puzzle_success_rate"] == 0.0
+    assert is_valid_sudoku4(reference.solution, reference.puzzle)
+
+
+def test_sudoku4_primary_metric_mirrors_d1_tag_and_padding_rules():
+    dataset = Sudoku4Dataset()
+    reference = Sudoku4Reference(
+        puzzle="3102200002100320",
+        solution="3142243142131324",
+    )
+    sample = Sample("s4", "prompt", reference)
+
+    shortened = dataset.score(sample, "<answer>314224314213</answer>")
+    tolerant_only = dataset.score(sample, "final: 3142243142131324")
+
+    assert shortened.primary_score == pytest.approx(6 / 8)
+    assert shortened.aux["puzzle_success_rate"] == 0.0
+    assert tolerant_only.primary_score == 0.0
+    assert tolerant_only.aux["puzzle_success_rate"] == 1.0
+
+
+def test_sudoku4_loader_validates_official_shape_and_prompt(tmp_path):
+    source = tmp_path / "d1.csv"
+    source.write_text(
+        "Puzzle,Solution\n"
+        + "\n".join(
+            f"3102200002100320,3142243142131324" for _ in range(500)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    samples = _load_d1_samples(source)
+
+    assert len(samples) == 500
+    assert samples[0].meta["blank_count"] == 8
+    assert samples[0].meta["difficulty_stratified"] is False
+    assert "<reasoning>" in samples[0].prompt
+    assert samples[0].prompt.endswith("3102200002100320\n")
+
+
+# Sudoku 9x9 (Park/Ye)
 # ---------------------------------------------------------------------------
 
 _EASY_PUZZLE = [
@@ -336,6 +480,7 @@ def test_sudoku_score_correct_solution():
     assert result.valid is True
     assert result.aux["official_exact_match_accuracy"] == 1.0
     assert result.aux["official_format_valid"] == 1.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 0.0
     assert result.aux["exact_solve_rate"] == 1.0
     assert result.aux["blank_cell_accuracy"] == 1.0
     assert result.aux["cell_accuracy"] == 1.0
@@ -350,11 +495,17 @@ def test_sudoku_score_tolerates_reasoning_with_marked_final_answer():
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
     digits = "".join(str(v) for row in _EASY_PUZZLE for v in row)
 
-    result = ds.score(sample, f"I solved it by checking every row.\n#### {digits}")
+    result = ds.score(
+        sample,
+        f"I solved it by checking every row.\n{SUDOKU_ANSWER_BEGIN}\n"
+        f"{digits}\n{SUDOKU_ANSWER_END}",
+    )
 
     assert result.primary_score == 1.0
     assert result.valid is True
     assert result.aux["answer_marker_present"] == 1.0
+    assert result.aux["answer_marker_complete_rate"] == 1.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 1.0
     assert result.aux["reference_exact_match"] == 1.0
     assert result.aux["blank_cell_accuracy"] == 1.0
 
@@ -376,7 +527,9 @@ def test_sudoku_score_tolerates_prose_wrapped_complete_grid_without_marker():
 def test_sudoku_marker_prevents_reasoning_digits_from_being_scored():
     digits = "".join(str(v) for row in _EASY_PUZZLE for v in row)
 
-    parsed, marker_present = extract_final_grid(f"Earlier guess {digits}\n#### not finished")
+    parsed, marker_present = extract_final_grid(
+        f"Earlier guess {digits}\n{SUDOKU_ANSWER_BEGIN}\nnot finished"
+    )
 
     assert parsed is None
     assert marker_present is True
@@ -408,6 +561,7 @@ def test_sudoku_copied_puzzle_gets_no_solving_credit():
     assert result.aux["given_preservation_rate"] == 1.0
     assert result.aux["exact_solve_rate"] == 0.0
     assert result.aux["official_format_valid"] == 0.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 0.0
 
 
 def test_sudoku_partial_solution_gets_proportional_credit():
@@ -466,11 +620,9 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
         _build_prompt(hard),
     ]
     assert all("Each displayed row contains exactly 9 cells" in sample.prompt for sample in samples)
-    assert all("Return ONLY the completed grid" in sample.prompt for sample in samples)
-    assert all("Directly return the 81 numbers answer" in sample.prompt for sample in samples)
-    assert all("Your entire response must contain exactly 81 digits" in sample.prompt for sample in samples)
-    assert all("Answer (81 digits only):" in sample.prompt for sample in samples)
-    assert all("FINAL ANSWER:" not in sample.prompt for sample in samples)
+    assert all("You may reason before the final answer" in sample.prompt for sample in samples)
+    assert all(SUDOKU_ANSWER_BEGIN in sample.prompt for sample in samples)
+    assert all(SUDOKU_ANSWER_END in sample.prompt for sample in samples)
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
     assert all("max_new_tokens" not in sample.meta for sample in samples)
@@ -591,7 +743,7 @@ def test_sudoku_aggregation_separates_partial_credit_and_exact_solve_rate():
 
     summary = ds.aggregate_records(samples, results)
 
-    assert summary["sudoku_score"] == 0.5
+    assert summary["sudoku9_score"] == 0.5
     assert summary["blank_cell_accuracy"] == 0.75
     assert summary["blank_cell_accuracy_easy"] == 0.5
     assert summary["blank_cell_accuracy_hard"] == 1.0

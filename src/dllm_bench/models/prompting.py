@@ -51,6 +51,25 @@ def _resize_ruler_filler(prompt: str, filler_count: int) -> str:
     return "".join(pieces)
 
 
+def fit_ruler_prompt_by_whitespace(prompt: str, target_words: int) -> str:
+    """Best-effort RULER fitting for APIs that expose no local tokenizer.
+
+    Local HF adapters must use :func:`tokenize_instruction_prompt` instead.
+    This helper is intentionally labelled a whitespace proxy in persisted W1
+    metadata and must not be reported as an observed tokenizer length.
+    """
+    if target_words <= 0:
+        raise ValueError("target_words must be positive")
+    without_filler = _resize_ruler_filler(prompt, 0)
+    fixed_words = len(without_filler.split())
+    if fixed_words > target_words:
+        raise ValueError(
+            f"RULER payload requires {fixed_words} words, exceeding the "
+            f"{target_words}-word API proxy target"
+        )
+    return _resize_ruler_filler(prompt, target_words - fixed_words)
+
+
 def tokenize_instruction_prompt(
     tokenizer,
     prompt: str,
@@ -84,15 +103,29 @@ def tokenize_instruction_prompt(
         if target_input_tokens <= 0:
             raise ValueError("target_input_tokens must be positive")
         current_length = _encoded_input_length(encoded)
-        if current_length > target_input_tokens:
-            filler_count = prompt.count("background")
-            if filler_count <= 0:
+        filler_count = prompt.count("background")
+        if filler_count <= 0:
+            if current_length != target_input_tokens:
                 raise ValueError(
-                    f"tokenized prompt has {current_length} tokens, exceeding the "
-                    f"{target_input_tokens}-token target, and has no resizable RULER filler"
+                    f"tokenized prompt has {current_length} tokens, not the required "
+                    f"exact {target_input_tokens}-token target, and has no resizable "
+                    "RULER filler"
                 )
+        else:
+            # Prepared prompts use a whitespace proxy. Find the largest filler
+            # that fits after this checkpoint's chat template and tokenizer,
+            # expanding as well as shrinking when tokenization differs.
+            high = max(filler_count, 1)
+            high_candidate = encode(_resize_ruler_filler(prompt, high))
+            expansion_limit = max(high, target_input_tokens * 4)
+            while (
+                _encoded_input_length(high_candidate) <= target_input_tokens
+                and high < expansion_limit
+            ):
+                high = min(high * 2, expansion_limit)
+                high_candidate = encode(_resize_ruler_filler(prompt, high))
 
-            low, high = 0, filler_count
+            low = 0
             best = None
             while low <= high:
                 middle = (low + high) // 2
@@ -107,6 +140,12 @@ def tokenize_instruction_prompt(
                 raise ValueError(
                     f"RULER payload and chat template require {_encoded_input_length(minimum)} "
                     f"tokens, exceeding the {target_input_tokens}-token target"
+                )
+            fitted_length = _encoded_input_length(best)
+            if fitted_length != target_input_tokens:
+                raise ValueError(
+                    f"RULER filler could only fit {fitted_length} encoded tokens, not the "
+                    f"required exact {target_input_tokens}-token input"
                 )
             encoded = best
 

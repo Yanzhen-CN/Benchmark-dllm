@@ -15,6 +15,8 @@ from dllm_bench.cli import main
 from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.gsm8k import GSM8KDataset
 from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample
+from dllm_bench.interfaces import GenerationResult, RunStatus
+from dllm_bench.models.mock import MockDiffusionAdapter
 
 CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
 
@@ -135,6 +137,109 @@ def test_generate_uses_sample_progress_bar_on_interactive_terminal(
     assert "gsm8k-demo-1" in rendered
 
 
+def test_long_task_warmup_uses_short_prompt_without_formal_context_budget(
+    tmp_path, monkeypatch
+):
+    captured = []
+    real_warmup = MockDiffusionAdapter.warmup_generation
+
+    def capture_warmup(self, request):
+        captured.append(request)
+        return real_warmup(self, request)
+
+    monkeypatch.setattr(
+        MockDiffusionAdapter, "warmup_generation", capture_warmup
+    )
+    runner = CliRunner()
+    _run(runner, [
+        "generate",
+        "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
+        "--variant", "default",
+        "--dataset-config", str(CONFIGS_DIR / "datasets" / "ruler.yaml"),
+        "--demo", "--n-samples", "1", "--max-new-tokens", "64",
+        "--output-root", str(tmp_path / "output"),
+    ])
+
+    assert len(captured) == 1
+    assert captured[0].prompt == "Warm up."
+    assert captured[0].max_new_tokens == 8
+    assert captured[0].config == {}
+
+
+def test_dataset_oom_stops_later_samples_but_other_variant_is_still_attempted(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def oom_generate(self, request):
+        calls.append((self.config_name, request.sample_id))
+        return GenerationResult(
+            request=request,
+            output_text="",
+            status=RunStatus.OOM,
+            error_message="CUDA out of memory",
+        )
+
+    monkeypatch.setattr(MockDiffusionAdapter, "generate", oom_generate)
+    runner = CliRunner()
+    output_root = tmp_path / "output"
+    result = runner.invoke(main, [
+        "generate",
+        "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
+        "--dataset-config", str(CONFIGS_DIR / "datasets" / "ruler.yaml"),
+        "--demo", "--n-samples", "3", "--max-new-tokens", "64",
+        "--output-root", str(output_root),
+    ], catch_exceptions=True)
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, cli_module.OOMInvalidTestError)
+    assert calls == [
+        ("default", "ruler-demo-0"),
+        ("fast", "ruler-demo-0"),
+    ]
+    assert (
+        output_root / "model_output" / "mock_default" / "ruler" / "_meta.json"
+    ).exists()
+    assert (
+        output_root
+        / "model_output"
+        / "mock_default"
+        / "ruler"
+        / "oom_info.json"
+    ).exists()
+    assert (
+        output_root / "model_output" / "mock_fast" / "ruler" / "oom_info.json"
+    ).exists()
+
+
+def test_warmup_oom_writes_invalid_info_before_raising(tmp_path, monkeypatch):
+    def oom_warmup(self, request):
+        raise RuntimeError("CUDA out of memory during warmup")
+
+    monkeypatch.setattr(MockDiffusionAdapter, "warmup_generation", oom_warmup)
+    runner = CliRunner()
+    output_root = tmp_path / "output"
+    result = runner.invoke(main, [
+        "generate",
+        "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
+        "--variant", "default",
+        "--dataset-config", str(CONFIGS_DIR / "datasets" / "gsm8k.yaml"),
+        "--demo", "--n-samples", "2", "--max-new-tokens", "16",
+        "--output-root", str(output_root),
+    ], catch_exceptions=True)
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, cli_module.OOMInvalidTestError)
+    out_dir = output_root / "model_output" / "mock_default" / "gsm8k"
+    oom_info = json.loads((out_dir / "oom_info.json").read_text(encoding="utf-8"))
+    assert oom_info["test_valid"] is False
+    assert oom_info["failure_stage"] == "warmup"
+    assert oom_info["attempted_samples"] == 0
+    assert oom_info["selected_samples"] == 2
+    assert oom_info["error_message"] == "CUDA out of memory during warmup"
+    assert "devices" in oom_info["gpu"]
+
+
 def test_generate_sweeps_every_variant_by_default(tmp_path):
     """mock.yaml declares `default` and `fast` — omitting --variant/--variants
     must run both, in one invocation, without reloading anything (the atomic
@@ -243,8 +348,8 @@ def test_no_demo_auto_prepares_missing_real_dataset_cache(tmp_path, monkeypatch)
     assert "Prepared 1 mbpp samples" in result.output
 
 
-def test_matrix_propagates_warmup_oom_and_stops_remaining_jobs(tmp_path, monkeypatch):
-    """A job-level OOM is not swallowed or converted into CPU offload."""
+def test_matrix_reports_oom_invalid_job_and_continues_later_jobs(tmp_path, monkeypatch):
+    """One invalid model×dataset row must not terminate the remaining matrix."""
     runner = CliRunner()
     output_root = tmp_path / "output"
     model_config = CONFIGS_DIR / "models" / "mock.yaml"
@@ -267,7 +372,9 @@ def test_matrix_propagates_warmup_oom_and_stops_remaining_jobs(tmp_path, monkeyp
     def fake_generate(**kwargs):
         calls.append(kwargs["dataset_config"])
         if kwargs["dataset_config"] == str(gsm8k_config):
-            raise RuntimeError("CUDA out of memory. Tried to allocate 1.16 GiB")
+            raise cli_module.OOMInvalidTestError(
+                "OOM invalidated the complete model×dataset test"
+            )
         return real_generate(**kwargs)
 
     monkeypatch.setattr(cli_module, "generate", fake_generate)
@@ -284,10 +391,9 @@ def test_matrix_propagates_warmup_oom_and_stops_remaining_jobs(tmp_path, monkeyp
         ],
     )
 
-    assert result.exit_code != 0
-    assert isinstance(result.exception, RuntimeError)
-    assert "CUDA out of memory" in str(result.exception)
-    assert calls == [str(gsm8k_config)]
+    assert result.exit_code == 0, result.output
+    assert "skipping this test and continuing" in result.output
+    assert calls == [str(gsm8k_config), str(mbpp_config)]
 
 
 def test_matrix_variants_option_filters_sampling_profile(tmp_path, monkeypatch):
@@ -396,3 +502,46 @@ def test_report_with_no_matches_errors_clearly(tmp_path):
     runner = CliRunner()
     result = runner.invoke(main, ["report", "--output-root", str(tmp_path / "output")])
     assert result.exit_code != 0
+
+
+def test_visualize_and_report_exclude_oom_invalid_test_even_with_stale_scores(
+    tmp_path
+):
+    runner = CliRunner()
+    output_root = tmp_path / "output"
+    common = [
+        "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
+        "--variant", "default",
+        "--dataset-config", str(CONFIGS_DIR / "datasets" / "gsm8k.yaml"),
+        "--demo", "--n-samples", "2",
+        "--output-root", str(output_root),
+    ]
+    _run(runner, ["generate", *common, "--max-new-tokens", "16"])
+    _run(runner, ["score", *common])
+
+    model_out = output_root / "model_output" / "mock_default" / "gsm8k"
+    meta_path = model_out / "_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta.update(test_valid=False, invalid_reason="oom")
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    (model_out / "oom_info.json").write_text(
+        json.dumps({
+            "test_valid": False,
+            "invalid_reason": "oom",
+            "failure_stage": "generation",
+            "sample_ordinal": 1,
+            "sample_id": "gsm8k-demo-0",
+        }),
+        encoding="utf-8",
+    )
+
+    visualize_result = runner.invoke(main, ["visualize", *common])
+    assert visualize_result.exit_code != 0
+    assert isinstance(visualize_result.exception, cli_module.InvalidTestError)
+
+    report_result = runner.invoke(
+        main, ["report", "--output-root", str(output_root)]
+    )
+    assert report_result.exit_code != 0
+    assert "excluding OOM-invalid test" in report_result.output
+    assert "no valid summary.json files remain" in report_result.output

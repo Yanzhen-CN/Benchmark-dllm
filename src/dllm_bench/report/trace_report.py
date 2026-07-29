@@ -68,7 +68,7 @@ def plot_certainty_curve(trace: list[TraceStep], final_valid_length: int, out_pa
 def _maybe_render_sudoku_gif(
     dataset_name: str, sample: Sample | None, trace: list[TraceStep], out_dir: Path, sample_id: str
 ) -> str | None:
-    if dataset_name not in {"sudoku", "sudoku_trace"} or sample is None or not trace:
+    if dataset_name not in {"sudoku9", "sudoku_trace"} or sample is None or not trace:
         return None
 
     from ..datasets.sudoku import SudokuReference

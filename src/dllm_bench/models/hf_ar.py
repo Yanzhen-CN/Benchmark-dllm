@@ -13,8 +13,6 @@ full trace analysis subject in its own right (section 5 lists Qwen AR as
 
 from __future__ import annotations
 
-import math
-
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
 from .model_cache import get_or_load
@@ -41,6 +39,7 @@ class QwenARAdapter(BaseModelAdapter):
         self._device = device
         self._capture_trace = capture_trace
         self._enable_thinking = enable_thinking
+        self._inference_dtype = "bfloat16"
         self._model = None
         self._tokenizer = None
 
@@ -61,10 +60,15 @@ class QwenARAdapter(BaseModelAdapter):
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
 
     def _load_model_and_tokenizer(self, device: str):
+        import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(self._model_name)
-        model = AutoModelForCausalLM.from_pretrained(self._model_name)
+        model = AutoModelForCausalLM.from_pretrained(
+            self._model_name,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+        )
         model.to(device)
         model.eval()
         return tokenizer, model
@@ -81,73 +85,69 @@ class QwenARAdapter(BaseModelAdapter):
             target_input_tokens=request.config.get("target_input_tokens"),
         )
         prompt_len = inputs["input_ids"].shape[1]
-        capture_trace = self._capture_trace and self._trace_instrumentation_enabled()
-
         self._start_measurement()
-        with torch.no_grad():
+        with torch.inference_mode():
             output = self._model.generate(
                 **inputs,
                 max_new_tokens=request.max_new_tokens,
                 do_sample=False,
-                output_scores=capture_trace,
-                return_dict_in_generate=capture_trace,
             )
         self._stop_measurement()
 
-        sequence = output.sequences[0] if capture_trace else output[0]
+        sequence = output[0]
         generated_ids = sequence[prompt_len:]
         text = self._tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-        trace: list[TraceStep] = []
-        if capture_trace:
-            generated_token_ids = generated_ids.tolist()
-            generated_token_texts = [
-                self._tokenizer.decode([token_id], skip_special_tokens=True)
-                for token_id in generated_token_ids
-            ]
-            final_length = len(generated_token_ids)
-            token_ids_accum: list[int] = []
-            token_texts_accum: list[str] = []
-            for step_index, (token_id, step_logits) in enumerate(
-                zip(generated_token_ids, output.scores)
-            ):
-                token_ids_accum.append(token_id)
-                token_texts_accum.append(generated_token_texts[step_index])
-                position = len(token_ids_accum) - 1
-                probs = torch.softmax(step_logits[0], dim=-1)
-                top1_conf = probs.max().item()
-                entropy = -(probs * probs.clamp_min(1e-12).log()).sum().item()
-                normalized_entropy = entropy / math.log(probs.shape[-1])
-                trace.append(
-                    TraceStep(
-                        forward_index=step_index,
-                        token_ids=(
-                            list(token_ids_accum)
-                            + [-1] * (final_length - len(token_ids_accum))
-                        ),
-                        position_states=(
-                            [PositionState.ACCEPTED] * len(token_ids_accum)
-                            + [PositionState.MASKED] * (final_length - len(token_ids_accum))
-                        ),
-                        committed_positions=[position],
-                        decoded_text=self._tokenizer.decode(
-                            token_ids_accum, skip_special_tokens=True
-                        ),
-                        entropy_by_position={position: normalized_entropy},
-                        top1_confidence_by_position={position: top1_conf},
-                        token_texts=(
-                            list(token_texts_accum)
-                            + [""] * (final_length - len(token_texts_accum))
-                        ),
-                    )
-                )
+        generated_token_ids = generated_ids.tolist()
+        capture_trace = self._capture_trace and self._trace_instrumentation_enabled()
+        trace = _build_ar_trace(generated_token_ids, self._tokenizer) if capture_trace else []
 
         return GenerationResult(
             request=request,
             output_text=text,
             status=RunStatus.SUCCESS,
             trace=trace,
-            num_forward_passes=len(generated_ids),
-            final_valid_length=len(generated_ids),
+            num_forward_passes=len(generated_token_ids),
+            final_valid_length=len(generated_token_ids),
             extra={"input_tokens": int(prompt_len)},
         )
+
+
+def _build_ar_trace(generated_ids: list[int], tokenizer) -> list[TraceStep]:
+    """Reconstruct the one-token-per-forward AR trace after timing.
+
+    Retaining ``generate(..., output_scores=True)`` keeps one full-vocabulary
+    logits tensor per token alive and changes the measured path. Token ids are
+    sufficient for the benchmark's AR parallelism reference; entropy and
+    confidence therefore remain absent instead of requiring a timed replay.
+    """
+    final_length = len(generated_ids)
+    token_texts = [
+        tokenizer.decode([token_id], skip_special_tokens=True)
+        for token_id in generated_ids
+    ]
+    trace: list[TraceStep] = []
+    for step_index in range(final_length):
+        visible_count = step_index + 1
+        trace.append(
+            TraceStep(
+                forward_index=step_index,
+                token_ids=(
+                    generated_ids[:visible_count]
+                    + [-1] * (final_length - visible_count)
+                ),
+                position_states=(
+                    [PositionState.ACCEPTED] * visible_count
+                    + [PositionState.MASKED] * (final_length - visible_count)
+                ),
+                committed_positions=[step_index],
+                decoded_text=tokenizer.decode(
+                    generated_ids[:visible_count], skip_special_tokens=True
+                ),
+                token_texts=(
+                    token_texts[:visible_count]
+                    + [""] * (final_length - visible_count)
+                ),
+            )
+        )
+    return trace

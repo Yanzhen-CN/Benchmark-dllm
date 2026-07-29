@@ -10,7 +10,9 @@ models:
     variants: [best, fast]
 
 datasets:
-  - config: configs/datasets/sudoku.yaml
+  - config: configs/datasets/sudoku9.yaml
+    # A100 80GB diagnostic only. A 1024-token diffusion canvas OOMs on the
+    # tested 24GB card for DreamReasoner and is not a formal output cap.
     max_new_tokens: 1024
 
 seed: 42

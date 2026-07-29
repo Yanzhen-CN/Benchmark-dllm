@@ -1,4 +1,4 @@
-# Compact-output companion to the main Sudoku reasoning protocol. It reuses
+# Compact-output companion to the sudoku9 reasoning protocol. It reuses
 # the exact frozen source rows, Easy/Hard split, semantic scorer, and reference
 # solutions, but forbids reasoning text so complete 81-digit candidates can be
 # decoded from intermediate diffusion canvases for cell-revision analysis.
@@ -9,6 +9,7 @@ aux_metrics:
   - reference_exact_match
   - official_exact_match_accuracy
   - official_format_valid
+  - direct_answer_instruction_following_rate
   - exact_solve_rate
   - blank_cell_accuracy
   - blank_cell_accuracy_by_difficulty
@@ -21,13 +22,13 @@ aux_metrics:
   - trace_revision_count
   - trace_parseable_step_rate
   - trace_correction_success_rate
-sample_size: 100
+sample_size: 10
 difficulty_counts:
-  easy: 50
-  hard: 50
+  easy: 5
+  hard: 5
 seed: 42
 dataset_kwargs:
-  easy_count: 50
-  hard_count: 50
+  easy_count: 5
+  hard_count: 5
   seed: 42
 trace_scope: all_samples

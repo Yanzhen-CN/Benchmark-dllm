@@ -1,20 +1,29 @@
-# Controlled long-input comparison. Every model runs the same 8192-token
-# context-window point. Model-advertised maxima remain checkpoint metadata and
-# are not mixed into the formal quality/resource comparison. The prompt uses
-# window - 64 tokens so the short answer remains inside the legal total length.
+# RULER-inspired controlled long-input comparison, not an official 13-task
+# NVIDIA RULER leaderboard run. Every model receives exactly 4096 encoded
+# input tokens and may generate up to 64 answer tokens. Model-specific capacity
+# is tested by the separate ruler_context_probe dataset and never mixed into
+# this formal quality/resource row.
 dataset: ruler
 dataset_class: dllm_bench.datasets.ruler.RulerDataset
-primary_metric: official_string_match_all
+primary_metric: ruler_string_match_all
+protocol_type: controlled_diagnostic
+upstream_reference: https://github.com/NVIDIA/RULER
+official_deviations:
+  - reduced_three_task_bank
+  - explicit_front_middle_back_strata
+  - single_shared_4096_input_length
 aux_metrics: [all_answers_match, position_robustness]
 task_types: [niah, multi_hop, aggregation]
 positions: [front, middle, back]
 samples_per_context_window_position: 10
-common_context_window_tokens: 8192
+common_input_tokens: 4096
 include_model_max_context_window: false
 max_output_tokens: 64
 seed: 42
 dataset_kwargs:
-  context_windows: [8192]
+  # The generator names a point by input + output; selection exposes the exact
+  # 4096-token input target in sample metadata and tokenizer fitting.
+  context_windows: [4160]
   samples_per_context_window_position: 10
   max_output_tokens: 64
   seed: 42

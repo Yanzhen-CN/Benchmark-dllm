@@ -10,16 +10,20 @@ from types import SimpleNamespace
 import pytest
 
 from dllm_bench.datasets.gsm8k import GSM8KDataset
-from dllm_bench.interfaces import GenerationRequest
+from dllm_bench.interfaces import GenerationRequest, GenerationResult, RunStatus
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.runner.demo_samples import build_demo_samples
-from dllm_bench.runner.generate_stage import run_generation
+from dllm_bench.runner.generate_stage import OOMInvalidTestError, run_generation
 from dllm_bench.runner.persistence import (
     load_generation_result,
     load_score_result,
     save_generation_result,
 )
-from dllm_bench.runner.score_stage import run_scoring
+from dllm_bench.runner.score_stage import (
+    IncompleteTestError,
+    InvalidTestError,
+    run_scoring,
+)
 
 
 def _correct_gsm8k_response(request: GenerationRequest) -> str:
@@ -38,6 +42,11 @@ def test_run_generation_writes_one_file_per_sample(tmp_path):
     assert summary.skipped == 0
     for sample in samples:
         assert (out_dir / f"{sample.sample_id}.json").exists()
+    meta = json.loads((out_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["test_valid"] is True
+    assert meta["test_complete"] is True
+    assert meta["selected_samples"] == 3
+    assert meta["completed_samples"] == 3
 
 
 def test_run_generation_reports_per_sample_start_and_finish(tmp_path):
@@ -210,13 +219,149 @@ def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):
 def test_run_generation_passes_ruler_input_budget_to_adapter(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
     sample = build_demo_samples("gsm8k", n=1)[0]
-    sample.meta["target_input_tokens"] = 8128
+    sample.meta["target_input_tokens"] = 4096
     out_dir = tmp_path / "model_output"
 
     run_generation(adapter, "ruler", [sample], max_new_tokens=64, out_dir=out_dir)
 
     result = load_generation_result(out_dir / f"{sample.sample_id}.json")
-    assert result.request.config["target_input_tokens"] == 8128
+    assert result.request.config["target_input_tokens"] == 4096
+
+
+@pytest.mark.parametrize("dataset_name", ["ruler", "hellobench"])
+def test_long_task_stops_after_first_oom_and_persists_boundary(
+    tmp_path, dataset_name
+):
+    samples = build_demo_samples("gsm8k", n=3)
+    if dataset_name == "hellobench":
+        samples[0].meta.update(target_output_words=2000, max_new_tokens=3072)
+
+    class OOMAdapter:
+        name = "oom-model"
+        config_name = "default"
+        supports_trace = False
+        natively_measures_resources = True
+
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, request):
+            self.calls.append(request.sample_id)
+            return GenerationResult(
+                request=request,
+                output_text="",
+                status=RunStatus.OOM,
+                error_message="CUDA out of memory",
+            )
+
+    adapter = OOMAdapter()
+    out_dir = tmp_path / "model_output"
+    with pytest.raises(OOMInvalidTestError, match="OOM invalidated"):
+        run_generation(
+            adapter, dataset_name, samples, max_new_tokens=64, out_dir=out_dir
+        )
+
+    assert adapter.calls == [samples[0].sample_id]
+    assert not (out_dir / f"{samples[1].sample_id}.json").exists()
+
+    first = load_generation_result(out_dir / f"{samples[0].sample_id}.json")
+    assert first.extra["oom_sample_ordinal"] == 1
+    assert first.extra["selected_samples"] == 3
+    if dataset_name == "hellobench":
+        assert first.extra["oom_sample_context"] == {
+            "target_output_words": 2000,
+            "max_new_tokens": 3072,
+        }
+    meta = json.loads((out_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["test_valid"] is False
+    assert meta["test_complete"] is False
+    assert meta["invalid_reason"] == "oom"
+    assert meta["early_stop"] == {
+        "reason": "oom",
+        "sample_ordinal": 1,
+        "sample_id": samples[0].sample_id,
+        "attempted_samples": 1,
+        "selected_samples": 3,
+        "remaining_samples_not_attempted": 2,
+        "sample_context": (
+            {"target_output_words": 2000, "max_new_tokens": 3072}
+            if dataset_name == "hellobench"
+            else {}
+        ),
+    }
+    oom_info = json.loads((out_dir / "oom_info.json").read_text(encoding="utf-8"))
+    assert oom_info["test_valid"] is False
+    assert oom_info["scope"] == "model_x_variant_x_dataset"
+    assert oom_info["model_name"] == "oom-model"
+    assert oom_info["config_name"] == "default"
+    assert oom_info["dataset_name"] == dataset_name
+    assert oom_info["sample_ordinal"] == 1
+    assert oom_info["sample_id"] == samples[0].sample_id
+    assert oom_info["error_type"] == "cuda_out_of_memory"
+    assert oom_info["error_message"] == "CUDA out of memory"
+    assert "gpu" in oom_info
+    assert "run_metadata" in oom_info
+
+    with pytest.raises(OOMInvalidTestError, match="OOM invalidated"):
+        run_generation(
+            adapter, dataset_name, samples, max_new_tokens=64, out_dir=out_dir
+        )
+    assert adapter.calls == [samples[0].sample_id]
+
+
+def test_any_dataset_stops_and_becomes_invalid_after_oom(tmp_path):
+    samples = build_demo_samples("gsm8k", n=2)
+
+    class OOMAdapter:
+        name = "oom-model"
+        config_name = "default"
+        supports_trace = False
+        natively_measures_resources = True
+
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, request):
+            self.calls.append(request.sample_id)
+            return GenerationResult(
+                request=request,
+                output_text="",
+                status=RunStatus.OOM,
+                error_message="CUDA out of memory",
+            )
+
+    adapter = OOMAdapter()
+    with pytest.raises(OOMInvalidTestError, match="OOM invalidated"):
+        run_generation(
+            adapter, "gsm8k", samples, max_new_tokens=16, out_dir=tmp_path / "out"
+        )
+
+    assert adapter.calls == [samples[0].sample_id]
+
+
+def test_long_task_migrates_existing_oom_to_early_stop_marker(tmp_path):
+    samples = build_demo_samples("gsm8k", n=2)
+    out_dir = tmp_path / "model_output"
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
+    run_generation(
+        adapter, "gsm8k", samples[:1], max_new_tokens=16, out_dir=out_dir
+    )
+    first_path = out_dir / f"{samples[0].sample_id}.json"
+    existing = load_generation_result(first_path)
+    existing.status = RunStatus.OOM
+    existing.error_message = "CUDA out of memory"
+    save_generation_result(existing, first_path)
+
+    adapter.generate = lambda request: (_ for _ in ()).throw(
+        AssertionError("sample after an existing long-task OOM was attempted")
+    )
+    with pytest.raises(OOMInvalidTestError, match="OOM invalidated"):
+        run_generation(
+            adapter, "ruler", samples, max_new_tokens=64, out_dir=out_dir
+        )
+
+    meta = json.loads((out_dir / "_meta.json").read_text(encoding="utf-8"))
+    assert meta["early_stop"]["sample_ordinal"] == 1
 
 
 def test_run_generation_can_disable_trace_without_losing_forward_count(tmp_path):
@@ -328,6 +473,73 @@ def test_run_scoring_requires_generation_first(tmp_path):
         run_scoring(dataset, samples, tmp_path / "model_output", tmp_path / "score_output")
 
 
+def test_run_scoring_refuses_an_oom_invalidated_test(tmp_path):
+    samples = build_demo_samples("gsm8k", n=2)
+
+    class OOMAdapter:
+        name = "oom-model"
+        config_name = "default"
+        supports_trace = False
+        natively_measures_resources = True
+
+        def generate(self, request):
+            return GenerationResult(
+                request=request,
+                output_text="",
+                status=RunStatus.OOM,
+                error_message="CUDA out of memory",
+            )
+
+    model_out = tmp_path / "model_output"
+    score_out = tmp_path / "score_output"
+    with pytest.raises(OOMInvalidTestError):
+        run_generation(
+            OOMAdapter(), "gsm8k", samples, max_new_tokens=16, out_dir=model_out
+        )
+
+    with pytest.raises(InvalidTestError, match="test is invalid because of OOM"):
+        run_scoring(GSM8KDataset(), samples, model_out, score_out)
+    assert not score_out.exists()
+
+
+def test_variant_dataset_oom_does_not_invalidate_completed_sibling_variant(tmp_path):
+    samples = build_demo_samples("gsm8k", n=1)
+    model_root = tmp_path / "model_output"
+    fast_out = model_root / "mock_fast" / "gsm8k"
+    best_out = model_root / "mock_best" / "gsm8k"
+
+    fast_adapter = MockDiffusionAdapter(
+        config_name="fast", response_fn=_correct_gsm8k_response, steps=2
+    )
+    run_generation(
+        fast_adapter, "gsm8k", samples, max_new_tokens=16, out_dir=fast_out
+    )
+
+    class OOMBestAdapter:
+        name = "mock"
+        config_name = "best"
+        supports_trace = False
+        natively_measures_resources = True
+
+        def generate(self, request):
+            return GenerationResult(
+                request=request,
+                output_text="",
+                status=RunStatus.OOM,
+                error_message="CUDA out of memory",
+            )
+
+    with pytest.raises(OOMInvalidTestError):
+        run_generation(
+            OOMBestAdapter(), "gsm8k", samples, max_new_tokens=16, out_dir=best_out
+        )
+
+    result = run_scoring(
+        GSM8KDataset(), samples, fast_out, tmp_path / "score_output"
+    )
+    assert result.summary.q == pytest.approx(1.0)
+
+
 def test_run_scoring_end_to_end_after_generation(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
     dataset = GSM8KDataset()
@@ -365,7 +577,7 @@ def test_run_scoring_persists_dataset_trace_aux_metrics(tmp_path):
     assert score.aux["test_trace_step_count"] > 0
 
 
-def test_run_scoring_reports_missing_samples_without_crashing(tmp_path):
+def test_run_scoring_keeps_sample_scores_but_refuses_partial_summary(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
     dataset = GSM8KDataset()
     samples = build_demo_samples("gsm8k", n=3)
@@ -373,10 +585,12 @@ def test_run_scoring_reports_missing_samples_without_crashing(tmp_path):
     score_out = tmp_path / "score_output"
 
     run_generation(adapter, "gsm8k", samples[:2], max_new_tokens=16, out_dir=model_out)
-    result = run_scoring(dataset, samples, model_out, score_out)
+    with pytest.raises(IncompleteTestError, match="1 of 3 selected generation"):
+        run_scoring(dataset, samples, model_out, score_out)
 
-    assert result.missing_sample_ids == [samples[2].sample_id]
-    assert result.summary.n_samples == 2
+    assert (score_out / f"{samples[0].sample_id}.json").exists()
+    assert (score_out / f"{samples[1].sample_id}.json").exists()
+    assert not (score_out / "summary.json").exists()
 
 
 def test_run_scoring_resume_skips_rescoring(tmp_path):

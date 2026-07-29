@@ -3,6 +3,7 @@
     output/
       model_output/<run-id>/<dataset>/
         _meta.json          # model/config/dataset name + run_metadata (section 6)
+        oom_info.json       # present only when OOM invalidates the complete test
         <sample_id>.json    # full GenerationResult, including trace
       score_output/<model>_<config>/<dataset>/
         <sample_id>.json    # ScoreResult for that sample

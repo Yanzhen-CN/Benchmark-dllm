@@ -2,7 +2,7 @@
 unmasking.
 
 Ported from `GSAI-ML/iLLaDA-8B-Instruct`'s own reference sampler (verified
-against the iLLaDAtest reference implementation's `generate.py` — see
+against the official `ML-GSAI/LLaDA` implementation's `generate.py` — see
 ``models/hf_diffusion.py``'s module docstring for what's shared with
 DreamReasoner vs. specific to this model). iLLaDA reuses LLaDA's inference code with
 **`mask_id=5`** instead of LLaDA's own default `126336` — the reference
@@ -54,7 +54,6 @@ class IlladaAdapter(HFDiffusionAdapter):
         target_input_tokens: int | None = None,
     ) -> tuple[str, list[TraceStep], int]:
         import torch
-        import torch.nn.functional as F
 
         block_length = step_config.block_length or step_config.gen_length
         steps_per_block = step_config.steps_per_block or 1
@@ -67,9 +66,13 @@ class IlladaAdapter(HFDiffusionAdapter):
 
         device = self._device
         input_ids = tokenize_instruction_prompt(
-            self._tokenizer, prompt, device=device
+            self._tokenizer,
+            prompt,
+            device=device,
+            target_input_tokens=target_input_tokens,
         )["input_ids"]
         prompt_len = input_ids.shape[1]
+        self._last_input_tokens = int(prompt_len)
         self._start_measurement()
 
         x = torch.full((1, prompt_len + padded_gen_length), MASK_ID, dtype=torch.long, device=device)
@@ -95,10 +98,9 @@ class IlladaAdapter(HFDiffusionAdapter):
 
                 logits_for_pick = _add_gumbel_noise(logits, temperature)
                 x0 = torch.argmax(logits_for_pick, dim=-1)
-                probs = F.softmax(logits, dim=-1)
+                probs, argmax_prob = _selected_token_probabilities(logits, x0)
                 # Real predicted probability of the picked token — used for the
                 # trace's certainty data regardless of remasking mode.
-                argmax_prob = torch.gather(probs, dim=-1, index=x0.unsqueeze(-1)).squeeze(-1)
 
                 if remasking == "random":
                     selection_score = torch.rand(x0.shape, device=device)
@@ -135,6 +137,7 @@ class IlladaAdapter(HFDiffusionAdapter):
                 global_step += 1
 
         self._stop_measurement()
+        self._last_num_forward_passes = global_step
         final_ids = x[0, prompt_len : prompt_len + gen_length].tolist()
         output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
         return output_text, trace, len(final_ids)
@@ -148,10 +151,29 @@ def _add_gumbel_noise(logits, temperature: float):
         return logits
     import torch
 
-    logits = logits.to(torch.float32)
-    noise = torch.rand_like(logits, dtype=torch.float32)
+    logits = logits.to(torch.float64)
+    noise = torch.rand_like(logits, dtype=torch.float64)
     gumbel_noise = (-torch.log(noise)) ** temperature
     return logits.exp() / gumbel_noise
+
+
+def _selected_token_probabilities(logits, token_ids):
+    """Return full-softmax probabilities and the selected-token confidence.
+
+    Keeping this as the sampler's single implementation point lets the
+    algorithm-level test validate the exact confidence path used for token
+    transfer, rather than a disconnected copy of the same formula.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    probs = F.softmax(logits, dim=-1)
+    selected = torch.gather(
+        probs,
+        dim=-1,
+        index=token_ids.unsqueeze(-1),
+    ).squeeze(-1)
+    return probs, selected
 
 
 def _transfer_schedule(mask_count: int, steps: int) -> list[int]:

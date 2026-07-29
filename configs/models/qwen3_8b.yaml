@@ -1,6 +1,8 @@
 # Same-scale dense AR reference for the 8B diffusion models. It uses the
 # official Qwen3-8B instruction checkpoint, standard greedy decoding, and the
 # same trace/resource protocol as Qwen3-4B. Output limits remain task-specific.
+# Trace rows are reconstructed post-timing from generated token ids; the
+# measured generation call does not retain full-vocabulary score tensors.
 #
 # The checkpoint supports 40960 positions in its published config. Thinking is
 # disabled so the task output budget is spent on the answer rather than an

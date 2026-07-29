@@ -130,17 +130,34 @@ def summarize_records(
 
     successful = [r for r in records if r.generation.status == RunStatus.SUCCESS]
     timed = [
-        r for r in successful
+        r for r in records
         if r.generation.timing and r.generation.timing.wall_clock_seconds > 0
     ]
+    complete_timing = len(timed) == len(records)
     times = [r.generation.timing.wall_clock_seconds for r in timed]
-    energies = [r.generation.energy_joules for r in successful if r.generation.energy_joules is not None]
-    computes = [r.generation.compute_tflops for r in successful if r.generation.compute_tflops is not None]
-    vrams = [r.generation.peak_vram_gb for r in successful if r.generation.peak_vram_gb is not None]
+    energies = [
+        r.generation.energy_joules
+        for r in records
+        if r.generation.energy_joules is not None
+    ]
+    computes = [
+        r.generation.compute_tflops
+        for r in records
+        if r.generation.compute_tflops is not None
+    ]
+    vrams = [
+        r.generation.peak_vram_gb
+        for r in records
+        if r.generation.peak_vram_gb is not None
+    ]
 
-    time_per_sample = statistics.fmean(times) if times else None
-    energy_per_sample = statistics.fmean(energies) if energies else None
-    compute_per_sample = statistics.fmean(computes) if computes else None
+    time_per_sample = statistics.fmean(times) if complete_timing else None
+    energy_per_sample = (
+        statistics.fmean(energies) if len(energies) == len(records) else None
+    )
+    compute_per_sample = (
+        statistics.fmean(computes) if len(computes) == len(records) else None
+    )
     peak_vram_gb = max(vrams) if vrams else None
 
     total_time = sum(times)
@@ -148,16 +165,20 @@ def summarize_records(
     # Appendix B requires ratios of window totals, never a mean of per-sample
     # rates.  Energy/compute rates are only available if every timed sample in
     # the measurement window has the corresponding counter.
-    tps = total_tokens / total_time if total_time > 0 else None
-    sps = len(timed) / total_time if total_time > 0 else None
+    tps = total_tokens / total_time if complete_timing and total_time > 0 else None
+    sps = len(records) / total_time if complete_timing and total_time > 0 else None
     eps = (
         sum(r.generation.energy_joules for r in timed) / total_time
-        if timed and all(r.generation.energy_joules is not None for r in timed)
+        if complete_timing
+        and total_time > 0
+        and all(r.generation.energy_joules is not None for r in timed)
         else None
     )
     cps = (
         sum(r.generation.compute_tflops for r in timed) / total_time
-        if timed and all(r.generation.compute_tflops is not None for r in timed)
+        if complete_timing
+        and total_time > 0
+        and all(r.generation.compute_tflops is not None for r in timed)
         else None
     )
 
@@ -165,7 +186,9 @@ def summarize_records(
     score_per_compute = _score_per_compute(q, cps) if cps else None
 
     status_counts = dict(Counter(r.generation.status.value for r in records))
-    timing_sources = {r.generation.timing.source for r in successful if r.generation.timing}
+    timing_sources = {
+        r.generation.timing.source for r in records if r.generation.timing
+    }
     if len(timing_sources) == 1:
         timing_source = next(iter(timing_sources))
     elif not timing_sources:

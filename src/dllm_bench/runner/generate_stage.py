@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 from ..datasets.base import Sample
-from ..interfaces import GenerationRequest, GenerationResult, ModelAdapter
+from ..interfaces import GenerationRequest, GenerationResult, ModelAdapter, RunStatus
 from .persistence import load_generation_result, save_generation_result, save_meta
 from .sampling import DEFAULT_SEED, collect_run_metadata
 
@@ -25,6 +26,23 @@ class GenerateStageSummary:
     generated: int
     skipped: int
     total: int
+    stopped_early: bool = False
+    stop_reason: str | None = None
+    first_oom_sample_id: str | None = None
+    first_oom_ordinal: int | None = None
+
+
+OOM_CONTEXT_META_KEYS = (
+    "target_output_words",
+    "max_new_tokens",
+    "context_window_tokens",
+    "target_input_tokens",
+    "position",
+    "task_type",
+    "measurement_role",
+    "declared_max_context_tokens",
+    "model_context_fraction",
+)
 
 
 GenerationProgress = Callable[
@@ -32,6 +50,199 @@ GenerationProgress = Callable[
 ]
 
 MEASUREMENT_PROTOCOL = "gpu-synced-v4-trace-excluded-compute-deferred"
+OOM_INFO_FILENAME = "oom_info.json"
+
+
+class OOMInvalidTestError(RuntimeError):
+    """The current model×dataset test is invalid because CUDA OOM occurred."""
+
+
+def oom_invalid_test_error(out_dir: str | Path, detail: dict) -> OOMInvalidTestError:
+    out_dir = Path(out_dir)
+    ordinal = detail.get("sample_ordinal")
+    sample_id = detail.get("sample_id")
+    stage = detail.get("failure_stage", "generation")
+    error_message = detail.get("error_message") or "CUDA out of memory"
+    location = (
+        f"sample {ordinal} ({sample_id})"
+        if ordinal is not None and sample_id
+        else stage
+    )
+    return OOMInvalidTestError(
+        f"OOM invalidated the complete model×dataset test at {location}: "
+        f"{error_message}. Details: {out_dir / OOM_INFO_FILENAME}"
+    )
+
+
+def is_cuda_oom_error(exc: BaseException) -> bool:
+    """Recognize CUDA OOM without requiring torch in the local scoring venv."""
+    return (
+        exc.__class__.__name__ == "OutOfMemoryError"
+        or "cuda out of memory" in str(exc).lower()
+        or "cuda error: out of memory" in str(exc).lower()
+    )
+
+
+def persist_setup_oom_invalidation(
+    *,
+    adapter: ModelAdapter,
+    dataset_name: str,
+    out_dir: str | Path,
+    selected_samples: int,
+    failure_stage: str,
+    error: BaseException,
+    seed: int,
+    measure_compute: bool,
+    require_all_metrics: bool,
+    capture_trace: bool,
+) -> dict:
+    """Record an OOM during model loading or warmup before sample generation."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    run_metadata = collect_run_metadata(
+        adapter,
+        {
+            "seed": seed,
+            "measurement_protocol": MEASUREMENT_PROTOCOL,
+            "measure_compute": measure_compute,
+            "require_all_metrics": require_all_metrics,
+            "trace_scope": "all_samples" if capture_trace else "none",
+            "energy_backend": "nvml-total-energy",
+        },
+    )
+    early_stop = {
+        "reason": "oom",
+        "failure_stage": failure_stage,
+        "sample_ordinal": None,
+        "sample_id": None,
+        "attempted_samples": 0,
+        "selected_samples": selected_samples,
+        "remaining_samples_not_attempted": selected_samples,
+        "sample_context": {},
+    }
+    meta = {
+        "model_name": adapter.name,
+        "config_name": adapter.config_name,
+        "dataset_name": dataset_name,
+        "test_valid": False,
+        "test_complete": False,
+        "invalid_reason": "oom",
+        "oom_info_file": OOM_INFO_FILENAME,
+        "early_stop": early_stop,
+        "run_metadata": run_metadata,
+    }
+    save_meta(meta, out_dir / "_meta.json")
+    oom_info = {
+        "schema_version": 1,
+        "test_valid": False,
+        "invalid_reason": "oom",
+        "scope": "model_x_variant_x_dataset",
+        "model_name": adapter.name,
+        "config_name": adapter.config_name,
+        "dataset_name": dataset_name,
+        "sample_ordinal": None,
+        "sample_id": None,
+        "sample_context": {},
+        "attempted_samples": 0,
+        "selected_samples": selected_samples,
+        "remaining_samples_not_attempted": selected_samples,
+        "failure_stage": failure_stage,
+        "error_type": "cuda_out_of_memory",
+        "error_class": error.__class__.__name__,
+        "error_message": str(error),
+        "gpu": {
+            "cuda_visible_devices": run_metadata.get("cuda_visible_devices"),
+            "cuda_current_device": run_metadata.get("cuda_current_device"),
+            "devices": run_metadata.get("cuda_device_details", []),
+        },
+        "run_metadata": run_metadata,
+        "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    save_meta(oom_info, out_dir / OOM_INFO_FILENAME)
+    return oom_info
+
+
+def _oom_sample_context(sample: Sample) -> dict:
+    return {
+        key: sample.meta[key]
+        for key in OOM_CONTEXT_META_KEYS
+        if key in sample.meta
+    }
+
+
+def _persist_oom_invalidation(
+    *,
+    meta_path: Path,
+    sample_path: Path,
+    sample: Sample,
+    sample_ordinal: int,
+    selected_samples: int,
+    generation: GenerationResult,
+) -> None:
+    """Persist the first OOM as a test-level invalidation, not a scoreable sample."""
+    sample_context = _oom_sample_context(sample)
+    generation.extra.update(
+        {
+            "long_task_oom_stop": True,
+            "test_valid": False,
+            "invalid_reason": "oom",
+            "oom_sample_ordinal": sample_ordinal,
+            "oom_sample_id": sample.sample_id,
+            "attempted_samples": sample_ordinal,
+            "selected_samples": selected_samples,
+            "oom_sample_context": sample_context,
+        }
+    )
+    save_generation_result(generation, sample_path)
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    early_stop = {
+        "reason": "oom",
+        "sample_ordinal": sample_ordinal,
+        "sample_id": sample.sample_id,
+        "attempted_samples": sample_ordinal,
+        "selected_samples": selected_samples,
+        "remaining_samples_not_attempted": selected_samples - sample_ordinal,
+        "sample_context": sample_context,
+    }
+    meta.update(
+        {
+            "test_valid": False,
+            "test_complete": False,
+            "invalid_reason": "oom",
+            "oom_info_file": OOM_INFO_FILENAME,
+            "early_stop": early_stop,
+        }
+    )
+    save_meta(meta, meta_path)
+
+    run_metadata = meta.get("run_metadata", {})
+    oom_info = {
+        "schema_version": 1,
+        "test_valid": False,
+        "invalid_reason": "oom",
+        "scope": "model_x_variant_x_dataset",
+        "model_name": meta.get("model_name"),
+        "config_name": meta.get("config_name"),
+        "dataset_name": meta.get("dataset_name"),
+        "sample_ordinal": sample_ordinal,
+        "sample_id": sample.sample_id,
+        "sample_context": sample_context,
+        "attempted_samples": sample_ordinal,
+        "selected_samples": selected_samples,
+        "remaining_samples_not_attempted": selected_samples - sample_ordinal,
+        "failure_stage": "generation",
+        "error_type": "cuda_out_of_memory",
+        "error_message": generation.error_message,
+        "gpu": {
+            "cuda_visible_devices": run_metadata.get("cuda_visible_devices"),
+            "cuda_current_device": run_metadata.get("cuda_current_device"),
+            "devices": run_metadata.get("cuda_device_details", []),
+        },
+        "run_metadata": run_metadata,
+        "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    save_meta(oom_info, meta_path.parent / OOM_INFO_FILENAME)
 
 
 def _validate_required_metrics(
@@ -92,12 +303,48 @@ def run_generation(
                 "protocol; rerun with --no-resume (overwrites this dataset) or "
                 "choose a fresh --output-root"
             )
+        early_stop = existing_meta.get("early_stop")
+        if early_stop and early_stop.get("reason") == "oom":
+            oom_info_path = out_dir / OOM_INFO_FILENAME
+            if not oom_info_path.exists():
+                ordinal = int(early_stop["sample_ordinal"])
+                oom_sample = next(
+                    (
+                        sample
+                        for sample in samples
+                        if sample.sample_id == early_stop.get("sample_id")
+                    ),
+                    samples[ordinal - 1],
+                )
+                oom_sample_path = out_dir / f"{oom_sample.sample_id}.json"
+                if oom_sample_path.exists():
+                    _persist_oom_invalidation(
+                        meta_path=meta_path,
+                        sample_path=oom_sample_path,
+                        sample=oom_sample,
+                        sample_ordinal=ordinal,
+                        selected_samples=len(samples),
+                        generation=load_generation_result(oom_sample_path),
+                    )
+            detail = (
+                json.loads(oom_info_path.read_text(encoding="utf-8"))
+                if oom_info_path.exists()
+                else {
+                    **early_stop,
+                    "error_message": "CUDA out of memory",
+                }
+            )
+            raise oom_invalid_test_error(out_dir, detail)
     if not (resume and meta_path.exists()):
         save_meta(
             {
                 "model_name": adapter.name,
                 "config_name": adapter.config_name,
                 "dataset_name": dataset_name,
+                "test_valid": True,
+                "test_complete": False,
+                "selected_samples": len(samples),
+                "selected_sample_ids": [sample.sample_id for sample in samples],
                 "run_metadata": collect_run_metadata(
                     adapter,
                     {
@@ -113,6 +360,9 @@ def run_generation(
         )
 
     generated = skipped = 0
+    stopped_early = False
+    first_oom_sample_id: str | None = None
+    first_oom_ordinal: int | None = None
     compute_queue: list[
         tuple[int, Sample, Path, GenerationResult]
     ] = []
@@ -121,6 +371,22 @@ def run_generation(
         if resume and sample_path.exists():
             skipped += 1
             existing = load_generation_result(sample_path)
+            if existing.status is RunStatus.OOM:
+                stopped_early = True
+                first_oom_sample_id = sample.sample_id
+                first_oom_ordinal = index
+                _persist_oom_invalidation(
+                    meta_path=meta_path,
+                    sample_path=sample_path,
+                    sample=sample,
+                    sample_ordinal=index,
+                    selected_samples=len(samples),
+                    generation=existing,
+                )
+                detail = json.loads(
+                    (out_dir / OOM_INFO_FILENAME).read_text(encoding="utf-8")
+                )
+                raise oom_invalid_test_error(out_dir, detail)
             if (
                 measure_compute
                 and existing.status.value == "success"
@@ -151,6 +417,11 @@ def run_generation(
             progress("start", index, len(samples), sample, None)
         generation = adapter.generate(request)
 
+        if generation.status is RunStatus.OOM:
+            stopped_early = True
+            first_oom_sample_id = sample.sample_id
+            first_oom_ordinal = index
+
         if require_all_metrics:
             _validate_required_metrics(
                 adapter,
@@ -159,12 +430,27 @@ def run_generation(
                 require_trace=capture_trace,
             )
 
-        save_generation_result(generation, sample_path)
+        if stopped_early:
+            _persist_oom_invalidation(
+                meta_path=meta_path,
+                sample_path=sample_path,
+                sample=sample,
+                sample_ordinal=index,
+                selected_samples=len(samples),
+                generation=generation,
+            )
+        else:
+            save_generation_result(generation, sample_path)
         if measure_compute and generation.status.value == "success":
             compute_queue.append((index, sample, sample_path, generation))
         generated += 1
         if progress is not None:
             progress("finish", index, len(samples), sample, generation)
+        if stopped_early:
+            detail = json.loads(
+                (out_dir / OOM_INFO_FILENAME).read_text(encoding="utf-8")
+            )
+            raise oom_invalid_test_error(out_dir, detail)
 
     # Compute profiling is intentionally a second phase. Interleaving a full
     # replay between timed samples changes GPU thermal/cache state and can bias
@@ -188,6 +474,24 @@ def run_generation(
             )
         save_generation_result(generation, sample_path)
 
+    completed_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    completed_meta.update(
+        {
+            "test_complete": True,
+            "selected_samples": len(samples),
+            "completed_samples": len(samples),
+            "selected_sample_ids": [sample.sample_id for sample in samples],
+        }
+    )
+    save_meta(completed_meta, meta_path)
+
     return GenerateStageSummary(
-        out_dir=str(out_dir), generated=generated, skipped=skipped, total=len(samples)
+        out_dir=str(out_dir),
+        generated=generated,
+        skipped=skipped,
+        total=len(samples),
+        stopped_early=stopped_early,
+        stop_reason="oom" if stopped_early else None,
+        first_oom_sample_id=first_oom_sample_id,
+        first_oom_ordinal=first_oom_ordinal,
     )

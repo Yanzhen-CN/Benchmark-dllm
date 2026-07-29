@@ -70,6 +70,7 @@ class BaseModelAdapter(ABC):
         _seed_everything(request.seed)
         measurement = _SampleMeasurement()
         self._active_measurement = measurement
+        result: GenerationResult
         try:
             if not self.deferred_measurement:
                 measurement.start()
@@ -84,7 +85,7 @@ class BaseModelAdapter(ABC):
                 self._suppress_trace_instrumentation = previous_trace_suppression
         except Exception as exc:  # noqa: BLE001 - failure is persisted per sample
             status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
-            return GenerationResult(
+            result = GenerationResult(
                 request=request,
                 output_text="",
                 status=status,

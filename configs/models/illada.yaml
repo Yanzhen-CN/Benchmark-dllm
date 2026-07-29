@@ -11,7 +11,7 @@
 # --model-config configs/models/illada.yaml` to download that snapshot ahead
 # of time without loading it into RAM/GPU.
 #
-# Sampler verified against the iLLaDAtest reference implementation
+# Sampler verified against the official ML-GSAI/LLaDA implementation
 # (generate.py): block-wise low_confidence unmasking, mask_id=5 (iLLaDA's
 # override of LLaDA's default 126336 — see models/illada.py), gumbel-noise
 # sampling. Loaded via AutoModel/AutoTokenizer with trust_remote_code=True

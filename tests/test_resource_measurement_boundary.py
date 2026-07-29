@@ -173,6 +173,8 @@ def test_generate_does_not_retry_a_non_oom_failure():
 
     assert adapter.generate_core_calls == 1
     assert result.status == RunStatus.FAILED
+    assert result.timing is not None
+    assert result.timing.wall_clock_seconds > 0
 
 
 def test_untimed_warmup_propagates_first_oom_without_retry():

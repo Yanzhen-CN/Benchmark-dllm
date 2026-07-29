@@ -162,7 +162,9 @@ class _FakeDGModel:
         from types import SimpleNamespace
 
         self.config = SimpleNamespace(canvas_length=4)
+        self.generation_config = SimpleNamespace(pad_token_id=0)
         self._raise_after_first_step = raise_after_first_step
+        self.last_generate_kwargs = None
 
     def _prepare_sampler(self, generation_config):
         return _FakeSampler(masks=[
@@ -173,6 +175,7 @@ class _FakeDGModel:
     def generate(self, **kwargs):
         from types import SimpleNamespace
 
+        self.last_generate_kwargs = kwargs
         sampler = self._prepare_sampler(None)
         current = torch.tensor([[9, 9, 9, 9]])
         script = [
@@ -184,7 +187,10 @@ class _FakeDGModel:
             if self._raise_after_first_step and index == 0:
                 raise RuntimeError("simulated failure mid-generation")
         final_sequence = torch.cat([kwargs["input_ids"], current], dim=1)
-        return SimpleNamespace(sequences=final_sequence)
+        return SimpleNamespace(
+            sequences=final_sequence,
+            tokens_per_forward=torch.tensor([2.0]),
+        )
 
 
 def _make_diffusiongemma_adapter(raise_after_first_step: bool = False) -> DiffusionGemmaAdapter:
@@ -207,7 +213,10 @@ def test_diffusiongemma_generate_core_builds_correct_trace_and_output():
 
     assert result.output_text == "[20]"  # _RecordingTokenizer.decode returns f"[{ids[0]}]"
     assert result.final_valid_length == 4
+    assert result.num_forward_passes == 2
     assert result.extra["input_tokens"] == 2
+    assert result.extra["official_tokens_per_forward"] == 2.0
+    assert "disable_compile" not in adapter._model.last_generate_kwargs
     assert len(result.trace) == 2
     assert result.trace[0].committed_positions == [0, 2]
     assert result.trace[1].committed_positions == [0, 1, 2, 3]

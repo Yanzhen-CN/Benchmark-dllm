@@ -1,0 +1,22 @@
+# Capacity-only diagnostic. One NIAH prompt is fitted after each model's chat
+# template to half of that model config's declared max_context_tokens. The
+# 64-token answer allowance remains inside the declared maximum. This dataset
+# must stay separate from formal RULER so an expected OOM cannot invalidate or
+# bias the 30-sample 4K timing aggregate.
+dataset: ruler_context_probe
+dataset_class: dllm_bench.datasets.ruler.RulerContextProbeDataset
+primary_metric: diagnostic_string_match_all
+protocol_type: capacity_diagnostic
+upstream_reference: https://github.com/NVIDIA/RULER
+official_ruler_compatible: false
+aux_metrics: [all_answers_match]
+model_context_fraction: 0.5
+max_output_tokens: 64
+seed: 42
+trace_scope: none
+dataset_kwargs:
+  # Largest half-context input in the current matrix (262144 / 2). Smaller
+  # model targets are produced by deterministic tokenizer-aware filler fitting.
+  source_input_tokens: 131072
+  max_output_tokens: 64
+  seed: 42

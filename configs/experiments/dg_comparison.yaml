@@ -1,6 +1,6 @@
-# Controlled DiffusionGemma-vs-Gemma-4 comparison. Run both sequentially on
-# the same physical A100 80GB. This matrix is intentionally separate from the
-# main full_matrix so adding the 26B AR control does not expand normal runs.
+# Convenience subset for the controlled DiffusionGemma-vs-Gemma-4 comparison.
+# Both models are also present in full_matrix; use this smaller matrix to run
+# only the matched pair sequentially on the same physical A100 80GB.
 base_dir: ../..
 
 models:
@@ -13,8 +13,11 @@ datasets:
   - configs/datasets/gsm8k.yaml
   - configs/datasets/mbpp.yaml
   - configs/datasets/structeval_t.yaml
-  - config: configs/datasets/sudoku.yaml
-    max_new_tokens: 96
+  - config: configs/datasets/sudoku4.yaml
+    n_samples: 10
+    max_new_tokens: 128
+  - config: configs/datasets/sudoku9.yaml
+    max_new_tokens: 256
   - configs/datasets/sudoku_trace.yaml
   - config: configs/datasets/ruler.yaml
     max_new_tokens: 64

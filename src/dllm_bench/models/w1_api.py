@@ -29,6 +29,7 @@ from ..interfaces import (
     TimingResult,
     TraceStep,
 )
+from .prompting import fit_ruler_prompt_by_whitespace
 
 W1Config = Literal["standard", "jump", "gidd"]
 
@@ -55,9 +56,15 @@ class W1ApiAdapter:
     def generate(self, request: GenerationRequest) -> GenerationResult:
         import requests
 
+        target_input_tokens = request.config.get("target_input_tokens")
+        prompt = request.prompt
+        if target_input_tokens is not None:
+            prompt = fit_ruler_prompt_by_whitespace(
+                prompt, int(target_input_tokens)
+            )
         payload = {
             "model": self._checkpoint,
-            "prompt": request.prompt,
+            "prompt": prompt,
             "max_tokens": request.max_new_tokens,
             "mode": self.config_name,
             "temperature": request.config.get("temperature", 0.0),
@@ -78,8 +85,20 @@ class W1ApiAdapter:
             return GenerationResult(
                 request=request,
                 output_text="",
-                status=RunStatus.FAILED,
+                status=(
+                    RunStatus.OOM
+                    if "out of memory" in str(exc).lower()
+                    else RunStatus.FAILED
+                ),
                 error_message=str(exc),
+            )
+
+        if str(data.get("status", "")).lower() == "oom":
+            return GenerationResult(
+                request=request,
+                output_text="",
+                status=RunStatus.OOM,
+                error_message=str(data.get("error", "remote API out of memory")),
             )
 
         text = data.get("text", "")
@@ -101,6 +120,12 @@ class W1ApiAdapter:
             timing=timing,
             energy_joules=None,
             extra={
+                "requested_input_tokens": target_input_tokens,
+                "input_length_basis": (
+                    "whitespace_proxy_unverified"
+                    if target_input_tokens is not None
+                    else "api_unspecified"
+                ),
                 "raw_response_meta": {k: v for k, v in data.items() if k not in ("text", "trace")}
             },
         )
