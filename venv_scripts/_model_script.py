@@ -103,6 +103,43 @@ def run(command: Sequence[str | Path], *, env: Mapping[str, str] | None = None) 
     )
 
 
+def installation_environment(*, prefer_vllm_precompiled: bool = False) -> dict[str, str]:
+    """Keep package caches and large build artifacts on the persistent data volume."""
+    environment = os.environ.copy()
+    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
+    pip_cache = Path(
+        os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache")
+    )
+    uv_cache = Path(
+        os.environ.get(
+            "DLLM_UV_CACHE_DIR",
+            os.environ.get("UV_CACHE_DIR", data_root / "uv-cache"),
+        )
+    )
+    build_tmp = Path(
+        os.environ.get("DLLM_BUILD_TMPDIR", data_root / "tmp")
+    )
+    torch_extensions = Path(
+        os.environ.get(
+            "DLLM_TORCH_EXTENSIONS_DIR", data_root / "torch-extensions"
+        )
+    )
+    for directory in (pip_cache, uv_cache, build_tmp, torch_extensions):
+        directory.expanduser().mkdir(parents=True, exist_ok=True)
+
+    environment.update(
+        PIP_CACHE_DIR=str(pip_cache.expanduser()),
+        UV_CACHE_DIR=str(uv_cache.expanduser()),
+        TMPDIR=str(build_tmp.expanduser()),
+        TMP=str(build_tmp.expanduser()),
+        TEMP=str(build_tmp.expanduser()),
+        TORCH_EXTENSIONS_DIR=str(torch_extensions.expanduser()),
+    )
+    if prefer_vllm_precompiled:
+        environment.setdefault("VLLM_USE_PRECOMPILED", "1")
+    return environment
+
+
 def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
     if cuda_index not in CUDA_INDEXES:
         raise SystemExit(f"unsupported CUDA index {cuda_index}; use {', '.join(CUDA_INDEXES)}")
@@ -115,11 +152,9 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
 
     directory = venv_dir(profile)
     base_python = os.environ.get("PYTHON_BIN", sys.executable)
-    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
-    cache_dir = Path(os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache"))
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    install_env = os.environ.copy()
-    install_env["PIP_CACHE_DIR"] = str(cache_dir)
+    install_env = installation_environment(
+        prefer_vllm_precompiled=bool(profile.setup_requirements)
+    )
 
     run([base_python, "-m", "venv", directory])
     python = venv_python(directory)
@@ -228,13 +263,7 @@ def repair_project_installation(profile: ModelProfile, python: Path) -> None:
             f"Repairing missing dllm_bench installation in: {venv_dir(profile)}",
             flush=True,
         )
-        install_env = os.environ.copy()
-        data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
-        cache_dir = Path(
-            os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache")
-        )
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        install_env["PIP_CACHE_DIR"] = str(cache_dir)
+        install_env = installation_environment()
         run(
             [python, "-m", "pip", "install", "--no-deps", "-e", "."],
             env=install_env,
@@ -332,11 +361,7 @@ def repair_profile_dependencies(
         for name, (installed, required) in mismatches.items()
     )
     print(f"Updating stale {profile.model_id} environment pins: {details}", flush=True)
-    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
-    cache_dir = Path(os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache"))
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    install_env = os.environ.copy()
-    install_env["PIP_CACHE_DIR"] = str(cache_dir)
+    install_env = installation_environment()
 
     if "torch" in mismatches:
         if cuda_index not in profile.torch_cuda_indexes:

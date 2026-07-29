@@ -161,6 +161,56 @@ def test_gemma_dflash_uses_its_own_vllm_environment():
     assert "refs/pull/41703/head" in profile.setup_requirements[0]
 
 
+def test_installation_environment_keeps_large_build_files_under_data_root(
+    tmp_path, monkeypatch
+):
+    data_root = tmp_path / "persistent-data"
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(data_root))
+    monkeypatch.delenv("DLLM_PIP_CACHE_DIR", raising=False)
+    monkeypatch.delenv("DLLM_UV_CACHE_DIR", raising=False)
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+    monkeypatch.delenv("DLLM_BUILD_TMPDIR", raising=False)
+    monkeypatch.delenv("DLLM_TORCH_EXTENSIONS_DIR", raising=False)
+    monkeypatch.delenv("VLLM_USE_PRECOMPILED", raising=False)
+
+    environment = _model_script.installation_environment(
+        prefer_vllm_precompiled=True
+    )
+
+    assert environment["PIP_CACHE_DIR"] == str(data_root / "pip-cache")
+    assert environment["UV_CACHE_DIR"] == str(data_root / "uv-cache")
+    assert environment["TMPDIR"] == str(data_root / "tmp")
+    assert environment["TMP"] == str(data_root / "tmp")
+    assert environment["TEMP"] == str(data_root / "tmp")
+    assert environment["TORCH_EXTENSIONS_DIR"] == str(
+        data_root / "torch-extensions"
+    )
+    assert environment["VLLM_USE_PRECOMPILED"] == "1"
+    assert all(
+        (data_root / name).is_dir()
+        for name in ("pip-cache", "uv-cache", "tmp", "torch-extensions")
+    )
+
+
+def test_installation_environment_respects_explicit_build_overrides(
+    tmp_path, monkeypatch
+):
+    custom_tmp = tmp_path / "custom-tmp"
+    custom_uv = tmp_path / "custom-uv"
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("DLLM_BUILD_TMPDIR", str(custom_tmp))
+    monkeypatch.setenv("DLLM_UV_CACHE_DIR", str(custom_uv))
+    monkeypatch.setenv("VLLM_USE_PRECOMPILED", "0")
+
+    environment = _model_script.installation_environment(
+        prefer_vllm_precompiled=True
+    )
+
+    assert environment["TMPDIR"] == str(custom_tmp)
+    assert environment["UV_CACHE_DIR"] == str(custom_uv)
+    assert environment["VLLM_USE_PRECOMPILED"] == "0"
+
+
 def test_diffusiongemma_repairs_missing_torchvision(monkeypatch):
     installed = {
         "torch": "2.6.0+cu124",
