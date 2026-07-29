@@ -25,6 +25,9 @@ from ..registry import build_dataset, load_yaml
 
 
 PREPARED_SCHEMA_VERSION = 1
+DATASET_GROUP_PREFIXES = {
+    "sudoku": "sudoku",
+}
 
 
 class DataPreparationError(RuntimeError):
@@ -189,7 +192,12 @@ def prepare_matrix_datasets(
     force: bool = False,
     dataset_names: list[str] | tuple[str, ...] = (),
 ) -> list[PreparedDataset]:
-    """Prepare each unique dataset entry in an experiment matrix once."""
+    """Prepare each unique dataset entry in an experiment matrix once.
+
+    Group selectors such as ``sudoku`` expand to every matching dataset
+    variant declared by that matrix (currently every dataset name beginning
+    with ``sudoku``).
+    """
     experiment_path = Path(experiment_config).resolve()
     config = load_yaml(experiment_path)
     base = Path(config.get("base_dir", "."))
@@ -207,7 +215,11 @@ def prepare_matrix_datasets(
             dataset_config = (base / dataset_config).resolve()
         dataset_name = str(load_yaml(dataset_config)["dataset"])
         available.add(dataset_name)
-        if requested and dataset_name not in requested:
+        matches_group = any(
+            alias in requested and dataset_name.startswith(prefix)
+            for alias, prefix in DATASET_GROUP_PREFIXES.items()
+        )
+        if requested and dataset_name not in requested and not matches_group:
             continue
         samples_file = Path(entry["samples_file"]) if entry.get("samples_file") else None
         if samples_file is not None and not samples_file.is_absolute():
@@ -219,7 +231,7 @@ def prepare_matrix_datasets(
         prepared.append(
             prepare_dataset(dataset_config, samples_file=samples_file, force=force)
         )
-    unknown = requested.difference(available)
+    unknown = requested.difference(available).difference(DATASET_GROUP_PREFIXES)
     if unknown:
         raise DataPreparationError(
             f"unknown dataset(s): {', '.join(sorted(unknown))}; available: "

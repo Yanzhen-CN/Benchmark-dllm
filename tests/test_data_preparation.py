@@ -147,6 +147,27 @@ def test_full_matrix_prepare_can_filter_to_sudoku9(tmp_path, monkeypatch):
     assert [item.dataset_name for item in prepared] == ["sudoku9"]
 
 
+def test_full_matrix_prepare_sudoku_group_expands_all_variants(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
+    monkeypatch.setattr(
+        "dllm_bench.runner.data_preparation.build_dataset",
+        lambda config_path: _PreparedMatrixStub(Path(config_path).stem),
+    )
+
+    prepared = prepare_matrix_datasets(
+        FULL_MATRIX_CONFIG, dataset_names=["sudoku"]
+    )
+
+    assert [item.dataset_name for item in prepared] == [
+        "sudoku4",
+        "sudoku9",
+        "sudoku4_thinking",
+        "sudoku9_thinking",
+    ]
+
+
 def test_prepare_data_public_dataset_flag_is_forwarded(monkeypatch):
     captured = {}
     monkeypatch.setattr(prepare_data, "run_in_root_venv", lambda *args: None)
@@ -157,6 +178,19 @@ def test_prepare_data_public_dataset_flag_is_forwarded(monkeypatch):
 
     assert prepare_data.main(["-d", "sudoku9"]) == 0
     assert captured["dataset_names"] == ["sudoku9"]
+
+
+def test_prepare_data_accepts_sudoku_group_with_force(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(prepare_data, "run_in_root_venv", lambda *args: None)
+    monkeypatch.setattr(
+        "dllm_bench.runner.data_preparation.prepare_matrix_datasets",
+        lambda experiment_config, **kwargs: captured.update(kwargs) or [],
+    )
+
+    assert prepare_data.main(["-d", "sudoku", "--force"]) == 0
+    assert captured["dataset_names"] == ["sudoku"]
+    assert captured["force"] is True
 
 
 def test_prepare_data_help_works_outside_repository_without_creating_venv(tmp_path):

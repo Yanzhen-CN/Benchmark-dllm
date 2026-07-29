@@ -52,6 +52,7 @@ Benchmark-dllm/
 ```bash
 # RunPod: prepare once, then generate immutable raw records.
 python prepare_data.py
+python prepare_data.py -d sudoku --force  # all Sudoku variants in the matrix
 python prepare_model.py -m illada
 python run_model.py -m illada --output-root output
 python prepare_model.py -m illada_vargen

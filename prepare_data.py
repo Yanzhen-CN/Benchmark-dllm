@@ -32,7 +32,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="extend",
         nargs="+",
         default=[],
-        help="Dataset name(s) to prepare, e.g. -d sudoku ruler (default: all)",
+        help=(
+            "Dataset name(s) to prepare. The 'sudoku' group expands to every "
+            "sudoku* variant in the selected matrix (default: all datasets)"
+        ),
     )
     parser.add_argument("--force", action="store_true", help="Rebuild matching cached artifacts")
     parser.add_argument(

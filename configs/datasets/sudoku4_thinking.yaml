@@ -1,0 +1,21 @@
+# Reference-only reasoning-prompt variant; prepare 100 rows and run one at 2K.
+# Main compact Sudoku track for 4B/8B general checkpoints. The source and
+# primary blank-cell metric follow d1; the shared benchmark prompt uses a
+# direct raw copy-and-fill answer protocol with no reasoning text. Whole-puzzle
+# validity is also reported so partial credit cannot look like a solved board.
+dataset: sudoku4_thinking
+dataset_class: dllm_bench.datasets.sudoku4.Sudoku4ThinkingDataset
+primary_metric: d1_blank_cell_accuracy
+aux_metrics:
+  - puzzle_success_rate
+  - reference_exact_match
+  - given_preservation_rate
+  - answer_format_valid
+  - answer_marker_complete_rate
+sample_size: 100
+seed: 42
+dataset_kwargs:
+  sample_count: 100
+  seed: 42
+# Keep the 256-token shared main point for cross-model comparability and
+# tokenizer headroom, although the requested answer itself is only 16 digits.

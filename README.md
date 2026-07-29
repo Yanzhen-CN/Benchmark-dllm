@@ -404,6 +404,7 @@ Prepare every real dataset declared in the matrix before allocating a GPU:
 python prepare_data.py
 python prepare_data.py -d sudoku4
 python prepare_data.py -d sudoku9 ruler
+python prepare_data.py -d sudoku --force  # every sudoku* variant in the matrix
 python prepare_data.py --force  # rebuild matching prepared artifacts
 ```
 
