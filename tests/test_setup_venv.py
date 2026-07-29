@@ -157,6 +157,11 @@ def test_gemma_dflash_uses_its_own_vllm_environment():
     assert profile.venv_subdir == "gemma_dflash"
     assert profile.model_config == "configs/models/gemma_dflash.yaml"
     assert profile.torch_version is None
+    assert profile.transformers_version == "5.14.1"
+    assert (
+        profile.transformers_version
+        == _model_script.PROFILES["gemma"].transformers_version
+    )
     assert profile.required_distributions == ("vllm", "transformers", "torch")
     assert "refs/pull/41703/head" in profile.setup_requirements[0]
 

@@ -67,6 +67,7 @@ PROFILES: Mapping[str, ModelProfile] = {
         "gemma_dflash",
         "configs/models/gemma_dflash.yaml",
         "dev,api,gpu",
+        transformers_version="5.14.1",
         setup_requirements=(
             "vllm @ git+https://github.com/vllm-project/vllm.git@refs/pull/41703/head",
         ),
