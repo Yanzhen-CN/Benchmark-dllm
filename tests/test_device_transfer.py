@@ -26,7 +26,7 @@ class _VramMonitor:
         self.closed = False
 
     def snapshot(self) -> str:
-        return "GPU 0 VRAM 20.0/80.0 GiB (25.0%)"
+        return "GPU 0 VRAM [#####---------------]  25.0% (20.0/80.0 GiB)"
 
     def close(self) -> None:
         self.closed = True
@@ -46,10 +46,12 @@ def test_cuda_transfer_reports_phase_and_real_elapsed_time(monkeypatch, capsys):
 
     assert model.devices == [device]
     assert monitor.closed
-    assert capsys.readouterr().out.splitlines() == [
-        "Moving checkpoint to GPU ... 0.0s elapsed | GPU 0 VRAM 20.0/80.0 GiB (25.0%)",
-        "Moved checkpoint to GPU in 2.2s | GPU 0 VRAM 20.0/80.0 GiB (25.0%)",
-    ]
+    output = capsys.readouterr().out
+    assert output.count("\r") == 2
+    assert output.count("\n") == 1
+    assert "Moving checkpoint to GPU ... 0.0s elapsed" in output
+    assert "GPU 0 VRAM [#####---------------]  25.0% (20.0/80.0 GiB)" in output
+    assert "Moved checkpoint to GPU in 2.2s" in output
 
 
 def test_cpu_transfer_keeps_plain_model_to_without_progress_output(capsys):
@@ -73,11 +75,10 @@ def test_slow_cuda_transfer_reports_elapsed_heartbeat(monkeypatch, capsys):
             release_transfer.set()
             return self
 
-    def report_once(stop, *, label, started, vram):
+    def report_once(stop, *, label, started, vram, display):
         del started
-        print(
-            f"Moving {label} to GPU ... 5.0s elapsed | {vram.snapshot()}",
-            flush=True,
+        display.update(
+            f"Moving {label} to GPU ... 5.0s elapsed | {vram.snapshot()}"
         )
         heartbeat_reported.set()
         stop.wait(timeout=1.0)
@@ -96,11 +97,12 @@ def test_slow_cuda_transfer_reports_elapsed_heartbeat(monkeypatch, capsys):
 
     assert release_transfer.is_set()
     assert monitor.closed
-    assert capsys.readouterr().out.splitlines() == [
-        "Moving Qwen3-8B to GPU ... 0.0s elapsed | GPU 0 VRAM 20.0/80.0 GiB (25.0%)",
-        "Moving Qwen3-8B to GPU ... 5.0s elapsed | GPU 0 VRAM 20.0/80.0 GiB (25.0%)",
-        "Moved Qwen3-8B to GPU in 5.2s | GPU 0 VRAM 20.0/80.0 GiB (25.0%)",
-    ]
+    output = capsys.readouterr().out
+    assert output.count("\r") == 3
+    assert output.count("\n") == 1
+    assert "Moving Qwen3-8B to GPU ... 0.0s elapsed" in output
+    assert "Moving Qwen3-8B to GPU ... 5.0s elapsed" in output
+    assert "Moved Qwen3-8B to GPU in 5.2s" in output
 
 
 def test_failed_cuda_transfer_still_closes_vram_monitor(monkeypatch):
@@ -116,3 +118,9 @@ def test_failed_cuda_transfer_still_closes_vram_monitor(monkeypatch):
         device_transfer.move_model_to_device(_FailingModel(), _Device("cuda"))
 
     assert monitor.closed
+
+
+def test_vram_bar_is_bounded_and_has_fixed_width():
+    assert device_transfer._vram_bar(25.0) == "[#####---------------]"
+    assert device_transfer._vram_bar(-10.0) == "[--------------------]"
+    assert device_transfer._vram_bar(120.0) == "[####################]"

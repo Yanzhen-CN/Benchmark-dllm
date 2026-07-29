@@ -8,6 +8,28 @@ from time import perf_counter
 
 _TRANSFER_HEARTBEAT_SECONDS = 1.0
 _GIB = 1024**3
+_VRAM_BAR_WIDTH = 20
+
+
+def _vram_bar(percent: float) -> str:
+    bounded = min(100.0, max(0.0, percent))
+    filled = round(_VRAM_BAR_WIDTH * bounded / 100.0)
+    return f"[{'#' * filled}{'-' * (_VRAM_BAR_WIDTH - filled)}]"
+
+
+class _TransferDisplay:
+    """Render transfer status by replacing one terminal line in place."""
+
+    def __init__(self) -> None:
+        self._width = 0
+
+    def update(self, message: str) -> None:
+        self._width = max(self._width, len(message))
+        print(f"\r{message.ljust(self._width)}", end="", flush=True)
+
+    def finish(self, message: str) -> None:
+        self._width = max(self._width, len(message))
+        print(f"\r{message.ljust(self._width)}", flush=True)
 
 
 class _GpuVramMonitor:
@@ -44,8 +66,8 @@ class _GpuVramMonitor:
                 total = int(memory.total)
                 percent = (100.0 * used / total) if total else 0.0
                 parts.append(
-                    f"GPU {index} VRAM {used / _GIB:.1f}/{total / _GIB:.1f} GiB "
-                    f"({percent:.1f}%)"
+                    f"GPU {index} VRAM {_vram_bar(percent)} {percent:5.1f}% "
+                    f"({used / _GIB:.1f}/{total / _GIB:.1f} GiB)"
                 )
             return ", ".join(parts) or None
         except Exception:
@@ -74,10 +96,11 @@ def _report_transfer_heartbeat(
     label: str,
     started: float,
     vram: _GpuVramMonitor,
+    display: _TransferDisplay,
 ) -> None:
     while not stop.wait(_TRANSFER_HEARTBEAT_SECONDS):
         elapsed = perf_counter() - started
-        print(_transfer_status(label, elapsed, vram), flush=True)
+        display.update(_transfer_status(label, elapsed, vram))
 
 
 def move_model_to_device(model, device, *, model_name: str | None = None):
@@ -95,7 +118,8 @@ def move_model_to_device(model, device, *, model_name: str | None = None):
     label = (model_name or model.__class__.__name__).rsplit("/", 1)[-1]
     started = perf_counter()
     vram = _GpuVramMonitor()
-    print(_transfer_status(label, 0.0, vram), flush=True)
+    display = _TransferDisplay()
+    display.update(_transfer_status(label, 0.0, vram))
     stop_heartbeat = Event()
     heartbeat = Thread(
         target=_report_transfer_heartbeat,
@@ -104,19 +128,27 @@ def move_model_to_device(model, device, *, model_name: str | None = None):
             "label": label,
             "started": started,
             "vram": vram,
+            "display": display,
         },
         daemon=True,
     )
     heartbeat.start()
     final_vram = None
+    succeeded = False
     try:
         model.to(device)
+        succeeded = True
     finally:
         stop_heartbeat.set()
         heartbeat.join()
         final_vram = vram.snapshot()
         vram.close()
-    elapsed = perf_counter() - started
-    suffix = f" | {final_vram}" if final_vram else ""
-    print(f"Moved {label} to GPU in {elapsed:.1f}s{suffix}", flush=True)
+        elapsed = perf_counter() - started
+        suffix = f" | {final_vram}" if final_vram else ""
+        if succeeded:
+            display.finish(f"Moved {label} to GPU in {elapsed:.1f}s{suffix}")
+        else:
+            display.finish(
+                f"Failed moving {label} to GPU after {elapsed:.1f}s{suffix}"
+            )
     return model
