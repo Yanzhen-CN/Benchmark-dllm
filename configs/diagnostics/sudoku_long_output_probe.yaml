@@ -1,0 +1,18 @@
+# DIAGNOSTIC ONLY — not part of the formal benchmark matrix.
+# Allows reasoning-oriented dLLMs a long Sudoku output canvas to inspect
+# whether they eventually emit a complete 81-digit answer.
+base_dir: ../..
+
+models:
+  - config: configs/models/illada.yaml
+    variants: [best, fast]
+  - config: configs/models/dreamreasoner.yaml
+    variants: [best, fast]
+
+datasets:
+  - config: configs/datasets/sudoku.yaml
+    max_new_tokens: 1024
+
+seed: 42
+resource_measurement: diagnostic_only
+trace_scope: all_samples

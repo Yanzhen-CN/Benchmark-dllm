@@ -45,7 +45,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
 
 def test_sudoku_long_output_probe_is_separate_and_uses_1024_tokens():
     jobs, seed = load_matrix_jobs(
-        ROOT / "configs" / "experiments" / "sudoku_long_output_probe.yaml"
+        ROOT / "configs" / "diagnostics" / "sudoku_long_output_probe.yaml"
     )
 
     assert seed == 42
