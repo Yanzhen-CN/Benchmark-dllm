@@ -81,12 +81,6 @@ defaults, applies only to that invocation, and must use a separate diagnostic
 output root. Its quality/resource results must not be merged with either
 formal 256-token row. Formal runs never pass this option.
 
-For an intentional overwrite, `run_model.py --no-resume` clears only the JSON
-contents of each selected model/config/dataset output directory before
-regenerating it. This
-prevents a smaller rerun from retaining old extra sample files or stale
-`oom_info.json`; unselected models and datasets are untouched.
-
 The formal RULER set contains 10 NIAH, 10 multi-hop, and 10 aggregation
 questions. Front, middle, and back answer positions are also balanced across
 the same 30 samples. For local HF models, filler is fitted after the model's

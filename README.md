@@ -555,11 +555,6 @@ also enable `--require-all-metrics`; it requires compute only when
 `--measure-compute` was explicitly selected. Use `--allow-missing-metrics`
 only for an explicitly non-formal smoke run.
 
-`--no-resume` clears the JSON contents of each selected
-model/config/dataset output directory before generation. This removes old
-sample JSON and stale `oom_info.json`
-without touching any unselected model or dataset; use it for an overwrite run.
-
 Compute can also be supplemented later in the same output tree. Run the same
 model, matrix, sample selection, and `--output-root` with `--measure-compute`;
 resume skips every persisted generation and profiles only successful sample

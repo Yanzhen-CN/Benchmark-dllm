@@ -487,16 +487,10 @@ def test_run_generation_no_resume_regenerates_everything(tmp_path):
     out_dir = tmp_path / "model_output"
 
     run_generation(adapter, "gsm8k", samples, max_new_tokens=16, out_dir=out_dir)
-    stale_sample = out_dir / "no-longer-selected.json"
-    stale_sample.write_text("{}", encoding="utf-8")
-    stale_oom = out_dir / "oom_info.json"
-    stale_oom.write_text("{}", encoding="utf-8")
     second = run_generation(adapter, "gsm8k", samples, max_new_tokens=16, out_dir=out_dir, resume=False)
 
     assert second.generated == 2
     assert second.skipped == 0
-    assert not stale_sample.exists()
-    assert not stale_oom.exists()
 
 
 def test_run_generation_partial_then_resume_only_fills_the_gap(tmp_path):
