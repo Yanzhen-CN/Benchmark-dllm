@@ -43,6 +43,10 @@ PROFILES: Mapping[str, ModelProfile] = {
         "illada", "illada", "configs/models/illada.yaml",
         "dev,hf,gpu", "2.6.0", "4.57.1", ("cu118", "cu124", "cu126"),
     ),
+    "illada_vargen": ModelProfile(
+        "illada_vargen", "illada_vargen", "configs/models/illada_vargen.yaml",
+        "dev,hf,gpu", "2.6.0", "4.57.1", ("cu118", "cu124", "cu126"),
+    ),
     "dreamreasoner": ModelProfile(
         "dreamreasoner", "dreamreasoner", "configs/models/dreamreasoner.yaml",
         "dev,hf,gpu", "2.5.1", "5.7.0", ("cu118", "cu121", "cu124"),

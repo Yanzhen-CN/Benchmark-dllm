@@ -119,6 +119,21 @@ def test_illada_variants_carry_distinct_steps_per_block():
     assert best.sampling_profile is None
 
 
+def test_illada_vargen_changes_only_the_canvas_execution_path():
+    best = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada_vargen.yaml", variant="best"
+    )
+    fast = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada_vargen.yaml", variant="fast"
+    )
+
+    assert best.name == "illada_vargen"
+    assert best.execution_path == "official-var-generate"
+    assert best._step_config.block_length == 32
+    assert best._step_config.steps_per_block == 32
+    assert fast._step_config.steps_per_block == 16
+
+
 def test_dreamreasoner_variants_carry_distinct_steps_per_block():
     best = build_model_adapter(
         CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="best"

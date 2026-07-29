@@ -126,6 +126,7 @@ def test_prepare_model_defaults_to_all_matrix_models_via_isolated_scripts(tmp_pa
         "qwen3_4b",
         "qwen3_8b",
         "illada",
+        "illada_vargen",
         "dreamreasoner",
         "w1",
         "diffusiongemma",

@@ -20,6 +20,7 @@ mode to narrow variants.
 
     python prepare_model.py
     python prepare_model.py -m illada -m qwen3_4b
+    python prepare_model.py -m illada_vargen
     python prepare_model.py --model-config configs/models/illada.yaml
     python prepare_model.py --model-config configs/models/illada.yaml --variant best
 """

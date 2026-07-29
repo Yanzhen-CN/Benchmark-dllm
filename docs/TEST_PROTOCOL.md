@@ -14,9 +14,11 @@ keeps every model on its own published inference path.
   OOM retry with changed settings to the **native-mechanism matrix**. The only
   speculative-decoding exception is the separately labelled `gemma_dflash`
   deployment row; it must not replace native Gemma in mechanism comparisons.
-- Keep model-native execution intact. iLLaDA uses its full-sequence official
-  denoising loop without KV cache. DreamReasoner keeps its checkpoint's native
-  prefix KV cache. AR models use their checkpoint `generate()` path.
+- Keep each declared execution path intact. `illada` uses the official
+  fixed-canvas denoising loop without KV cache; the separately labelled
+  `illada_vargen` row uses official `var_generate`, appending only the active
+  block. DreamReasoner keeps its checkpoint's native prefix KV cache. AR
+  models use their checkpoint `generate()` path.
 - Dataset preparation, checkpoint download, model loading, and the short
   warmup are outside every sample timing window.
 - Persist each sample immediately. `--resume` skips completed samples without
@@ -36,6 +38,7 @@ keeps every model on its own published inference path.
 | Sudoku9 | DG/Gemma-4: 100 (50 Easy + 50 Hard); 4B/8B/W1: 10 (5 + 5) | General-instruction prompt, 256 output tokens | Formal 9x9 track / small-model feasibility probe |
 | RULER | 30 | 4096 encoded-input target + at most 64 output tokens | Formal |
 | HelloBench, iLLaDA | 1 | 2K-word profile, 3072-token generation cap | Reference diagnostic |
+| HelloBench, iLLaDA VarGen | 1 | 2K-word profile, 3072-token generation cap | Execution-path diagnostic |
 | HelloBench, DreamReasoner | 1 | 2K-word profile, 3072-token generation cap | Reference diagnostic |
 | HelloBench, other models | 1 per configured 2K/4K profile | Per-profile cap | Reference diagnostic |
 | RULER half-context probe | 1 | Input = floor(declared max context / 2), output cap = 64 | Capacity diagnostic only |
@@ -93,6 +96,7 @@ aggregates. For the current declarations its target inputs are:
 | Model | Declared maximum | Probe input |
 |---|---:|---:|
 | iLLaDA | 8192 | 4096 |
+| iLLaDA VarGen | 8192 | 4096 |
 | DreamReasoner | 32768 | 16384 |
 | Qwen3-4B / Qwen3-8B | 40960 | 20480 |
 | W1 | 8192 | 4096 |
@@ -106,8 +110,9 @@ Each model subprocess executes jobs in this order:
 2. Load the checkpoint once and run an untimed eight-token warmup.
 3. Run all regular formal datasets, persisting every sample immediately.
 4. Run formal RULER at 4096 input tokens for all 30 samples.
-5. Run the configured HelloBench reference profile(s). iLLaDA and
-   DreamReasoner receive only the 2K-word, one-sample profile.
+5. Run the configured HelloBench reference profile(s). iLLaDA,
+   iLLaDA VarGen, and DreamReasoner receive only the 2K-word, one-sample
+   profile.
 6. Run the isolated half-context RULER probe last.
 7. Exit the model process, which releases all CPU/GPU state before the next
    model family starts.
@@ -145,7 +150,7 @@ from that model is valid on that machine.
 The harness cannot make an incompatible model fit without changing the model
 being benchmarked. Before a full run, use the intended production GPU:
 
-- 24 GiB-class GPU: Qwen3-4B, Qwen3-8B, iLLaDA-8B, and DreamReasoner-8B are
+- 24 GiB-class GPU: Qwen3-4B, Qwen3-8B, both iLLaDA execution paths, and DreamReasoner-8B are
   the intended local group. The 4K formal RULER point is selected to avoid the
   observed iLLaDA 8K OOM. The half-context probe may still OOM, especially for
   DreamReasoner.
@@ -237,8 +242,9 @@ A model family is complete only when:
   sample is exactly 4096 encoded input tokens; W1 is explicitly labelled as an
   unverified 4096-word whitespace proxy. All variants allow at most 64 output
   tokens.
-- iLLaDA and DreamReasoner HelloBench each have exactly one 2K-profile sample
-  per selected variant and no 4K-profile sample in that run.
+- iLLaDA fixed canvas, iLLaDA VarGen, and DreamReasoner HelloBench each have
+  exactly one 2K-profile sample per selected variant and no 4K-profile sample
+  in that run.
 - Every successful formal sample has positive wall time plus the required
   energy and peak-VRAM fields; output length and status are present.
 - `ruler_context_probe` has exactly one persisted success or one explicit

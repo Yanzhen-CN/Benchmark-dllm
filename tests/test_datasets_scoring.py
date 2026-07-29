@@ -426,11 +426,11 @@ def test_sudoku4_loader_validates_official_shape_and_prompt(tmp_path):
     assert len(samples) == 500
     assert samples[0].meta["blank_count"] == 8
     assert samples[0].meta["difficulty_stratified"] is False
-    assert "Copy the puzzle into your output" in samples[0].prompt
-    assert "Your output should only be the completed 16-number puzzle" in samples[0].prompt
+    assert "Copy the puzzle to the output" in samples[0].prompt
+    assert "exactly 16 digits using only 1-4 and nothing else" in samples[0].prompt
     assert "<reasoning>" not in samples[0].prompt
     assert "<answer>" not in samples[0].prompt
-    assert samples[0].prompt.endswith("3102200002100320\n")
+    assert "3102200002100320" in samples[0].prompt
 
     reasoning_sample = _load_d1_samples(
         source, enable_reasoning=True
@@ -630,9 +630,9 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
         _build_prompt(easy),
         _build_prompt(hard),
     ]
-    assert all("Each displayed row contains exactly 9 cells" in sample.prompt for sample in samples)
-    assert all("Copy the puzzle into your output" in sample.prompt for sample in samples)
-    assert all("Your output should only be the completed 81-number puzzle" in sample.prompt for sample in samples)
+    assert all("Solve this 9x9 Sudoku puzzle" in sample.prompt for sample in samples)
+    assert all("Copy the puzzle to the output" in sample.prompt for sample in samples)
+    assert all("exactly 81 digits using only 1-9 and nothing else" in sample.prompt for sample in samples)
     assert all("You may reason" not in sample.prompt for sample in samples)
     assert all(SUDOKU_ANSWER_BEGIN not in sample.prompt for sample in samples)
     assert all(SUDOKU_ANSWER_END not in sample.prompt for sample in samples)

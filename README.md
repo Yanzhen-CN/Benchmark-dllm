@@ -20,6 +20,7 @@ not just interface stubs:
 | Model | Status | Verified against |
 | --- | --- | --- |
 | iLLaDA | **Real, ported sampler** (`models/illada.py`) | Official `ML-GSAI/LLaDA` `generate.py` plus the iLLaDA checkpoint card — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, FP64 gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
+| iLLaDA VarGen | **Real, official variable-canvas path** (`models/illada_vargen.py`) | Uses the same iLLaDA checkpoint and Best/Fast schedules, but follows official `var_generate`: append and denoise only the active block, then append the next. Future blocks are absent from both the model forward and that step's trace. Tests in `tests/test_illada_vargen_sampling.py` hard-check the growing forward lengths. |
 | DiffusionGemma | **Real** (`models/diffusiongemma.py`) | Verified against the upstream `DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` implementation. Trace capture wraps `accept_canvas` through `_prepare_sampler`. Tests live in `tests/test_diffusiongemma_sampling.py`. |
 | Gemma 4 26B-A4B AR | **Real** (`models/gemma4_ar.py`) | Official `AutoProcessor` + `AutoModelForMultimodalLM` path in native BF16. It matches DiffusionGemma's 25.2B-total/3.8B-active MoE scale and reuses the common AR generation/trace protocol. |
 | Gemma 4 + DFlash | **Real, deployment track** (`models/gemma_dflash.py`) | Official `google/gemma-4-26B-A4B-it` target plus `z-lab/gemma-4-26B-A4B-it-DFlash` draft through the official temporary vLLM Gemma4 build. It keeps the common result/score/resource interface and records vLLM acceptance counters, but is not a native AR baseline and exposes no per-token trace through the public serving API. |
@@ -117,6 +118,7 @@ With no `-m`, each command covers every formal model and variant declared in
 # GPU server: generation only
 python run_model.py
 python run_model.py -m illada
+python run_model.py -m illada_vargen
 python run_model.py -m illada dreamreasoner -d ruler hellobench
 
 # Local machine after copying output/model_output/
@@ -158,6 +160,7 @@ aggregate quality, latency, TPS/SPS/EPS, energy, or ranking statistics.
 python setup_venv.py                   # every model declared in the matrix
 python setup_venv.py -m qwen3_8b       # only .venvs/qwen3_8b
 python setup_venv.py -m illada         # only .venvs/illada
+python setup_venv.py -m illada_vargen  # only .venvs/illada_vargen
 python setup_venv.py -m dreamreasoner  # only .venvs/dreamreasoner
 python setup_venv.py -m diffusiongemma # only .venvs/diffusiongemma
 python setup_venv.py -m gemma          # only .venvs/gemma (reuses the legacy env if present)
@@ -187,6 +190,7 @@ Available entry points and environments:
 | Qwen3-4B AR | `venv_scripts/qwen3_4b.py` | `.venvs/qwen3_4b` |
 | Qwen3-8B AR | `venv_scripts/qwen3_8b.py` | `.venvs/qwen3_8b` |
 | iLLaDA | `venv_scripts/illada.py` | `.venvs/illada` |
+| iLLaDA VarGen | `venv_scripts/illada_vargen.py` | `.venvs/illada_vargen` |
 | DreamReasoner | `venv_scripts/dreamreasoner.py` | `.venvs/dreamreasoner` |
 | DiffusionGemma | `venv_scripts/diffusiongemma.py` | `.venvs/diffusiongemma` |
 | Gemma 4 26B-A4B AR | `venv_scripts/gemma.py` | `.venvs/gemma` |
@@ -575,6 +579,15 @@ declared implementation. Enabled upstream execution features are persisted in
 iLLaDA retains commit `6dfd132`'s fixed-canvas implementation of the official
 sampler. Trace snapshots are copied after each forward and do not participate
 in token selection.
+
+`illada_vargen` is the parallel official `var_generate` execution-path
+ablation. It uses the same BF16 checkpoint, prompt formatting, `mask_id=5`,
+block length, Best/Fast transfer schedules, temperature and remasking rule as
+`illada`; only canvas allocation changes. During a block's denoising forwards,
+later blocks have not been appended, so they cannot contribute future mask
+embeddings. Its trace grows one block at a time and records only positions that
+exist at that forward. It has an independent `.venvs/illada_vargen` process
+and can be prepared, generated, scored and visualized with `-m illada_vargen`.
 
 DreamReasoner retains the checkpoint's prefix-KV-cache generation path from
 [`generation_utils.py`](https://huggingface.co/Dream-org/DreamReasoner-8B/blob/main/generation_utils.py).

@@ -22,6 +22,7 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "qwen3_4b",
         "qwen3_8b",
         "illada",
+        "illada_vargen",
         "dreamreasoner",
         "w1",
         "diffusiongemma",
@@ -88,6 +89,16 @@ def test_model_venvs_share_one_parent_directory(monkeypatch):
     monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
     profile = _model_script.PROFILES["illada"]
     assert _model_script.venv_dir(profile) == _model_script.REPO_ROOT / ".venvs" / "illada"
+
+
+def test_illada_vargen_has_a_separate_but_version_matched_environment():
+    fixed = _model_script.PROFILES["illada"]
+    vargen = _model_script.PROFILES["illada_vargen"]
+
+    assert vargen.venv_subdir == "illada_vargen"
+    assert vargen.model_config == "configs/models/illada_vargen.yaml"
+    assert vargen.torch_version == fixed.torch_version
+    assert vargen.transformers_version == fixed.transformers_version
 
 
 def test_gemma_reuses_legacy_environment_after_public_rename(tmp_path, monkeypatch):

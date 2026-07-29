@@ -8,6 +8,7 @@ Python. This keeps incompatible torch/transformers versions isolated.
 
     python run_bench.py
     python run_bench.py -m illada
+    python run_bench.py -m illada_vargen
     python run_bench.py -m dreamreasoner
     python run_bench.py -m qwen3_4b
     python run_bench.py -m qwen3_8b
@@ -196,8 +197,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         env_updates["N_REPRESENTATIVE"] = str(args.n_representative)
     if args.n_samples is not None:
         env_updates["N_SAMPLES"] = str(args.n_samples)
-    if args.enable_reasoning:
-        env_updates["DLLM_BENCH_ENABLE_REASONING"] = "1"
+    env_updates["DLLM_BENCH_ENABLE_REASONING"] = (
+        "1" if args.enable_reasoning else "0"
+    )
     if args.max_new_tokens is not None:
         if args.max_new_tokens <= 0:
             raise SystemExit("--max-new-tokens must be greater than zero")

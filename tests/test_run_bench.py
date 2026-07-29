@@ -8,7 +8,8 @@ import run_bench
 def test_default_dry_run_selects_every_matrix_model(capsys):
     assert run_bench.main(["--dry-run"]) == 0
     output = capsys.readouterr().out
-    assert "illada, dreamreasoner" in output
+    assert "illada, illada_vargen, dreamreasoner" in output
+    assert "venv_scripts\\illada_vargen.py run" in output or "venv_scripts/illada_vargen.py run" in output
     assert "venv_scripts\\illada.py run" in output or "venv_scripts/illada.py run" in output
     assert "venv_scripts\\diffusiongemma.py run" in output or "venv_scripts/diffusiongemma.py run" in output
     assert "venv_scripts\\gemma.py run" in output or "venv_scripts/gemma.py run" in output

@@ -54,6 +54,8 @@ Benchmark-dllm/
 python prepare_data.py
 python prepare_model.py -m illada
 python run_model.py -m illada --output-root output
+python prepare_model.py -m illada_vargen
+python run_model.py -m illada_vargen --output-root output
 
 # Local: place transferred runs under output/model_output, then derive results.
 python prepare_data.py

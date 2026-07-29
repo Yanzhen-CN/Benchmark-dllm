@@ -18,6 +18,7 @@ from dllm_bench.models.dreamreasoner import DreamReasonerAdapter
 from dllm_bench.models.hf_ar import QwenARAdapter
 from dllm_bench.models.hf_diffusion import DiffusionStepConfig
 from dllm_bench.models.illada import IlladaAdapter
+from dllm_bench.models.illada_vargen import IlladaVarGenAdapter
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +109,29 @@ def test_illada_different_checkpoints_load_independently(monkeypatch):
 
     assert model_calls["n"] == 2
     assert a._model is not b._model
+
+
+def test_illada_vargen_best_and_fast_share_one_load(monkeypatch):
+    tokenizer_calls, model_calls = _install_counting_fakes(
+        monkeypatch, transformers.AutoModel
+    )
+    best = IlladaVarGenAdapter(
+        "shared-vargen-checkpoint",
+        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
+        config_name="best",
+    )
+    fast = IlladaVarGenAdapter(
+        "shared-vargen-checkpoint",
+        DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=16),
+        config_name="fast",
+    )
+
+    best._ensure_loaded()
+    fast._ensure_loaded()
+
+    assert model_calls["n"] == 1
+    assert tokenizer_calls["n"] == 1
+    assert best._model is fast._model
 
 
 def test_dreamreasoner_loads_in_checkpoint_native_bfloat16(monkeypatch):

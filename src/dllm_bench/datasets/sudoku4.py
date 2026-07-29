@@ -20,7 +20,7 @@ from .remote import ensure_download
 
 
 SUDOKU4_SOURCE_REVISION = "6f5abf5ca8a58c6e08bbf06d412ad260dca6dbd3"
-SUDOKU4_PROTOCOL_REVISION = "direct-copy-fill-raw-4x4-v3"
+SUDOKU4_PROTOCOL_REVISION = "direct-copy-fill-raw-4x4-v4"
 SUDOKU4_REASONING_PROTOCOL_REVISION = "d1-zero-shot-4x4-v1"
 SUDOKU4_SOURCE_SHA256 = "ef86c7c28ebef88484d85fda59b3909a7b621241aa1abf36343437dbc4a3ffb6"
 SUDOKU4_SOURCE_URL = (
@@ -28,17 +28,9 @@ SUDOKU4_SOURCE_URL = (
     f"{SUDOKU4_SOURCE_REVISION}/dataset/4x4_test_sudoku.csv"
 )
 
-SUDOKU4_SYSTEM_PROMPT = """Complete the following 4x4 Sudoku puzzle. The puzzle is provided as a 16-character string in row-major order, where '0' represents an empty cell.
-
-Rules:
-- Fill empty cells with digits 1-4
-- Each row must contain digits 1-4 exactly once
-- Each column must contain digits 1-4 exactly once
-- Each 2x2 box must contain digits 1-4 exactly once
-
-Copy the puzzle into your output in the same order, replacing every 0 with its correct digit. Keep every non-zero clue unchanged.
-
-Your output should only be the completed 16-number puzzle: exactly 16 digits using only 1-4, with no spaces, answer tags, reasoning, analysis, intermediate grids, explanations, or other text."""
+SUDOKU4_SYSTEM_PROMPT = """Solve this 4x4 Sudoku puzzle: {puzzle}, where '0' represents an empty cell.
+Directly output the COMPLETE 16-character string answer. Copy the puzzle to the output and replace every 0 with the correct digit.
+Your output must contain exactly 16 digits using only 1-4 and nothing else."""
 
 SUDOKU4_REASONING_PROMPT = """Please solve the following 4x4 Sudoku puzzle. The puzzle is provided as a 16-character string reading left-to-right, top-to-bottom, where '0' represents empty cells.
 
@@ -80,12 +72,12 @@ def _reasoning_enabled(configured: bool | None = None) -> bool:
 def format_sudoku4_prompt(
     puzzle: str, enable_reasoning: bool | None = None
 ) -> str:
-    prompt = (
-        SUDOKU4_REASONING_PROMPT
-        if _reasoning_enabled(enable_reasoning)
-        else SUDOKU4_SYSTEM_PROMPT
-    )
-    return f"{prompt}\n\nSolve the following Sudoku puzzle: {puzzle}\n"
+    if _reasoning_enabled(enable_reasoning):
+        return (
+            f"{SUDOKU4_REASONING_PROMPT}\n\n"
+            f"Solve the following Sudoku puzzle: {puzzle}\n"
+        )
+    return SUDOKU4_SYSTEM_PROMPT.format(puzzle=puzzle)
 
 
 def extract_sudoku4_answer(text: str) -> tuple[str | None, bool, bool]:

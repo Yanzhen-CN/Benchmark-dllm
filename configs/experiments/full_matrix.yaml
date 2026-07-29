@@ -1,4 +1,4 @@
-# Reference list of the section-5 model x dataset matrix (8 model configs x
+# Reference list of the section-5 model x dataset matrix (9 model configs x
 # 7 task datasets plus one isolated context-capacity diagnostic).
 # This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
@@ -22,6 +22,14 @@ models:
       sudoku9:
         n_samples: 10
   - config: configs/models/illada.yaml    # illada-8B
+    variants: [best, fast]
+    dataset_overrides:
+      sudoku9:
+        n_samples: 10
+      hellobench:
+        hellobench_lengths: [2k]
+        n_samples: 1
+  - config: configs/models/illada_vargen.yaml # official incremental block canvas
     variants: [best, fast]
     dataset_overrides:
       sudoku9:

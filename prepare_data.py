@@ -9,6 +9,7 @@ validation, normalization, and generated-data work out of the run startup.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -34,8 +35,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Dataset name(s) to prepare, e.g. -d sudoku ruler (default: all)",
     )
     parser.add_argument("--force", action="store_true", help="Rebuild matching cached artifacts")
+    parser.add_argument(
+        "--enable-reasoning",
+        action="store_true",
+        help="Prepare Sudoku4/Sudoku9 with their original reasoning prompts",
+    )
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments)
+
+    os.environ["DLLM_BENCH_ENABLE_REASONING"] = (
+        "1" if args.enable_reasoning else "0"
+    )
 
     run_in_root_venv(__file__, arguments)
 
