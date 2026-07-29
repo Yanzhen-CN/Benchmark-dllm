@@ -260,6 +260,7 @@ class GemmaDFlashAdapter:
     def _ensure_loaded(self) -> None:
         import requests
         from transformers import AutoTokenizer
+        from dllm_bench.models.device_transfer import run_gpu_loading_operation
 
         external = os.environ.get("DLLM_DFLASH_SERVER_URL")
         if external:
@@ -267,16 +268,19 @@ class GemmaDFlashAdapter:
             response = requests.get(f"{self._base_url}/health", timeout=10)
             response.raise_for_status()
         else:
-            self._base_url = _SERVER.ensure(
-                target=self._model_name,
-                draft=self._draft_model_name,
-                host=self._server_host,
-                port=self._server_port,
-                startup_timeout_seconds=self._startup_timeout_seconds,
-                num_speculative_tokens=self._num_speculative_tokens,
-                max_model_len=self._max_model_len,
-                max_num_batched_tokens=self._max_num_batched_tokens,
-                gpu_memory_utilization=self._gpu_memory_utilization,
+            self._base_url = run_gpu_loading_operation(
+                lambda: _SERVER.ensure(
+                    target=self._model_name,
+                    draft=self._draft_model_name,
+                    host=self._server_host,
+                    port=self._server_port,
+                    startup_timeout_seconds=self._startup_timeout_seconds,
+                    num_speculative_tokens=self._num_speculative_tokens,
+                    max_model_len=self._max_model_len,
+                    max_num_batched_tokens=self._max_num_batched_tokens,
+                    gpu_memory_utilization=self._gpu_memory_utilization,
+                ),
+                label="Gemma DFlash target + draft via vLLM",
             )
         if self._tokenizer is None:
             self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)

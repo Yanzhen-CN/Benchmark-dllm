@@ -85,7 +85,7 @@ class _GpuVramMonitor:
 
 
 def _transfer_status(label: str, elapsed: float, vram: _GpuVramMonitor) -> str:
-    status = f"Moving {label} to GPU ... {elapsed:.1f}s elapsed"
+    status = f"Loading {label} on GPU ... {elapsed:.1f}s elapsed"
     snapshot = vram.snapshot()
     return f"{status} | {snapshot}" if snapshot else status
 
@@ -101,6 +101,26 @@ def _report_transfer_heartbeat(
     while not stop.wait(_TRANSFER_HEARTBEAT_SECONDS):
         elapsed = perf_counter() - started
         display.update(_transfer_status(label, elapsed, vram))
+
+
+def run_gpu_loading_operation(operation, *, label: str):
+    """Run a non-Transformers GPU load through the shared loading display.
+
+    Backends such as vLLM own model construction and device placement inside
+    their startup operation rather than exposing a ``model.to(device)`` call.
+    This adapter preserves that backend path while reusing the same elapsed
+    time and NVML VRAM heartbeat shown for in-process model transfers.
+    """
+
+    class _OperationAdapter:
+        result = None
+
+        def to(self, _device) -> None:
+            self.result = operation()
+
+    adapter = _OperationAdapter()
+    move_model_to_device(adapter, "cuda", model_name=label)
+    return adapter.result
 
 
 def move_model_to_device(model, device, *, model_name: str | None = None):
