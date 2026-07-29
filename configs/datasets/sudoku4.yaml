@@ -1,6 +1,7 @@
-# Main compact Sudoku track for 4B/8B general checkpoints. Source/prompt and
-# primary blank-cell metric follow d1. Whole-puzzle validity is also reported
-# so partial cell credit cannot be mistaken for a solved board.
+# Main compact Sudoku track for 4B/8B general checkpoints. The source and
+# primary blank-cell metric follow d1; the shared benchmark prompt uses a
+# direct raw copy-and-fill answer protocol with no reasoning text. Whole-puzzle
+# validity is also reported so partial credit cannot look like a solved board.
 dataset: sudoku4
 dataset_class: dllm_bench.datasets.sudoku4.Sudoku4Dataset
 primary_metric: d1_blank_cell_accuracy
@@ -15,6 +16,5 @@ seed: 42
 dataset_kwargs:
   sample_count: 100
   seed: 42
-# d1 evaluates LLaDA at both 128 and 256 output tokens. The shared main point
-# uses 256 because general instruction checkpoints can consume most of a
-# 128-token canvas on the required reasoning before reaching <answer>.
+# Keep the 256-token shared main point for cross-model comparability and
+# tokenizer headroom, although the requested answer itself is only 16 digits.

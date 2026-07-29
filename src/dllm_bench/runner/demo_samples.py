@@ -14,7 +14,7 @@ from ..datasets.hellobench import HelloBenchReference
 from ..datasets.mbpp import MbppSample
 from ..datasets.ruler import build_niah_sample
 from ..datasets.structeval_t import StructEvalSchema
-from ..datasets.sudoku import SudokuReference
+from ..datasets.sudoku9 import SudokuReference
 from ..datasets.sudoku4 import Sudoku4Reference, format_sudoku4_prompt
 
 _EASY_SUDOKU_SOLUTION = [
@@ -121,7 +121,7 @@ def _sudoku4_samples(n: int) -> list[Sample]:
 
 
 def _sudoku_trace_samples(n: int) -> list[Sample]:
-    from ..datasets.sudoku import format_sudoku_trace_prompt
+    from ..datasets.sudoku9 import format_sudoku_trace_prompt
 
     samples = _sudoku9_samples(n)
     return [

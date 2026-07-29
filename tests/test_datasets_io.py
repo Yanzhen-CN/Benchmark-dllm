@@ -17,7 +17,7 @@ from dllm_bench.datasets.hellobench import HelloBenchReference
 from dllm_bench.datasets.io import _records, load_samples_file
 from dllm_bench.datasets.mbpp import MbppSample
 from dllm_bench.datasets.ruler import RulerReference
-from dllm_bench.datasets.sudoku import SudokuReference
+from dllm_bench.datasets.sudoku9 import SudokuReference
 from dllm_bench.datasets.sudoku4 import Sudoku4Reference
 
 

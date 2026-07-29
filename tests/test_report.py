@@ -212,7 +212,7 @@ def test_render_sample_report_skips_sudoku_gif_for_non_sudoku_dataset(tmp_path):
 
 def test_render_sample_report_renders_sudoku_gif_for_81_position_trace(tmp_path):
     from dllm_bench.datasets.base import Sample
-    from dllm_bench.datasets.sudoku import SudokuReference
+    from dllm_bench.datasets.sudoku9 import SudokuReference
     from dllm_bench.interfaces import PositionState, TraceStep
 
     solution = [
@@ -256,7 +256,7 @@ def test_render_sample_report_renders_sudoku_gif_for_81_position_trace(tmp_path)
 
 def test_render_sample_report_renders_instructed_sudoku_from_decoded_canvas(tmp_path):
     from dllm_bench.datasets.base import Sample
-    from dllm_bench.datasets.sudoku import SudokuReference
+    from dllm_bench.datasets.sudoku9 import SudokuReference
     from dllm_bench.interfaces import PositionState, TraceStep
 
     solution = [[(row * 3 + row // 3 + col) % 9 + 1 for col in range(9)] for row in range(9)]

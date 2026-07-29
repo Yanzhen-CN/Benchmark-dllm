@@ -9,6 +9,7 @@ partial cell accuracy is never mistaken for a solved Sudoku.
 from __future__ import annotations
 
 import csv
+import os
 import random
 import re
 from dataclasses import dataclass, replace
@@ -19,14 +20,27 @@ from .remote import ensure_download
 
 
 SUDOKU4_SOURCE_REVISION = "6f5abf5ca8a58c6e08bbf06d412ad260dca6dbd3"
-SUDOKU4_PROTOCOL_REVISION = "d1-zero-shot-4x4-v1"
+SUDOKU4_PROTOCOL_REVISION = "direct-copy-fill-raw-4x4-v3"
+SUDOKU4_REASONING_PROTOCOL_REVISION = "d1-zero-shot-4x4-v1"
 SUDOKU4_SOURCE_SHA256 = "ef86c7c28ebef88484d85fda59b3909a7b621241aa1abf36343437dbc4a3ffb6"
 SUDOKU4_SOURCE_URL = (
     "https://raw.githubusercontent.com/dllm-reasoning/d1/"
     f"{SUDOKU4_SOURCE_REVISION}/dataset/4x4_test_sudoku.csv"
 )
 
-SUDOKU4_SYSTEM_PROMPT = """Please solve the following 4x4 Sudoku puzzle. The puzzle is provided as a 16-character string reading left-to-right, top-to-bottom, where '0' represents empty cells.
+SUDOKU4_SYSTEM_PROMPT = """Complete the following 4x4 Sudoku puzzle. The puzzle is provided as a 16-character string in row-major order, where '0' represents an empty cell.
+
+Rules:
+- Fill empty cells with digits 1-4
+- Each row must contain digits 1-4 exactly once
+- Each column must contain digits 1-4 exactly once
+- Each 2x2 box must contain digits 1-4 exactly once
+
+Copy the puzzle into your output in the same order, replacing every 0 with its correct digit. Keep every non-zero clue unchanged.
+
+Your output should only be the completed 16-number puzzle: exactly 16 digits using only 1-4, with no spaces, answer tags, reasoning, analysis, intermediate grids, explanations, or other text."""
+
+SUDOKU4_REASONING_PROMPT = """Please solve the following 4x4 Sudoku puzzle. The puzzle is provided as a 16-character string reading left-to-right, top-to-bottom, where '0' represents empty cells.
 
 Rules:
 - Fill empty cells with digits 1-4
@@ -55,8 +69,23 @@ class Sudoku4Reference:
     solution: str
 
 
-def format_sudoku4_prompt(puzzle: str) -> str:
-    return f"{SUDOKU4_SYSTEM_PROMPT}\n\nSolve the following Sudoku puzzle: {puzzle}\n"
+def _reasoning_enabled(configured: bool | None = None) -> bool:
+    if configured is not None:
+        return bool(configured)
+    return os.environ.get("DLLM_BENCH_ENABLE_REASONING", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def format_sudoku4_prompt(
+    puzzle: str, enable_reasoning: bool | None = None
+) -> str:
+    prompt = (
+        SUDOKU4_REASONING_PROMPT
+        if _reasoning_enabled(enable_reasoning)
+        else SUDOKU4_SYSTEM_PROMPT
+    )
+    return f"{prompt}\n\nSolve the following Sudoku puzzle: {puzzle}\n"
 
 
 def extract_sudoku4_answer(text: str) -> tuple[str | None, bool, bool]:
@@ -126,10 +155,12 @@ class Sudoku4Dataset(Dataset):
         samples: list[Sample] | None = None,
         sample_count: int = 100,
         seed: int = 42,
+        enable_reasoning: bool | None = None,
     ) -> None:
         self._samples = list(samples) if samples is not None else None
         self._sample_count = int(sample_count)
         self._seed = int(seed)
+        self._enable_reasoning = _reasoning_enabled(enable_reasoning)
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
         if self._samples is not None:
@@ -141,7 +172,9 @@ class Sudoku4Dataset(Dataset):
                 url=SUDOKU4_SOURCE_URL,
                 sha256=SUDOKU4_SOURCE_SHA256,
             )
-            samples = _load_d1_samples(source)
+            samples = _load_d1_samples(
+                source, enable_reasoning=self._enable_reasoning
+            )
             rng = random.Random(self._seed)
             rng.shuffle(samples)
             if self._sample_count <= 0 or self._sample_count > len(samples):
@@ -164,7 +197,12 @@ class Sudoku4Dataset(Dataset):
     def preparation_signature(self) -> dict[str, object]:
         return {
             "source_revision": SUDOKU4_SOURCE_REVISION,
-            "protocol_revision": SUDOKU4_PROTOCOL_REVISION,
+            "protocol_revision": (
+                SUDOKU4_REASONING_PROTOCOL_REVISION
+                if self._enable_reasoning
+                else SUDOKU4_PROTOCOL_REVISION
+            ),
+            "enable_reasoning": self._enable_reasoning,
             "source_sha256": SUDOKU4_SOURCE_SHA256,
             "sample_count": self._sample_count,
             "seed": self._seed,
@@ -174,6 +212,11 @@ class Sudoku4Dataset(Dataset):
         reference: Sudoku4Reference = sample.reference
         d1_prediction = _extract_d1_answer(output_text)
         prediction, marker_present, marker_complete = extract_sudoku4_answer(output_text)
+        if (
+            not self._enable_reasoning
+            and re.fullmatch(r"[1-4]{16}", output_text.strip())
+        ):
+            d1_prediction = output_text.strip()
         cell_accuracy = sudoku4_blank_cell_accuracy(
             d1_prediction, reference.puzzle, reference.solution
         )
@@ -218,7 +261,15 @@ class Sudoku4Dataset(Dataset):
         return summary
 
 
-def _load_d1_samples(path: Path) -> list[Sample]:
+def _load_d1_samples(
+    path: Path, *, enable_reasoning: bool | None = None
+) -> list[Sample]:
+    reasoning = _reasoning_enabled(enable_reasoning)
+    protocol_revision = (
+        SUDOKU4_REASONING_PROTOCOL_REVISION
+        if reasoning
+        else SUDOKU4_PROTOCOL_REVISION
+    )
     samples: list[Sample] = []
     with path.open("r", encoding="utf-8", newline="") as source:
         rows = csv.DictReader(source)
@@ -236,14 +287,21 @@ def _load_d1_samples(path: Path) -> list[Sample]:
             samples.append(
                 Sample(
                     sample_id=f"sudoku4-d1-{index:04d}",
-                    prompt=format_sudoku4_prompt(puzzle),
+                    prompt=format_sudoku4_prompt(
+                        puzzle, enable_reasoning=reasoning
+                    ),
                     reference=Sudoku4Reference(puzzle, solution),
                     meta={
                         "source": "dllm-reasoning/d1",
                         "source_revision": SUDOKU4_SOURCE_REVISION,
                         "source_index": index,
-                        "protocol_revision": SUDOKU4_PROTOCOL_REVISION,
-                        "prompt_protocol": "d1 official zero-shot",
+                        "protocol_revision": protocol_revision,
+                        "prompt_protocol": (
+                            "d1 official zero-shot reasoning"
+                            if reasoning
+                            else "direct raw copy-and-fill"
+                        ),
+                        "enable_reasoning": reasoning,
                         "blank_count": 8,
                         "difficulty_stratified": False,
                     },

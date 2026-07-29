@@ -1,5 +1,5 @@
 dataset: sudoku9
-dataset_class: dllm_bench.datasets.sudoku.Sudoku9Dataset
+dataset_class: dllm_bench.datasets.sudoku9.Sudoku9Dataset
 primary_metric: extracted_solution_constraint_accuracy
 aux_metrics:
   - reference_exact_match

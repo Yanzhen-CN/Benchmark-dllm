@@ -5,7 +5,7 @@ import pytest
 from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.hellobench import HelloBenchReference
 from dllm_bench.datasets.ruler import RulerReference
-from dllm_bench.datasets.sudoku import SudokuReference
+from dllm_bench.datasets.sudoku9 import SudokuReference
 from dllm_bench.registry import load_yaml
 from dllm_bench.runner.evaluation_sampling import select_configured_samples
 

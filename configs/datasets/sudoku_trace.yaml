@@ -1,9 +1,9 @@
-# Compact-output companion to the sudoku9 reasoning protocol. It reuses
-# the exact frozen source rows, Easy/Hard split, semantic scorer, and reference
-# solutions, but forbids reasoning text so complete 81-digit candidates can be
-# decoded from intermediate diffusion canvases for cell-revision analysis.
+# Marker-free compact-output companion to the main sudoku9 direct-answer
+# protocol. It reuses the exact frozen rows, Easy/Hard split, semantic scorer,
+# and references so complete 81-digit candidates can be decoded from
+# intermediate diffusion canvases for cell-revision analysis.
 dataset: sudoku_trace
-dataset_class: dllm_bench.datasets.sudoku.SudokuTraceDataset
+dataset_class: dllm_bench.datasets.sudoku9.SudokuTraceDataset
 primary_metric: extracted_solution_constraint_accuracy
 aux_metrics:
   - reference_exact_match

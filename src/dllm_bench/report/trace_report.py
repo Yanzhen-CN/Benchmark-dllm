@@ -71,7 +71,7 @@ def _maybe_render_sudoku_gif(
     if dataset_name not in {"sudoku9", "sudoku_trace"} or sample is None or not trace:
         return None
 
-    from ..datasets.sudoku import SudokuReference
+    from ..datasets.sudoku9 import SudokuReference
     from .sudoku_trace_viz import derive_sudoku_frames, render_sudoku_gif
 
     ref: SudokuReference = sample.reference

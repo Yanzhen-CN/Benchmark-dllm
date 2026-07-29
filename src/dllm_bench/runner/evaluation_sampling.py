@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any, Iterable
 
 from ..datasets.base import Sample
-from ..datasets.sudoku import classify_difficulty
+from ..datasets.sudoku9 import classify_difficulty
 
 
 def _shuffled(samples: Iterable[Sample], rng: random.Random) -> list[Sample]:

@@ -55,7 +55,7 @@ def _reference(dataset_name: str, record: dict[str, Any]) -> Any:
         from .structeval_t import StructEvalSchema
         return raw if isinstance(raw, StructEvalSchema) else StructEvalSchema(**raw)
     if dataset_name in {"sudoku9", "sudoku_trace"}:
-        from .sudoku import SudokuReference
+        from .sudoku9 import SudokuReference
         return raw if isinstance(raw, SudokuReference) else SudokuReference(**raw)
     if dataset_name == "sudoku4":
         from .sudoku4 import Sudoku4Reference

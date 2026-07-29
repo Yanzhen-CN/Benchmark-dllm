@@ -37,8 +37,8 @@ from dllm_bench.datasets.structeval_t import (
     _official_structeval_sample,
     evaluate_struct_progress,
 )
-from dllm_bench.datasets.sudoku import (
-    SudokuDataset,
+from dllm_bench.datasets.sudoku9 import (
+    Sudoku9Dataset,
     SudokuTraceDataset,
     SudokuReference,
     SUDOKU_ANSWER_BEGIN,
@@ -383,8 +383,10 @@ def test_sudoku4_reports_d1_cell_accuracy_and_strict_puzzle_success():
 
     correct = dataset.score(sample, "<answer>3142243142131324</answer>")
     one_blank_wrong = dataset.score(sample, "<answer>3142243142131321</answer>")
+    direct = dataset.score(sample, "3142243142131324")
 
     assert correct.primary_score == 1.0
+    assert direct.primary_score == 1.0
     assert correct.aux["puzzle_success_rate"] == 1.0
     assert one_blank_wrong.primary_score == pytest.approx(7 / 8)
     assert one_blank_wrong.aux["puzzle_success_rate"] == 0.0
@@ -424,8 +426,17 @@ def test_sudoku4_loader_validates_official_shape_and_prompt(tmp_path):
     assert len(samples) == 500
     assert samples[0].meta["blank_count"] == 8
     assert samples[0].meta["difficulty_stratified"] is False
-    assert "<reasoning>" in samples[0].prompt
+    assert "Copy the puzzle into your output" in samples[0].prompt
+    assert "Your output should only be the completed 16-number puzzle" in samples[0].prompt
+    assert "<reasoning>" not in samples[0].prompt
+    assert "<answer>" not in samples[0].prompt
     assert samples[0].prompt.endswith("3102200002100320\n")
+
+    reasoning_sample = _load_d1_samples(
+        source, enable_reasoning=True
+    )[0]
+    assert "<reasoning>" in reasoning_sample.prompt
+    assert reasoning_sample.meta["enable_reasoning"] is True
 
 
 # Sudoku 9x9 (Park/Ye)
@@ -470,7 +481,7 @@ def test_parse_grid_returns_none_for_prose():
 
 
 def test_sudoku_score_correct_solution():
-    ds = SudokuDataset()
+    ds = Sudoku9Dataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
@@ -489,7 +500,7 @@ def test_sudoku_score_correct_solution():
 
 
 def test_sudoku_score_tolerates_reasoning_with_marked_final_answer():
-    ds = SudokuDataset()
+    ds = Sudoku9Dataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
@@ -511,7 +522,7 @@ def test_sudoku_score_tolerates_reasoning_with_marked_final_answer():
 
 
 def test_sudoku_score_tolerates_prose_wrapped_complete_grid_without_marker():
-    ds = SudokuDataset()
+    ds = Sudoku9Dataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
     ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
@@ -545,7 +556,7 @@ def test_sudoku_constraint_validation_rejects_clue_change():
 
 
 def test_sudoku_copied_puzzle_gets_no_solving_credit():
-    ds = SudokuDataset()
+    ds = Sudoku9Dataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0), (0, 1)])
     sample = Sample(
         sample_id="1",
@@ -565,7 +576,7 @@ def test_sudoku_copied_puzzle_gets_no_solving_credit():
 
 
 def test_sudoku_partial_solution_gets_proportional_credit():
-    ds = SudokuDataset()
+    ds = Sudoku9Dataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0), (0, 1)])
     partial = _blank_copy(_EASY_PUZZLE, [(0, 1)])
     sample = Sample(
@@ -585,7 +596,7 @@ def test_sudoku_partial_solution_gets_proportional_credit():
 
 
 def test_sudoku_score_unparseable_output():
-    ds = SudokuDataset()
+    ds = Sudoku9Dataset()
     ref = SudokuReference(puzzle=_EASY_PUZZLE, solution=_EASY_PUZZLE)
     sample = Sample(sample_id="1", prompt="solve", reference=ref)
     result = ds.score(sample, "I don't know the answer.")
@@ -620,12 +631,19 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
         _build_prompt(hard),
     ]
     assert all("Each displayed row contains exactly 9 cells" in sample.prompt for sample in samples)
-    assert all("You may reason before the final answer" in sample.prompt for sample in samples)
-    assert all(SUDOKU_ANSWER_BEGIN in sample.prompt for sample in samples)
-    assert all(SUDOKU_ANSWER_END in sample.prompt for sample in samples)
+    assert all("Copy the puzzle into your output" in sample.prompt for sample in samples)
+    assert all("Your output should only be the completed 81-number puzzle" in sample.prompt for sample in samples)
+    assert all("You may reason" not in sample.prompt for sample in samples)
+    assert all(SUDOKU_ANSWER_BEGIN not in sample.prompt for sample in samples)
+    assert all(SUDOKU_ANSWER_END not in sample.prompt for sample in samples)
     assert [sample.meta["source_index"] for sample in samples] == [2, 3]
     assert [sample.reference.difficulty for sample in samples] == ["easy", "hard"]
     assert all("max_new_tokens" not in sample.meta for sample in samples)
+
+    reasoning_prompt = _build_prompt(easy, enable_reasoning=True)
+    assert "You may reason before the final answer" in reasoning_prompt
+    assert SUDOKU_ANSWER_BEGIN in reasoning_prompt
+    assert SUDOKU_ANSWER_END in reasoning_prompt
 
 
 def test_instructed_sudoku_wraps_the_same_puzzle_and_reference():
@@ -715,7 +733,7 @@ def test_sudoku_preparation_freezes_fifty_easy_and_fifty_hard():
 
 
 def test_sudoku_aggregation_separates_partial_credit_and_exact_solve_rate():
-    ds = SudokuDataset()
+    ds = Sudoku9Dataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0), (0, 1)])
     partial = _blank_copy(_EASY_PUZZLE, [(0, 1)])
     samples = [

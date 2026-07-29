@@ -110,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--real-data", dest="data_source", action="store_const", const="real")
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument(
+        "--enable-reasoning",
+        action="store_true",
+        help="Use the original reasoning prompt for Sudoku4/Sudoku9 (default: direct answer)",
+    )
+    parser.add_argument(
         "-max",
         "--max-new-tokens",
         type=int,
@@ -191,6 +196,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         env_updates["N_REPRESENTATIVE"] = str(args.n_representative)
     if args.n_samples is not None:
         env_updates["N_SAMPLES"] = str(args.n_samples)
+    if args.enable_reasoning:
+        env_updates["DLLM_BENCH_ENABLE_REASONING"] = "1"
     if args.max_new_tokens is not None:
         if args.max_new_tokens <= 0:
             raise SystemExit("--max-new-tokens must be greater than zero")
