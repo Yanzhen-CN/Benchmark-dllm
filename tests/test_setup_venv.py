@@ -165,6 +165,8 @@ def test_gemma_dflash_uses_its_own_vllm_environment():
     )
     assert profile.required_distributions == ("vllm", "transformers", "torch")
     assert "refs/pull/41703/head" in profile.setup_requirements[0]
+    assert profile.cuda_runtime == "12.9"
+    assert profile.minimum_driver_version == "575.51.03"
 
 
 def test_installation_environment_keeps_large_build_files_under_data_root(
@@ -259,6 +261,55 @@ def test_gemma_dflash_still_rejects_other_dependency_conflicts(monkeypatch):
         _model_script.check_installed_dependencies(
             _model_script.PROFILES["gemma_dflash"], Path("python")
         )
+
+
+def test_gemma_dflash_uses_installed_cuda_forward_compatibility(
+    tmp_path, monkeypatch
+):
+    compatibility_dir = tmp_path / "cuda-12.9" / "compat"
+    compatibility_dir.mkdir(parents=True)
+    (compatibility_dir / "libcuda.so.1").touch()
+    monkeypatch.setenv("DLLM_CUDA_COMPAT_DIR", str(compatibility_dir))
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/existing/libs")
+    monkeypatch.setattr(
+        _model_script, "_detected_nvidia_driver_version", lambda: "570.124.06"
+    )
+
+    environment = _model_script.apply_cuda_compatibility(
+        _model_script.PROFILES["gemma_dflash"], {"LD_LIBRARY_PATH": "/existing/libs"}
+    )
+
+    assert environment["LD_LIBRARY_PATH"].split(_model_script.os.pathsep) == [
+        str(compatibility_dir),
+        "/existing/libs",
+    ]
+    assert environment["DLLM_CUDA_COMPAT_ACTIVE"] == str(compatibility_dir)
+
+
+def test_gemma_dflash_rejects_old_driver_without_compatibility_package(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DLLM_CUDA_COMPAT_DIR", str(tmp_path / "missing"))
+    monkeypatch.setattr(
+        _model_script, "_detected_nvidia_driver_version", lambda: "570.124.06"
+    )
+
+    with pytest.raises(SystemExit, match="cuda-compat-12-9"):
+        _model_script.apply_cuda_compatibility(
+            _model_script.PROFILES["gemma_dflash"], {}
+        )
+
+
+def test_gemma_dflash_accepts_native_cuda_129_driver(monkeypatch):
+    monkeypatch.setenv("DLLM_CUDA_COMPAT_DIR", "/missing")
+    monkeypatch.setattr(
+        _model_script, "_detected_nvidia_driver_version", lambda: "575.51.03"
+    )
+    environment = {"existing": "value"}
+
+    assert _model_script.apply_cuda_compatibility(
+        _model_script.PROFILES["gemma_dflash"], environment
+    ) == {"existing": "value"}
 
 
 def test_diffusiongemma_repairs_missing_torchvision(monkeypatch):

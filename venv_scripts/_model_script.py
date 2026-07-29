@@ -28,6 +28,8 @@ class ModelProfile:
     legacy_venv_subdirs: tuple[str, ...] = ()
     setup_requirements: tuple[str, ...] = ()
     required_distributions: tuple[str, ...] = ()
+    cuda_runtime: str | None = None
+    minimum_driver_version: str | None = None
 
 
 PROFILES: Mapping[str, ModelProfile] = {
@@ -72,6 +74,8 @@ PROFILES: Mapping[str, ModelProfile] = {
             "vllm @ git+https://github.com/vllm-project/vllm.git@refs/pull/41703/head",
         ),
         required_distributions=("vllm", "transformers", "torch"),
+        cuda_runtime="12.9",
+        minimum_driver_version="575.51.03",
     ),
     "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
 }
@@ -201,6 +205,94 @@ def check_installed_dependencies(
     raise subprocess.CalledProcessError(completed.returncode, command)
 
 
+def _detected_nvidia_driver_version() -> str | None:
+    completed = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=driver_version",
+            "--format=csv,noheader",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return next(
+        (line.strip() for line in completed.stdout.splitlines() if line.strip()),
+        None,
+    )
+
+
+def _version_at_least(actual: str, required: str) -> bool:
+    def parts(value: str) -> tuple[int, ...]:
+        return tuple(int(part) for part in value.split(".") if part.isdigit())
+
+    actual_parts = parts(actual)
+    required_parts = parts(required)
+    width = max(len(actual_parts), len(required_parts))
+    return actual_parts + (0,) * (width - len(actual_parts)) >= (
+        required_parts + (0,) * (width - len(required_parts))
+    )
+
+
+def _cuda_compatibility_directory(profile: ModelProfile) -> Path | None:
+    override = os.environ.get("DLLM_CUDA_COMPAT_DIR")
+    if override:
+        candidates = [Path(override).expanduser()]
+    else:
+        candidates = [
+            Path(entry)
+            for entry in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+            if entry
+        ]
+        if profile.cuda_runtime:
+            candidates.append(Path(f"/usr/local/cuda-{profile.cuda_runtime}/compat"))
+        candidates.append(Path("/usr/local/cuda/compat"))
+
+    for directory in candidates:
+        if (directory / "libcuda.so.1").exists():
+            return directory
+    return None
+
+
+def apply_cuda_compatibility(
+    profile: ModelProfile, environment: dict[str, str]
+) -> dict[str, str]:
+    """Select NVIDIA forward-compat libraries for a newer CUDA wheel."""
+    if not profile.cuda_runtime or not profile.minimum_driver_version:
+        return environment
+    driver = _detected_nvidia_driver_version()
+    if driver is None or _version_at_least(driver, profile.minimum_driver_version):
+        return environment
+
+    compatibility_dir = _cuda_compatibility_directory(profile)
+    if compatibility_dir is None:
+        package = f"cuda-compat-{profile.cuda_runtime.replace('.', '-')}"
+        raise SystemExit(
+            f"{profile.model_id} uses CUDA {profile.cuda_runtime}, but NVIDIA driver "
+            f"{driver} is older than {profile.minimum_driver_version}. Install the "
+            "NVIDIA forward-compatibility package on this data-center GPU and retry:\n"
+            f"  apt-get update && apt-get install -y {package}\n"
+            f"or use a pod with driver >= {profile.minimum_driver_version}."
+        )
+
+    current = environment.get("LD_LIBRARY_PATH", "")
+    entries = [entry for entry in current.split(os.pathsep) if entry]
+    compatibility_path = str(compatibility_dir)
+    environment["LD_LIBRARY_PATH"] = os.pathsep.join(
+        [compatibility_path, *(entry for entry in entries if entry != compatibility_path)]
+    )
+    environment["DLLM_CUDA_COMPAT_ACTIVE"] = compatibility_path
+    print(
+        f"Using CUDA {profile.cuda_runtime} forward compatibility for NVIDIA "
+        f"driver {driver}: {compatibility_path}",
+        flush=True,
+    )
+    return environment
+
+
 def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
     if cuda_index not in CUDA_INDEXES:
         raise SystemExit(f"unsupported CUDA index {cuda_index}; use {', '.join(CUDA_INDEXES)}")
@@ -217,6 +309,7 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
         prefer_vllm_precompiled=bool(profile.setup_requirements),
         avoid_uv_cache=bool(profile.setup_requirements),
     )
+    apply_cuda_compatibility(profile, install_env)
 
     run([base_python, "-m", "venv", directory])
     python = venv_python(directory)
@@ -478,7 +571,7 @@ def model_environment(profile: ModelProfile) -> dict[str, str]:
         DLLM_MODEL_CONFIG=profile.model_config,
         DLLM_VENV=str(venv_dir(profile)),
     )
-    return environment
+    return apply_cuda_compatibility(profile, environment)
 
 
 def check_environment(profile: ModelProfile, python: Path) -> None:

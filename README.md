@@ -283,6 +283,13 @@ XGrammar's known conservative `transformers<5` metadata warning because this
 plain-text benchmark does not request XGrammar structured generation. Every
 other dependency conflict remains fatal.
 
+The temporary DFlash vLLM build currently provides a CUDA 12.9 precompiled
+wheel. It therefore needs NVIDIA driver `575.51.03` or newer. On an older
+driver attached to an NVIDIA data-center GPU, install `cuda-compat-12-9`; the
+model launcher automatically detects `/usr/local/cuda-12.9/compat` and exports
+it to the benchmark and vLLM child processes. `DLLM_CUDA_COMPAT_DIR` can point
+to a compatible package extracted elsewhere.
+
 Run on the same exclusive A100 80GB used by the native pair. DFlash keeps the
 normal measured timing, energy, peak-memory, TPS/SPS/EPS and dataset score
 fields. Peak memory is sampled as total NVML device-used memory so it includes
