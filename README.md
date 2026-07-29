@@ -62,6 +62,7 @@ run_visualization.py           # local: visualize + build reports
 setup_venv.py / run_tests.py   # venv dispatcher / test runner (see below)
 prepare_model.py               # pre-warm a model's HF checkpoint cache (see below)
 prepare_data.py                # prepare/cache every real dataset in the matrix
+run_prepare.py                 # one-shot: all venvs + datasets + model snapshots
 venv_scripts/                  # one Python venv/install/run script per model
 docs/                          # benchmark audit, task taxonomy, and artifact layout
 configs/
