@@ -19,6 +19,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         "w1",
         "diffusiongemma",
         "gemma",
+        "gemma_dflash",
     }
     assert {job.dataset_config.stem for job in jobs} == {
         "gsm8k",
@@ -111,7 +112,6 @@ def test_dg_comparison_matrix_contains_native_pair_and_dflash_deployment_row():
     assert {job.model_name for job in jobs} == {
         "diffusiongemma",
         "gemma",
-        "gemma_dflash",
         "gemma_dflash",
     }
     assert {job.dataset_config.stem for job in jobs} == {

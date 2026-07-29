@@ -9,7 +9,7 @@ venv path, dependency versions, installation and validation.
     python setup_venv.py -m qwen3_8b
     python setup_venv.py -m dreamreasoner -m diffusiongemma
     python setup_venv.py -m gemma
-    python setup_venv.py --matrix configs/experiments/dg_comparison.yaml -m gemma_dflash
+    python setup_venv.py -m gemma_dflash
     python setup_venv.py --cuda-index cu126
 """
 

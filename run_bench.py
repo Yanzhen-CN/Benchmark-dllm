@@ -13,7 +13,7 @@ Python. This keeps incompatible torch/transformers versions isolated.
     python run_bench.py -m qwen3_8b
     python run_bench.py -m diffusiongemma
     python run_bench.py -m gemma
-    python run_bench.py --matrix configs/experiments/dg_comparison.yaml -m gemma_dflash
+    python run_bench.py -m gemma_dflash
 """
 
 from __future__ import annotations
@@ -110,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--real-data", dest="data_source", action="store_const", const="real")
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument(
+        "-max",
         "--max-new-tokens",
         type=int,
         default=None,

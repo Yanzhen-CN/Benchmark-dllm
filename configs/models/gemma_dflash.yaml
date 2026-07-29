@@ -1,0 +1,17 @@
+# Deployment-optimized Gemma 4 comparison. This is not a native AR baseline:
+# a 0.4B block-diffusion draft proposes up to 15 tokens and the Gemma target
+# verifies them losslessly through the official vLLM DFlash implementation.
+model: gemma_dflash
+max_context_tokens: 16384
+configs:
+  dflash:
+    adapter: dllm_bench.models.gemma_dflash.GemmaDFlashAdapter
+    init_kwargs:
+      model_name_or_path: google/gemma-4-26B-A4B-it
+      draft_model_name_or_path: z-lab/gemma-4-26B-A4B-it-DFlash
+      num_speculative_tokens: 15
+      max_model_len: 16384
+      max_num_batched_tokens: 32768
+      gpu_memory_utilization: 0.90
+      enable_thinking: false
+      require_spec_metrics: true

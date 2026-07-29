@@ -245,25 +245,23 @@ python prepare_model.py -m gemma -m diffusiongemma
   --output-root output/a100_pair_check --no-resume
 ```
 
-The deployment-optimized DFlash row is parallel to the other models but stays
-in `dg_comparison.yaml`, not `full_matrix.yaml`. Its isolated setup installs
-the official Gemma4 DFlash vLLM PR build, and preparation downloads both the
-Gemma target and 0.4B DFlash draft without loading either checkpoint:
+The deployment-optimized DFlash row is a normal selectable model in
+`full_matrix.yaml`; `dg_comparison.yaml` is only a convenient three-way
+subset. Its isolated setup installs the official Gemma4 DFlash vLLM PR build,
+and preparation downloads both the Gemma target and 0.4B DFlash draft without
+loading either checkpoint:
 
 ```bash
 python run_prepare.py \
-  --matrix configs/experiments/dg_comparison.yaml \
   -m gemma_dflash --skip-data
 
 python run_model.py \
-  --matrix configs/experiments/dg_comparison.yaml \
   -m gemma_dflash \
-  --output-root output/dflash --resume
+  --output-root output/formal --resume
 
 # Local scoring uses the normal root environment; it never starts vLLM.
 python run_score.py \
-  --matrix configs/experiments/dg_comparison.yaml \
-  -m gemma_dflash --output-root output/dflash --resume
+  -m gemma_dflash --output-root output/formal --resume
 ```
 
 Run on the same exclusive A100 80GB used by the native pair. DFlash keeps the

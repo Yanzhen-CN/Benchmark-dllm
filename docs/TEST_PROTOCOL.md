@@ -13,7 +13,7 @@ keeps every model on its own published inference path.
   speculative decoding, custom KV caches, `torch.cuda.empty_cache()`, or an
   OOM retry with changed settings to the **native-mechanism matrix**. The only
   speculative-decoding exception is the separately labelled `gemma_dflash`
-  deployment row in `dg_comparison.yaml`; it must not replace native Gemma.
+  deployment row; it must not replace native Gemma in mechanism comparisons.
 - Keep model-native execution intact. iLLaDA uses its full-sequence official
   denoising loop without KV cache. DreamReasoner keeps its checkpoint's native
   prefix KV cache. AR models use their checkpoint `generate()` path.
@@ -194,14 +194,12 @@ python run_model.py -m w1 --output-root output/formal --resume
 ```
 
 Run the optional Gemma+DFlash deployment row independently on the same
-exclusive A100 80GB. It has its own environment and remains outside the main
-matrix:
+exclusive A100 80GB. It has its own environment and is selected like every
+other model:
 
 ```bash
-python run_prepare.py --matrix configs/experiments/dg_comparison.yaml \
-  -m gemma_dflash --skip-data
-python run_model.py --matrix configs/experiments/dg_comparison.yaml \
-  -m gemma_dflash --output-root output/dflash --resume
+python run_prepare.py -m gemma_dflash --skip-data
+python run_model.py -m gemma_dflash --output-root output/formal --resume
 ```
 
 This row uses the same generation/score JSON contract and records measured
