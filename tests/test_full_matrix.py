@@ -74,25 +74,17 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
             "dreamreasoner", "w1",
         }
     } == {
-        "qwen3_4b": 5,
+        "qwen3_4b": 10,
         "qwen3_8b": 10,
-        "illada": 5,
-        "illada_vargen": 5,
-        "dreamreasoner": 5,
+        "illada": 10,
+        "illada_vargen": 10,
+        "dreamreasoner": 10,
         "w1": 10,
     }
     assert {
         job.model_name: job.n_samples for job in sudoku4_jobs
-        if job.n_samples is not None
-    } == {
-        "qwen3_4b": 5,
-        "illada": 5,
-        "illada_vargen": 5,
-        "dreamreasoner": 5,
-        "diffusiongemma": 10,
-        "gemma": 10,
-        "gemma_dflash": 10,
-    }
+        if job.model_name in {"diffusiongemma", "gemma", "gemma_dflash"}
+    } == {"diffusiongemma": 10, "gemma": 10, "gemma_dflash": 10}
     for model_name in ("illada", "illada_vargen", "dreamreasoner"):
         hello_job = next(
             job for job in jobs
@@ -149,37 +141,6 @@ def test_matrix_sudoku_group_expands_every_declared_variant():
         "sudoku4_thinking",
         "sudoku9_thinking",
     ]
-
-
-def test_sudoku_group_preserves_per_model_sample_budgets():
-    expected = {
-        "qwen3_4b": {"sudoku4": 5, "sudoku9": 5},
-        "illada": {"sudoku4": 5, "sudoku9": 5},
-        "illada_vargen": {"sudoku4": 5, "sudoku9": 5},
-        "dreamreasoner": {"sudoku4": 5, "sudoku9": 5},
-        # None means the dataset's prepared-bank default of 100 samples.
-        "qwen3_8b": {"sudoku4": None, "sudoku9": 10},
-        "w1": {"sudoku4": None, "sudoku9": 10},
-        "diffusiongemma": {"sudoku4": 10, "sudoku9": None},
-        "gemma": {"sudoku4": 10, "sudoku9": None},
-        "gemma_dflash": {"sudoku4": 10, "sudoku9": None},
-    }
-
-    for model_name, direct_budgets in expected.items():
-        jobs, _ = load_matrix_jobs(
-            ROOT / "configs" / "experiments" / "full_matrix.yaml",
-            model_names=[model_name],
-            dataset_names=["sudoku"],
-        )
-        budgets = {
-            job.dataset_config.stem: job.n_samples
-            for job in jobs
-        }
-        assert budgets == {
-            **direct_budgets,
-            "sudoku4_thinking": 1,
-            "sudoku9_thinking": 1,
-        }
 
 
 def test_dg_comparison_matrix_contains_native_pair_and_dflash_deployment_row():

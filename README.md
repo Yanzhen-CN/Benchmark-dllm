@@ -363,13 +363,10 @@ partial-credit primary score. There is no Easy/Hard split for 4x4.
 `sudoku9` retains the Park split used by Ye et al. (ICLR 2025), the adapted
 general-instruction prompt, and strict whole-puzzle constraint validity as its
 primary score. Its output cap is 256 tokens. The prepared bank contains 50
-Easy + 50 Hard rows; a 10-row override deterministically selects 5 + 5. For
-the non-thinking run, Qwen3-4B, iLLaDA (both execution paths), and
-DreamReasoner use five deterministic rows per Sudoku dataset. Qwen3-8B/W1 retain
-`sudoku4` on 100 rows and `sudoku9` on the 10-row probe. DiffusionGemma and
-its Gemma-4 controls reverse those budgets: `sudoku9` on 100 rows and
-`sudoku4` on 10 unstratified rows. Existing thinking-run budgets are unchanged.
-Scores from 4x4 and 9x9 are
+Easy + 50 Hard rows; a 10-row override deterministically selects 5 + 5. The
+4B/8B/W1 group runs `sudoku4` on 100 rows and `sudoku9` on the 10-row probe.
+DiffusionGemma and its Gemma-4 control reverse those budgets: `sudoku9` on
+100 rows and `sudoku4` on 10 unstratified rows. Scores from 4x4 and 9x9 are
 never merged or placed in the same Sudoku column. RULER selects 30
 samples at a 4096 encoded-input target: 10 each for NIAH, multi-hop,
 and aggregation, also balanced over front/middle/back answer positions. A
@@ -645,9 +642,8 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 | GSM8K | 100 |
 | MBPP-Sanitized | 100 |
 | StructEval-T | 100 |
-| Sudoku4 non-thinking | Qwen3-4B/iLLaDA/DreamReasoner: 5; Qwen3-8B/W1: 100; DG/Gemma-4: 10 |
-| Sudoku9 non-thinking | Qwen3-4B/iLLaDA/DreamReasoner: 5; Qwen3-8B/W1: 10; DG/Gemma-4: 100 |
-| Sudoku thinking runs | Unchanged: one fixed sample per configured task |
+| Sudoku4 | 4B/8B/W1: 100; DG/Gemma-4: 10; no Easy/Hard split |
+| Sudoku9 | DG/Gemma-4: 100 (50 Easy + 50 Hard); 4B/8B/W1: 10 (5 + 5) |
 | RULER | 30 at 4096 encoded input tokens (10 per task type) |
 | HelloBench | iLLaDA/DreamReasoner: one 2K-word sample; others: one per configured profile |
 | RULER half-context probe | one isolated capacity sample, excluded from formal aggregates |

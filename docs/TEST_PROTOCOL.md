@@ -34,9 +34,8 @@ keeps every model on its own published inference path.
 | GSM8K | 100 | Dataset protocol | Formal |
 | MBPP-Sanitized | 100 | Dataset protocol | Formal |
 | StructEval-T | 100 | Dataset protocol | Formal |
-| Sudoku4 non-thinking | Qwen3-4B/iLLaDA/DreamReasoner: 5; Qwen3-8B/W1: 100; DG/Gemma-4: 10 | Existing Sudoku4 protocol, 256 output tokens | Feasibility / compact track |
-| Sudoku9 non-thinking | Qwen3-4B/iLLaDA/DreamReasoner: 5; Qwen3-8B/W1: 10; DG/Gemma-4: 100 (50 Easy + 50 Hard) | Existing Sudoku9 protocol, 256 output tokens | Feasibility / 9x9 track |
-| Sudoku thinking runs | Unchanged: 1 each | Existing reasoning protocol, 2048 output tokens | Reference only |
+| Sudoku4 | 4B/8B/W1: 100; DG/Gemma-4: 10 | d1 zero-shot prompt, 256 output tokens | Formal compact track / large-model probe |
+| Sudoku9 | DG/Gemma-4: 100 (50 Easy + 50 Hard); 4B/8B/W1: 10 (5 + 5) | General-instruction prompt, 256 output tokens | Formal 9x9 track / small-model feasibility probe |
 | RULER | 30 | 4096 encoded-input target + at most 64 output tokens | Formal |
 | HelloBench, iLLaDA | 1 | 2K-word profile, 3072-token generation cap | Reference diagnostic |
 | HelloBench, iLLaDA VarGen | 1 | 2K-word profile, 3072-token generation cap | Execution-path diagnostic |
