@@ -87,6 +87,7 @@ def test_managed_vllm_server_forces_offline_model_resolution(
 
     assert captured["environment"]["HF_HUB_OFFLINE"] == "1"
     assert captured["environment"]["TRANSFORMERS_OFFLINE"] == "1"
+    assert "--language-model-only" in captured["command"]
 
 
 def test_generate_keeps_common_metrics_interface_and_adds_dflash_stats(monkeypatch):

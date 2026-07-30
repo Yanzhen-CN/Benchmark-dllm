@@ -290,6 +290,9 @@ status and prints the persistent `data/logs/gemma_dflash_vllm.log` path. Run
 and draft downloads are complete before the GPU-loading phase. The generation
 stage resolves both checkpoints and the tokenizer from that prepared cache in
 offline mode, avoiding slow Hub metadata checks while an A100 is allocated.
+Because every benchmark request is text-only, the server also runs with
+`--language-model-only`; this skips Gemma 4's unused image/video encoder cache
+and multimodal startup profiling without changing text generation.
 other dependency conflict remains fatal.
 
 The temporary DFlash vLLM build currently provides a CUDA 12.9 precompiled

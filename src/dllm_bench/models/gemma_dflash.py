@@ -128,6 +128,7 @@ class _ManagedVLLMServer:
                 "--gpu-memory-utilization",
                 str(gpu_memory_utilization),
                 "--trust-remote-code",
+                "--language-model-only",
             ]
             environment = os.environ.copy()
             environment.setdefault("PYTHONUNBUFFERED", "1")
@@ -271,6 +272,7 @@ class GemmaDFlashAdapter:
         self.sampling_profile = "greedy-non-thinking"
         self.inference_optimizations = (
             "kv-cache",
+            "text-only-no-multimodal-encoder",
             "dflash-block-diffusion-draft",
             f"speculative-block-{self._num_speculative_tokens + 1}",
         )
