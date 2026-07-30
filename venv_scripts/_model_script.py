@@ -71,7 +71,7 @@ PROFILES: Mapping[str, ModelProfile] = {
         "dev,api,gpu",
         transformers_version="5.14.1",
         setup_requirements=(
-            "vllm @ git+https://github.com/vllm-project/vllm.git@refs/pull/41703/head",
+            "vllm @ git+https://github.com/vllm-project/vllm.git@8cb2db16072cebbb944564f84f21045a90151ad1",
         ),
         required_distributions=("vllm", "transformers", "torch"),
         cuda_runtime="12.9",
@@ -589,7 +589,26 @@ def check_environment(profile: ModelProfile, python: Path) -> None:
     elif profile.model_id == "gemma":
         run([python, "-c", "from transformers import AutoModelForMultimodalLM, Gemma4Processor; print('Gemma 4 classes OK')"])
     elif profile.model_id == "gemma_dflash":
-        run([python, "-c", "import requests, torch, transformers, vllm; print('Gemma DFlash vLLM runtime OK')"])
+        run(
+            [
+                python,
+                "-c",
+                "import importlib.metadata as metadata, json, requests, torch, transformers, vllm\n"
+                "expected = '8cb2db16072cebbb944564f84f21045a90151ad1'\n"
+                "direct = json.loads(metadata.distribution('vllm').read_text('direct_url.json') or '{}')\n"
+                "installed = direct.get('vcs_info', {}).get('commit_id')\n"
+                "assert installed == expected, f'vLLM revision mismatch: expected {expected}, got {installed!r}'\n"
+                "assert torch.cuda.is_available(), 'CUDA is not available to the DFlash vLLM environment'\n"
+                "from vllm.model_executor.models import qwen3_dflash\n"
+                "print('Gemma DFlash vLLM runtime OK')\n"
+                "print('vLLM:', vllm.__version__)\n"
+                "print('vLLM revision:', installed)\n"
+                "print('Transformers:', transformers.__version__)\n"
+                "print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda)\n"
+                "print('GPU:', torch.cuda.get_device_name(0))\n",
+            ],
+            env=model_environment(profile),
+        )
 
 
 def benchmark_arguments(profile: ModelProfile) -> list[str]:

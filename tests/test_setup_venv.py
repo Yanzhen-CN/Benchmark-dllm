@@ -164,7 +164,7 @@ def test_gemma_dflash_uses_its_own_vllm_environment():
         == _model_script.PROFILES["gemma"].transformers_version
     )
     assert profile.required_distributions == ("vllm", "transformers", "torch")
-    assert "refs/pull/41703/head" in profile.setup_requirements[0]
+    assert "8cb2db16072cebbb944564f84f21045a90151ad1" in profile.setup_requirements[0]
     assert profile.cuda_runtime == "12.9"
     assert profile.minimum_driver_version == "575.51.03"
 

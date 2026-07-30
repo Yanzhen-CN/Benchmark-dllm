@@ -97,6 +97,7 @@ class _ManagedVLLMServer:
             log_dir.mkdir(parents=True, exist_ok=True)
             self._log_path = log_dir / "gemma_dflash_vllm.log"
             self._log_handle = self._log_path.open("w", encoding="utf-8")
+            print(f"Gemma DFlash vLLM startup log: {self._log_path}", flush=True)
             speculative = json.dumps(
                 {
                     "method": "dflash",
@@ -129,6 +130,7 @@ class _ManagedVLLMServer:
                 "--trust-remote-code",
             ]
             environment = os.environ.copy()
+            environment.setdefault("PYTHONUNBUFFERED", "1")
             environment["NO_PROXY"] = ",".join(
                 filter(None, [environment.get("NO_PROXY", ""), "127.0.0.1", "localhost"])
             )
@@ -143,6 +145,8 @@ class _ManagedVLLMServer:
 
         deadline = time.monotonic() + startup_timeout_seconds
         health_url = f"{base_url}/health"
+        next_status_report = time.monotonic() + 15.0
+        last_status_line = ""
         while time.monotonic() < deadline:
             process = self._process
             if process is None or process.poll() is not None:
@@ -154,6 +158,15 @@ class _ManagedVLLMServer:
                     return base_url
             except requests.RequestException:
                 pass
+            now = time.monotonic()
+            if now >= next_status_report and self._log_path is not None:
+                tail = _server_log_tail(self._log_path, lines=8)
+                status_lines = [line.strip() for line in tail.splitlines() if line.strip()]
+                status_line = status_lines[-1] if status_lines else ""
+                if status_line and status_line != last_status_line:
+                    print(f"\n[vLLM startup] {status_line}", flush=True)
+                    last_status_line = status_line
+                next_status_report = now + 15.0
             time.sleep(2)
         tail = _server_log_tail(self._log_path) if self._log_path else ""
         self.close()

@@ -281,6 +281,13 @@ Set `VLLM_USE_PRECOMPILED=0` only when intentionally compiling vLLM from
 source. Gemma 4 requires Transformers 5; the environment check allows only
 XGrammar's known conservative `transformers<5` metadata warning because this
 plain-text benchmark does not request XGrammar structured generation. Every
+formal DFlash environment pins vLLM PR #41703 to its regression-tested commit
+`8cb2db16072cebbb944564f84f21045a90151ad1`; `check` rejects a different or
+unverifiable revision and verifies CUDA plus the `qwen3_dflash` runtime module.
+During server startup, the main terminal periodically mirrors the latest vLLM
+status and prints the persistent `data/logs/gemma_dflash_vllm.log` path. Run
+`python run_prepare.py -m gemma_dflash --skip-data` before generation so target
+and draft downloads are complete before the GPU-loading phase.
 other dependency conflict remains fatal.
 
 The temporary DFlash vLLM build currently provides a CUDA 12.9 precompiled
