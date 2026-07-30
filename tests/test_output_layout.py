@@ -23,6 +23,19 @@ def test_dllm_architecture_and_sampling_axes_are_both_in_the_run_id():
     assert run_id("illada", "best") == "illada_best"
 
 
+def test_dflash_generation_and_scoring_use_the_same_run_directory(tmp_path):
+    generated = model_output_dir(tmp_path, "gemma", "dflash", "gsm8k")
+    generated.mkdir(parents=True)
+
+    assert generated == tmp_path / "model_output" / "gemma_dflash" / "gsm8k"
+    assert (
+        resolve_model_output_dir(
+            tmp_path, "gemma_dflash", "dflash", "gsm8k"
+        )
+        == generated
+    )
+
+
 def test_qwen_reader_falls_back_to_legacy_suffixed_directory(tmp_path):
     legacy = tmp_path / "model_output" / "qwen3_4b_ar-baseline" / "gsm8k"
     legacy.mkdir(parents=True)

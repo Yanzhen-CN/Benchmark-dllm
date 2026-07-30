@@ -13,7 +13,8 @@
 
 The run ID is normally ``<model>_<config>``. Each Qwen model's sole
 ``ar-baseline`` configuration uses just its model name because the suffix is
-redundant.
+redundant. DFlash's model config is already named ``gemma_dflash``, so its
+``dflash`` variant is not appended a second time.
 Splitting by run ID first, ``<dataset>`` second is what lets
 each model run independently (skip W1 entirely, run iLLaDA without touching
 DreamReasoner's output), lets a dataset resume mid-way (each stage checks per-sample
@@ -32,6 +33,7 @@ VISUALIZATION_OUTPUT = "visualization_output"
 
 
 _UNSUFFIXED_CONFIGS = {
+    ("gemma_dflash", "dflash"),
     ("qwen3_4b", "ar-baseline"),
     ("qwen3_8b", "ar-baseline"),
 }
