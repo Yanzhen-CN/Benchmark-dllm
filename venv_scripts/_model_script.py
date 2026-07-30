@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -30,6 +31,9 @@ class ModelProfile:
     required_distributions: tuple[str, ...] = ()
     cuda_runtime: str | None = None
     minimum_driver_version: str | None = None
+    uv_torch_backend: str = "auto"
+    precompiled_wheel_variant: str | None = None
+    precompiled_wheel_commit: str | None = None
 
 
 PROFILES: Mapping[str, ModelProfile] = {
@@ -76,6 +80,9 @@ PROFILES: Mapping[str, ModelProfile] = {
         required_distributions=("vllm", "transformers", "torch"),
         cuda_runtime="12.9",
         minimum_driver_version="575.51.03",
+        uv_torch_backend="cu129",
+        precompiled_wheel_variant="cu129",
+        precompiled_wheel_commit="84f7a55340601ddc77b850025ea1ca03f6b1fd82",
     ),
     "w1": ModelProfile("w1", "w1", "configs/models/w1.yaml", "dev,api"),
 }
@@ -248,11 +255,33 @@ def _cuda_compatibility_directory(profile: ModelProfile) -> Path | None:
             if entry
         ]
         if profile.cuda_runtime:
+            package = f"cuda-compat-{profile.cuda_runtime.replace('.', '-')}"
+            candidates.append(
+                REPO_ROOT
+                / "data"
+                / package
+                / "usr"
+                / "local"
+                / f"cuda-{profile.cuda_runtime}"
+                / "compat"
+            )
             candidates.append(Path(f"/usr/local/cuda-{profile.cuda_runtime}/compat"))
         candidates.append(Path("/usr/local/cuda/compat"))
 
     for directory in candidates:
-        if (directory / "libcuda.so.1").exists():
+        versions = []
+        for library in directory.glob("libcuda.so.*"):
+            match = re.fullmatch(r"libcuda\.so\.(\d+\.\d+(?:\.\d+)*)", library.name)
+            if match:
+                versions.append(match.group(1))
+        if (
+            (directory / "libcuda.so.1").exists()
+            and profile.minimum_driver_version
+            and any(
+                _version_at_least(version, profile.minimum_driver_version)
+                for version in versions
+            )
+        ):
             return directory
     return None
 
@@ -309,6 +338,16 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
         prefer_vllm_precompiled=bool(profile.setup_requirements),
         avoid_uv_cache=bool(profile.setup_requirements),
     )
+    if profile.precompiled_wheel_variant:
+        install_env.setdefault(
+            "VLLM_PRECOMPILED_WHEEL_VARIANT",
+            profile.precompiled_wheel_variant,
+        )
+    if profile.precompiled_wheel_commit:
+        install_env.setdefault(
+            "VLLM_PRECOMPILED_WHEEL_COMMIT",
+            profile.precompiled_wheel_commit,
+        )
     apply_cuda_compatibility(profile, install_env)
 
     run([base_python, "-m", "venv", directory])
@@ -328,7 +367,7 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
                 "--python",
                 python,
                 "--torch-backend",
-                "auto",
+                profile.uv_torch_backend,
                 "--upgrade",
                 *profile.setup_requirements,
             ],

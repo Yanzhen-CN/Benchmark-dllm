@@ -167,6 +167,9 @@ def test_gemma_dflash_uses_its_own_vllm_environment():
     assert "8cb2db16072cebbb944564f84f21045a90151ad1" in profile.setup_requirements[0]
     assert profile.cuda_runtime == "12.9"
     assert profile.minimum_driver_version == "575.51.03"
+    assert profile.uv_torch_backend == "cu129"
+    assert profile.precompiled_wheel_variant == "cu129"
+    assert profile.precompiled_wheel_commit == "84f7a55340601ddc77b850025ea1ca03f6b1fd82"
 
 
 def test_installation_environment_keeps_large_build_files_under_data_root(
@@ -269,6 +272,7 @@ def test_gemma_dflash_uses_installed_cuda_forward_compatibility(
     compatibility_dir = tmp_path / "cuda-12.9" / "compat"
     compatibility_dir.mkdir(parents=True)
     (compatibility_dir / "libcuda.so.1").touch()
+    (compatibility_dir / "libcuda.so.575.51.03").touch()
     monkeypatch.setenv("DLLM_CUDA_COMPAT_DIR", str(compatibility_dir))
     monkeypatch.setenv("LD_LIBRARY_PATH", "/existing/libs")
     monkeypatch.setattr(
@@ -289,9 +293,13 @@ def test_gemma_dflash_uses_installed_cuda_forward_compatibility(
 def test_gemma_dflash_rejects_old_driver_without_compatibility_package(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("DLLM_CUDA_COMPAT_DIR", str(tmp_path / "missing"))
+    stale_compatibility_dir = tmp_path / "cuda-12.4" / "compat"
+    stale_compatibility_dir.mkdir(parents=True)
+    (stale_compatibility_dir / "libcuda.so.1").touch()
+    (stale_compatibility_dir / "libcuda.so.550.90.12").touch()
+    monkeypatch.setenv("DLLM_CUDA_COMPAT_DIR", str(stale_compatibility_dir))
     monkeypatch.setattr(
-        _model_script, "_detected_nvidia_driver_version", lambda: "570.124.06"
+        _model_script, "_detected_nvidia_driver_version", lambda: "560.124.06"
     )
 
     with pytest.raises(SystemExit, match="cuda-compat-12-9"):

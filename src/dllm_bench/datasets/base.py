@@ -31,7 +31,7 @@ class ScoreResult:
     primary_score: float
     """Main task score, normalized to [0, 1] (accuracy, pass@1, complete-correct
     rate, etc. — whatever section 1 lists as that dataset's primary metric)."""
-    aux: dict[str, float] = field(default_factory=dict)
+    aux: dict[str, Any] = field(default_factory=dict)
     valid: bool = True
     """Whether the output could be parsed/interpreted at all (e.g. an answer
     was extractable, code was syntactically parseable)."""
@@ -57,13 +57,29 @@ class Dataset(ABC):
 
     def trace_aux_metrics(
         self, sample: Sample, trace: list[TraceStep]
-    ) -> dict[str, float]:
+    ) -> dict[str, Any]:
         """Optional generation-process metrics computed outside task scoring."""
         return {}
 
+    def score_generation(
+        self, sample: Sample, generation: GenerationResult
+    ) -> ScoreResult:
+        """Score one persisted generation, including trace-only diagnostics.
+
+        Dataset overrides may locate the final answer once and reuse exactly
+        that region for both the official task score and trace diagnostics.
+        """
+        result = self.score(sample, generation.output_text)
+        result.aux.update(self.trace_aux_metrics(sample, generation.trace))
+        return result
+
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
-        """Default aggregation: mean primary score + mean of every aux key
-        that appears on every result, plus valid/complete rates."""
+        """Aggregate numeric auxiliary values without hiding missing keys.
+
+        An auxiliary metric is averaged over the samples on which it exists;
+        when it is not present on every result, an explicit eligible ratio is
+        emitted.  Non-numeric audit fields remain in per-sample score files.
+        """
         if not results:
             raise ValueError("cannot aggregate an empty result list")
         n = len(results)
@@ -72,9 +88,20 @@ class Dataset(ABC):
             "valid_rate": sum(1 for r in results if r.valid) / n,
             "complete_rate": sum(1 for r in results if r.complete) / n,
         }
-        aux_keys = set.intersection(*(set(r.aux) for r in results)) if results else set()
+        aux_keys = set().union(*(set(r.aux) for r in results))
         for key in aux_keys:
-            summary[key] = sum(r.aux[key] for r in results) / n
+            values = [
+                float(r.aux[key])
+                for r in results
+                if key in r.aux
+                and isinstance(r.aux[key], (int, float))
+                and not isinstance(r.aux[key], bool)
+            ]
+            if not values:
+                continue
+            summary[key] = sum(values) / len(values)
+            if len(values) != n:
+                summary[f"{key}_eligible_ratio"] = len(values) / n
         return summary
 
     def aggregate_records(
