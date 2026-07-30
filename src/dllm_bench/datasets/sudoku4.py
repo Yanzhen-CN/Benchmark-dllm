@@ -246,7 +246,7 @@ class Sudoku4Dataset(Dataset):
 
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
         summary = super().aggregate(results)
-        summary["d1_blank_cell_accuracy"] = summary["sudoku4_score"]
+        summary["d1_blank_cell_accuracy"] = summary[f"{self.name}_score"]
         summary["puzzle_success_rate"] = sum(
             result.aux["puzzle_success_rate"] for result in results
         ) / len(results)

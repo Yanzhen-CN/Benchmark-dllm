@@ -99,7 +99,7 @@ class RulerDataset(Dataset):
         self, samples: list[Sample], results: list[ScoreResult]
     ) -> dict[str, float]:
         summary = super().aggregate_records(samples, results)
-        summary["ruler_string_match_all"] = summary["ruler_score"]
+        summary["ruler_string_match_all"] = summary[f"{self.name}_score"]
         grouped: dict[tuple[int, str, str], list[float]] = {}
         for sample, result in zip(samples, results):
             window = int(sample.meta.get("context_window_tokens", sample.reference.context_length))

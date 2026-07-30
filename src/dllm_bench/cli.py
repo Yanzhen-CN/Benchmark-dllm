@@ -868,7 +868,12 @@ def matrix_command(
                 ctx.invoke(
                     visualize, **common, n_representative=n_representative, sample_ids=None,
                 )
-        except (OOMInvalidTestError, InvalidTestError, IncompleteTestError) as exc:
+        except (
+            OOMInvalidTestError,
+            InvalidTestError,
+            IncompleteTestError,
+            FileNotFoundError,
+        ) as exc:
             invalid_jobs += 1
             click.echo(
                 f"ERROR: {job.model_name} x {job.dataset_config.stem} is invalid; "
@@ -884,7 +889,8 @@ def matrix_command(
             click.echo("WARNING: no valid tests completed; aggregate report skipped", err=True)
     if invalid_jobs:
         click.echo(
-            f"Matrix completed with {invalid_jobs} OOM-invalid test(s) excluded "
+            f"Matrix completed with {invalid_jobs} invalid/incomplete/missing "
+            f"test(s) excluded "
             f"and {valid_jobs} valid test(s)."
         )
 

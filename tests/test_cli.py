@@ -444,6 +444,49 @@ def test_matrix_reports_oom_invalid_job_and_continues_later_jobs(tmp_path, monke
     assert calls == [str(gsm8k_config), str(mbpp_config)]
 
 
+def test_matrix_reports_missing_score_job_and_continues_later_jobs(
+    tmp_path, monkeypatch
+):
+    runner = CliRunner()
+    model_config = CONFIGS_DIR / "models" / "mock.yaml"
+    gsm8k_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
+    mbpp_config = CONFIGS_DIR / "datasets" / "mbpp.yaml"
+    experiment_config = tmp_path / "experiment.yaml"
+    experiment_config.write_text(
+        "seed: 42\n"
+        "models:\n"
+        f"  - name: mock\n    config: {model_config}\n    variants: [default]\n"
+        "datasets:\n"
+        f"  - config: {gsm8k_config}\n    max_new_tokens: 16\n"
+        f"  - config: {mbpp_config}\n    max_new_tokens: 16\n"
+    )
+    calls = []
+
+    def fake_score(**kwargs):
+        calls.append(kwargs["dataset_config"])
+        if kwargs["dataset_config"] == str(gsm8k_config):
+            raise FileNotFoundError("generation output is missing")
+
+    monkeypatch.setattr(cli_module, "score", fake_score)
+
+    result = runner.invoke(
+        main,
+        [
+            "matrix",
+            "--experiment-config", str(experiment_config),
+            "--model", "mock",
+            "--stage", "score",
+            "--demo",
+            "--output-root", str(tmp_path / "output"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "skipping this test and continuing" in result.output
+    assert "invalid/incomplete/missing test(s) excluded" in result.output
+    assert calls == [str(gsm8k_config), str(mbpp_config)]
+
+
 def test_matrix_variants_option_filters_sampling_profile(tmp_path, monkeypatch):
     runner = CliRunner()
     model_config = CONFIGS_DIR / "models" / "mock.yaml"

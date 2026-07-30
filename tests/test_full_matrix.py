@@ -52,7 +52,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     assert dream_job.variants == expected
     for dataset_name in ("gsm8k", "mbpp", "structeval_t"):
         assert all(
-            job.max_new_tokens == 256
+            job.max_new_tokens == 512
             for job in jobs
             if job.dataset_config.stem == dataset_name
         )

@@ -25,6 +25,7 @@ from dllm_bench.datasets.mbpp import (
     extract_code,
 )
 from dllm_bench.datasets.ruler import (
+    RulerContextProbeDataset,
     RulerDataset,
     RulerReference,
     generate_ruler_bank,
@@ -56,6 +57,7 @@ from dllm_bench.datasets.sudoku9 import (
 from dllm_bench.datasets.sudoku4 import (
     Sudoku4Dataset,
     Sudoku4Reference,
+    Sudoku4ThinkingDataset,
     _load_d1_samples,
     extract_sudoku4_answer,
     is_valid_sudoku4,
@@ -408,6 +410,23 @@ def test_sudoku4_primary_metric_mirrors_d1_tag_and_padding_rules():
     assert shortened.aux["puzzle_success_rate"] == 0.0
     assert tolerant_only.primary_score == 0.0
     assert tolerant_only.aux["puzzle_success_rate"] == 1.0
+
+
+def test_sudoku4_thinking_aggregate_uses_its_dataset_score_key():
+    dataset = Sudoku4ThinkingDataset()
+    reference = Sudoku4Reference(
+        puzzle="3102200002100320",
+        solution="3142243142131324",
+    )
+    result = dataset.score(
+        Sample("s4", "prompt", reference),
+        "<answer>3142243142131324</answer>",
+    )
+
+    summary = dataset.aggregate([result])
+
+    assert summary["sudoku4_thinking_score"] == 1.0
+    assert summary["d1_blank_cell_accuracy"] == 1.0
 
 
 def test_sudoku4_loader_validates_official_shape_and_prompt(tmp_path):
@@ -818,6 +837,28 @@ def test_ruler_score_partial_match_for_multi_answer():
     result = ds.score(sample, "The answer involves Alice.")
     assert result.primary_score == pytest.approx(0.5)
     assert result.aux["all_answers_match"] == 0.0
+
+
+def test_ruler_context_probe_aggregate_uses_its_dataset_score_key():
+    dataset = RulerContextProbeDataset()
+    reference = RulerReference(
+        task_type="niah",
+        position="middle",
+        required_answers=["P123"],
+        context_length=4096,
+    )
+    sample = Sample(
+        sample_id="probe",
+        prompt="p",
+        reference=reference,
+        meta={"context_window_tokens": 4096},
+    )
+    result = dataset.score(sample, "P123")
+
+    summary = dataset.aggregate_records([sample], [result])
+
+    assert summary["ruler_context_probe_score"] == 1.0
+    assert summary["ruler_string_match_all"] == 1.0
 
 
 def test_position_robustness_perfect_when_equal():

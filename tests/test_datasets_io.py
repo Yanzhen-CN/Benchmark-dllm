@@ -10,6 +10,7 @@ matrix jobs later in the same long-running process).
 from __future__ import annotations
 
 import inspect
+import json
 
 import pytest
 
@@ -184,6 +185,40 @@ def test_load_samples_file_reconstructs_sudoku4_reference(tmp_path):
     samples = load_samples_file(path, "sudoku4")
 
     assert isinstance(samples[0].reference, Sudoku4Reference)
+
+
+@pytest.mark.parametrize(
+    ("dataset_name", "reference_type"),
+    [
+        ("sudoku4_thinking", Sudoku4Reference),
+        ("sudoku9_thinking", SudokuReference),
+    ],
+)
+def test_load_samples_file_reconstructs_thinking_sudoku_references(
+    tmp_path, dataset_name, reference_type
+):
+    path = tmp_path / "samples.jsonl"
+    if dataset_name == "sudoku4_thinking":
+        reference = {
+            "puzzle": "3102200002100320",
+            "solution": "3142243142131324",
+        }
+    else:
+        reference = {
+            "puzzle": [[0]],
+            "solution": [[1]],
+            "difficulty": "easy",
+        }
+    path.write_text(
+        '{"sample_id":"thinking","prompt":"solve","reference":'
+        + json.dumps(reference)
+        + "}\n",
+        encoding="utf-8",
+    )
+
+    samples = load_samples_file(path, dataset_name)
+
+    assert isinstance(samples[0].reference, reference_type)
 
 
 def test_load_samples_file_reconstructs_the_mbpp_reference_dataclass(tmp_path):
