@@ -453,6 +453,42 @@ def test_matrix_reports_missing_score_job_and_continues_later_jobs(
     assert calls == [str(gsm8k_config), str(mbpp_config)]
 
 
+def test_matrix_reuses_one_adapter_across_dataset_jobs(tmp_path, monkeypatch):
+    runner = CliRunner()
+    model_config = CONFIGS_DIR / "models" / "mock.yaml"
+    gsm8k_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
+    mbpp_config = CONFIGS_DIR / "datasets" / "mbpp.yaml"
+    experiment_config = tmp_path / "experiment.yaml"
+    experiment_config.write_text(
+        "seed: 42\n"
+        "models:\n"
+        f"  - name: mock\n    config: {model_config}\n    variants: [default]\n"
+        "datasets:\n"
+        f"  - config: {gsm8k_config}\n    max_new_tokens: 4\n"
+        f"  - config: {mbpp_config}\n    max_new_tokens: 4\n"
+    )
+    real_build = cli_module.build_model_adapter
+    built = []
+
+    def tracked_build(*args, **kwargs):
+        adapter = real_build(*args, **kwargs)
+        built.append(adapter)
+        return adapter
+
+    monkeypatch.setattr(cli_module, "build_model_adapter", tracked_build)
+    result = runner.invoke(
+        main,
+        [
+            "matrix", "--experiment-config", str(experiment_config),
+            "--model", "mock", "--stage", "generate", "--demo",
+            "--n-samples", "1", "--output-root", str(tmp_path / "output"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(built) == 1
+
+
 def test_matrix_variants_option_filters_sampling_profile(tmp_path, monkeypatch):
     runner = CliRunner()
     model_config = CONFIGS_DIR / "models" / "mock.yaml"

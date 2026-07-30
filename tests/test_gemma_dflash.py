@@ -21,6 +21,19 @@ def test_config_builds_parallel_adapter_without_starting_server():
     assert adapter._startup_timeout_seconds == 3600
 
 
+def test_loaded_adapter_does_not_reenter_server_startup(monkeypatch):
+    adapter = gemma_dflash.GemmaDFlashAdapter()
+    adapter._base_url = "http://127.0.0.1:8000"
+    adapter._tokenizer = object()
+    monkeypatch.setattr(
+        gemma_dflash._SERVER,
+        "ensure",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("server restarted")),
+    )
+
+    adapter._ensure_loaded()
+
+
 def test_prometheus_parser_accepts_total_suffix_and_labels():
     parsed = gemma_dflash._parse_prometheus_metrics(
         """

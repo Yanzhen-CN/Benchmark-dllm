@@ -353,7 +353,15 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
 
     run([base_python, "-m", "venv", directory])
     python = venv_python(directory)
-    run([python, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], env=install_env)
+    bootstrap_requirements = [
+        "pip",
+        "setuptools<82" if profile.model_id == "gemma_dflash" else "setuptools",
+        "wheel",
+    ]
+    run(
+        [python, "-m", "pip", "install", "--upgrade", *bootstrap_requirements],
+        env=install_env,
+    )
     if profile.setup_requirements:
         # Official Gemma 4 DFlash currently needs the temporary vLLM PR
         # build. uv selects the compatible PyTorch/CUDA wheel from the server

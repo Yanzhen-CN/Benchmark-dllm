@@ -11,11 +11,13 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,22 @@ def _server_log_tail(path: Path, lines: int = 80) -> str:
         return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
     except OSError:
         return ""
+
+
+@lru_cache(maxsize=None)
+def _cached_snapshot_path(repo_id: str) -> str | None:
+    """Return a fully prepared local HF snapshot without contacting the Hub."""
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot = Path(snapshot_download(repo_id=repo_id, local_files_only=True))
+    except Exception:
+        return None
+    if not (snapshot / "config.json").is_file():
+        return None
+    if not any(snapshot.glob("*.safetensors")):
+        return None
+    return str(snapshot)
 
 
 class _ManagedVLLMServer:
@@ -98,10 +116,15 @@ class _ManagedVLLMServer:
             self._log_path = log_dir / "gemma_dflash_vllm.log"
             self._log_handle = self._log_path.open("w", encoding="utf-8")
             print(f"Gemma DFlash vLLM startup log: {self._log_path}", flush=True)
+            target_path = _cached_snapshot_path(target) or target
+            draft_path = _cached_snapshot_path(draft) or draft
+            snapshots_are_local = target_path != target and draft_path != draft
+            if snapshots_are_local:
+                print("Using prepared local Gemma DFlash target + draft snapshots", flush=True)
             speculative = json.dumps(
                 {
                     "method": "dflash",
-                    "model": draft,
+                    "model": draft_path,
                     "num_speculative_tokens": num_speculative_tokens,
                     "attention_backend": "flash_attn",
                 },
@@ -110,7 +133,7 @@ class _ManagedVLLMServer:
             command = [
                 str(executable),
                 "serve",
-                target,
+                target_path,
                 "--host",
                 host,
                 "--port",
@@ -132,26 +155,35 @@ class _ManagedVLLMServer:
             ]
             environment = os.environ.copy()
             environment.setdefault("PYTHONUNBUFFERED", "1")
-            runtime_cache = data_root() / "runtime-cache"
-            vllm_cache = runtime_cache / "vllm"
-            torch_extensions = runtime_cache / "torch-extensions"
-            for cache_dir in (runtime_cache, vllm_cache, torch_extensions):
-                cache_dir.mkdir(parents=True, exist_ok=True)
-            # Persist expensive first-start compilation across RunPod
-            # containers. FlashInfer appends `.cache/flashinfer` to its
-            # workspace base; vLLM stores Inductor/Triton/AOT artifacts below
-            # VLLM_CACHE_ROOT.
-            environment.setdefault("VLLM_CACHE_ROOT", str(vllm_cache))
+            venv_bin = str(Path(sys.executable).parent)
+            path_entries = [
+                entry for entry in environment.get("PATH", "").split(os.pathsep)
+                if entry and entry != venv_bin
+            ]
+            environment["PATH"] = os.pathsep.join([venv_bin, *path_entries])
+            ninja = shutil.which("ninja", path=environment["PATH"])
+            if ninja is None:
+                raise RuntimeError(
+                    f"FlashInfer JIT requires ninja in the DFlash environment; "
+                    f"expected {Path(venv_bin) / 'ninja'}"
+                )
+            print(f"Gemma DFlash FlashInfer JIT tool: {ninja}", flush=True)
+            runtime_cache = data_root() / "runtime-cache" / "gemma_dflash"
+            cache_directories = {
+                "VLLM_CACHE_ROOT": runtime_cache / "vllm",
+                "TORCHINDUCTOR_CACHE_DIR": runtime_cache / "torchinductor",
+                "TRITON_CACHE_DIR": runtime_cache / "triton",
+                "CUDA_CACHE_PATH": runtime_cache / "cuda",
+                "TORCH_EXTENSIONS_DIR": runtime_cache / "torch-extensions",
+            }
+            for variable, directory in cache_directories.items():
+                directory.mkdir(parents=True, exist_ok=True)
+                environment.setdefault(variable, str(directory))
+            # FlashInfer appends `.cache/flashinfer` below this workspace.
             environment.setdefault("FLASHINFER_WORKSPACE_BASE", str(runtime_cache))
-            environment.setdefault("TORCH_EXTENSIONS_DIR", str(torch_extensions))
-            # Model preparation is a separate, explicit stage. Keep the
-            # expensive GPU deployment deterministic and prevent Hub metadata
-            # requests from stalling vLLM before it creates the engine process.
+            # Preparation is explicit, so startup must not contact the Hub.
             environment["HF_HUB_OFFLINE"] = "1"
             environment["TRANSFORMERS_OFFLINE"] = "1"
-            environment["PATH"] = os.pathsep.join(
-                [str(executable.parent), environment.get("PATH", "")]
-            )
             environment["NO_PROXY"] = ",".join(
                 filter(None, [environment.get("NO_PROXY", ""), "127.0.0.1", "localhost"])
             )
@@ -293,6 +325,8 @@ class GemmaDFlashAdapter:
         )
 
     def _ensure_loaded(self) -> None:
+        if self._base_url is not None and self._tokenizer is not None:
+            return
         import requests
         from transformers import AutoTokenizer
         from dllm_bench.models.device_transfer import run_gpu_loading_operation
@@ -318,8 +352,9 @@ class GemmaDFlashAdapter:
                 label="Gemma DFlash target + draft via vLLM",
             )
         if self._tokenizer is None:
+            tokenizer_path = _cached_snapshot_path(self._model_name) or self._model_name
             self._tokenizer = AutoTokenizer.from_pretrained(
-                self._model_name,
+                tokenizer_path,
                 local_files_only=True,
             )
 
