@@ -35,6 +35,7 @@ MBPP_SANITIZED_URL = (
 _CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 _TRAILING_CONTINUATION_RE = re.compile(r"(\\|[+\-*/,(\[{]|\band\b|\bor\b)\s*$")
 _BEGIN_DONE_RE = re.compile(r"\[BEGIN\]\s*(.*?)(?:\s*\[DONE\]|\Z)", re.DOTALL)
+_DONE_LINE_RE = re.compile(r"(?m)^\s*\[DONE\]\s*$")
 
 
 @dataclass
@@ -49,14 +50,18 @@ def extract_code(output_text: str) -> str:
     delimited = _BEGIN_DONE_RE.search(output_text)
     if delimited:
         return delimited.group(1).strip()
-    fence_match = _CODE_FENCE_RE.search(output_text)
+    # The candidate prompt already contains ``[BEGIN]``, so a normal model
+    # completion contains only the matching closing marker.
+    done_match = _DONE_LINE_RE.search(output_text)
+    candidate = output_text[: done_match.start()] if done_match else output_text
+    fence_match = _CODE_FENCE_RE.search(candidate)
     if fence_match:
         return fence_match.group(1).strip()
 
-    def_index = output_text.find("def ")
+    def_index = candidate.find("def ")
     if def_index != -1:
-        return output_text[def_index:].strip()
-    return output_text.strip()
+        return candidate[def_index:].strip()
+    return candidate.strip()
 
 
 def _looks_complete(code: str) -> bool:

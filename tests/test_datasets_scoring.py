@@ -153,6 +153,12 @@ def test_mbpp_extract_code_from_fence():
     assert code == "def add(a, b):\n    return a + b"
 
 
+def test_mbpp_extract_code_from_completion_only_closing_marker():
+    text = "def add(a, b):\n    return a + b\n[DONE]"
+    code = extract_code(text)
+    assert code == "def add(a, b):\n    return a + b"
+
+
 def test_mbpp_official_prompt_uses_begin_done_delimiters():
     row = {
         "prompt": "Write add.",
