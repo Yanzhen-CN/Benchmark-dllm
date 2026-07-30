@@ -188,6 +188,7 @@ class GSM8KDataset(Dataset):
         result = self.score(sample, generation.output_text)
         region = locate_gsm8k_answer(generation.output_text)
         result.aux.update(trace_position_aux(region, generation.trace))
+        result.aux.update(self.trace_aux_metrics(sample, generation.trace))
         return result
 
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:

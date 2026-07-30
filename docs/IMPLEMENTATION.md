@@ -51,12 +51,15 @@ Current formal ceilings are:
 Sudoku direct and thinking are distinct dataset classes, prepared banks,
 output directories, and report rows. Direct requests marker-free copy-and-fill;
 thinking uses the original marked reasoning contract. Both variants first
-locate the final submitted complete digit string/grid and then call the same
-size-specific semantic scorer. A later explicit marker or final-answer cue
-defines the submitted region even when truncated; in that case older complete
-drafts are not scored. Without a located submission region, copied or partial
-grids inside reasoning are not passed to the semantic scorer. Extra thought in
-a direct response affects the
+locate the final submitted fixed-size digit string/grid and then call the same
+size-specific semantic scorer. A Sudoku9 81-cell submission may retain `0`
+placeholders so blank-cell accuracy, clue preservation, and completion remain
+observable; it still receives zero complete-sequence primary credit unless all
+81 cells exactly equal the reference solution. A later explicit marker or
+final-answer cue defines the submitted region even when truncated; in that case
+older complete drafts are not scored. Without a located submission region,
+copied or partial grids inside reasoning are not passed to the semantic scorer.
+Extra thought in a direct response affects the
 strict format/instruction-following auxiliary metric, not semantic correctness.
 Their scores are never pooled.
 
@@ -148,18 +151,42 @@ per-sample score JSON.
 ## 5. Task 4 visualization implementation
 
 `--n-representative` limits only the single-sample heatmap/GIF/result files.
+The generic token-canvas GIF works for traced token canvases; the 9x9 board GIF
+is Sudoku9-only and requires an 81-cell mapping. Redundant per-sample final
+frame, first-commit scatter, and commit-speed files are not emitted.
 `dataset_trace_summary.json` always consumes every generated trace available
 for the selected model × config × dataset row. Normalized curves are first
 binned within each sample and then aggregated with one value per sample per
 bin, so a long trace cannot outweigh a short trace merely by contributing more
 checkpoints. Dataset summaries persist Mean, Median, IQR and bootstrap 95% CI.
 
-The dataset-level artifacts include TPF profiles, final-stable CDFs, a
-position × final-stable-forward density map, commit-order tau by window,
-Early/Middle/Late finalization shares, TPF-vs-Tps, observed certainty/top-1
-curves, and visible-token revision burden. Cross-model overlays retain the
-bootstrap confidence bands and are still partitioned by dataset, exact sample
-set and hardware.
+The headline dataset-level artifacts are TPF profiles, TPF-vs-Tps, a compact
+parallelism signature (Peak/Mean TPF, busiest-10%-forward finalization share,
+and P90 final-stable progress), a position × final-stable-forward density map,
+commit-order tau by window, and Early/Middle/Late finalization shares.
+Observed certainty/top-1, answer-local structure/content, and Sudoku revision
+remain coverage-gated secondary analyses. Generic visible-token changes are
+labelled Draft Volatility; they are not Sudoku correction. The redundant
+final-stable CDF is not emitted. Cross-model curves retain bootstrap confidence
+bands and remain partitioned by dataset, exact sample set and hardware.
+
+Three block-diffusion-specific report families are derived from the same trace:
+
+- `task4_update_geometry.png`: contiguous finalization-run length and enclosing
+  span density;
+- `task4_confidence_dynamics.png`: certainty-backslide step rate and mean
+  backslide magnitude, labelled with entropy scope/coverage;
+- `task4_visible_draft_correction.png`: observability gate, first-visible final
+  match, wrong-draft exposure, helpful/lateral/harmful revision shares, and
+  revision timing.
+
+Visible-draft correction is N/A for commitment-only `MASKED -> ACCEPTED` traces;
+the implementation never converts missing provisional token IDs into zero
+revisions. DFlash has no public per-token verification trace, so its separate
+`dflash_speculative_acceptance.png` uses aggregate acceptance counters. The
+`task4_forward_yield.png` comparison prints its basis on every label: native
+models use final-stable tokens/model-forward, while DFlash uses accepted
+tokens/target-verification. Measured Tps still includes all execution overhead.
 
 Certainty is never fabricated from a backend that did not record probability
 data. AR rows therefore report entropy/top-1 scope as `unavailable` and do not
@@ -219,6 +246,22 @@ Quality–Tps, Quality–Seconds/Sample, Quality–Energy/Sample, Score per Unit
 Energy, Best-vs-Fast, and answer-region diagnostics. Eps is labelled Average
 Power. Chart directories separate different sample-set hashes and reported GPU
 hardware, and every plotted label includes N.
+
+Curated paper examples can be selected without reducing dataset-level Task 4
+aggregation:
+
+```bash
+python run_visualization.py -m diffusiongemma \
+  -d gsm8k mbpp structeval_t \
+  --sample-ids gsm8k-test-0177,mbpp-sanitized-0131,structeval-t-180530
+
+python run_visualization.py -m gemma dreamreasoner \
+  -d mbpp structeval_t \
+  --sample-ids mbpp-sanitized-0057,structeval-t-001841
+```
+
+`--sample-ids` controls only per-sample evidence. Every available trace still
+contributes to `dataset_trace_summary.json` and cross-model Task 4 figures.
 
 Optional conversion is a separate command:
 

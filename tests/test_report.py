@@ -9,6 +9,8 @@ from dllm_bench.report.plots import (
     plot_best_vs_fast,
     plot_quality_vs_resource,
     plot_score_per_unit,
+    plot_speculative_acceptance,
+    plot_task4_forward_yield,
 )
 from dllm_bench.report.pairwise import (
     PairwiseCompatibilityError,
@@ -56,6 +58,22 @@ def _summary(model, config, q, tps=1.0, eps=None):
             "primary_metric": "accuracy",
         },
     }
+
+
+def test_dflash_acceptance_and_forward_yield_plots(tmp_path):
+    row = raw_results_row(_summary("gemma_dflash", "dflash", 0.8, tps=40.0))
+    row["Aux"].update(
+        {
+            "speculative_draft_acceptance_rate": 0.4,
+            "speculative_mean_acceptance_length": 7.0,
+        }
+    )
+    acceptance = tmp_path / "acceptance.png"
+    forward_yield = tmp_path / "yield.png"
+    plot_speculative_acceptance([row], str(acceptance))
+    plot_task4_forward_yield([row], str(forward_yield))
+    assert acceptance.exists()
+    assert forward_yield.exists()
 
 
 def test_raw_results_row_shape():

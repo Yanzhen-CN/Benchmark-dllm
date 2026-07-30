@@ -128,6 +128,7 @@ class RulerDataset(Dataset):
             generation.output_text, method="first_non_whitespace_to_eos"
         )
         result.aux.update(trace_position_aux(region, generation.trace))
+        result.aux.update(self.trace_aux_metrics(sample, generation.trace))
         return result
 
     def aggregate_records(

@@ -780,6 +780,11 @@ def pairwise_report(
 @click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
 @click.option("--resume/--no-resume", default=True, show_default=True)
 @click.option("--n-representative", default=3, show_default=True, type=int)
+@click.option(
+    "--sample-ids",
+    default=None,
+    help="Comma-separated curated IDs for per-sample visuals; aggregate Task 4 still uses all traces",
+)
 @click.pass_context
 def matrix_command(
     ctx: click.Context,
@@ -797,6 +802,7 @@ def matrix_command(
     require_all_metrics: bool,
     resume: bool,
     n_representative: int,
+    sample_ids: str | None,
 ) -> None:
     """Run every model-variant x dataset row declared in an experiment YAML."""
     if len(model_names) != 1:
@@ -866,7 +872,10 @@ def matrix_command(
                 ctx.invoke(score, **common, resume=resume)
             if stage in {"visualize", "all"}:
                 ctx.invoke(
-                    visualize, **common, n_representative=n_representative, sample_ids=None,
+                    visualize,
+                    **common,
+                    n_representative=n_representative,
+                    sample_ids=sample_ids,
                 )
         except (IncompleteTestError, FileNotFoundError) as exc:
             incomplete_jobs += 1

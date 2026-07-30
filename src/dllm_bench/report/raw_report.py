@@ -16,13 +16,18 @@ from .plots import (
     plot_score_per_unit,
     plot_sudoku_revision_diagnostics,
     plot_task4_curve_overlay,
+    plot_task4_confidence_dynamics,
     plot_task4_draft_volatility,
     plot_task4_finalization_share,
+    plot_task4_forward_yield,
     plot_task4_parallelism_signature,
+    plot_task4_update_geometry,
+    plot_task4_visible_draft_correction,
     plot_task4_style_coverage,
     plot_task4_structure_first,
     plot_task4_tau_windows,
     plot_tpf_vs_tps,
+    plot_speculative_acceptance,
 )
 from .tables import RAW_COLUMNS, raw_results_row, render_raw_results_table
 
@@ -191,6 +196,30 @@ def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -
                 (
                     "task4_draft_volatility.png",
                     lambda path: plot_task4_draft_volatility(group_rows, str(path)),
+                ),
+                (
+                    "task4_update_geometry.png",
+                    lambda path: plot_task4_update_geometry(group_rows, str(path)),
+                ),
+                (
+                    "task4_visible_draft_correction.png",
+                    lambda path: plot_task4_visible_draft_correction(
+                        group_rows, str(path)
+                    ),
+                ),
+                (
+                    "task4_confidence_dynamics.png",
+                    lambda path: plot_task4_confidence_dynamics(
+                        group_rows, str(path)
+                    ),
+                ),
+                (
+                    "task4_forward_yield.png",
+                    lambda path: plot_task4_forward_yield(group_rows, str(path)),
+                ),
+                (
+                    "dflash_speculative_acceptance.png",
+                    lambda path: plot_speculative_acceptance(group_rows, str(path)),
                 ),
                 (
                     "task4_commit_tau_windows.png",

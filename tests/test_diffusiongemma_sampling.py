@@ -218,7 +218,6 @@ def test_diffusiongemma_generate_core_builds_correct_trace_and_output():
     request = GenerationRequest(
         prompt="hi",
         max_new_tokens=4,
-        config={"target_input_tokens": 8},
     )
 
     result = adapter._generate_core(request)

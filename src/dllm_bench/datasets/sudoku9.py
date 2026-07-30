@@ -70,7 +70,10 @@ def locate_sudoku9_answer(text: str, *, enable_reasoning: bool) -> AnswerRegion:
     region = locate_digit_answer(
         text,
         expected_length=81,
-        allowed_digits="123456789",
+        # A submitted 81-cell grid may still contain 0 placeholders.  It must
+        # receive zero official exact-match credit, but remains observable for
+        # Blank-cell Accuracy, clue preservation, and completion diagnostics.
+        allowed_digits="0123456789",
         marker_pairs=(
             (SUDOKU_ANSWER_BEGIN, SUDOKU_ANSWER_END),
             ("<answer>", "</answer>"),

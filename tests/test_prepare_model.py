@@ -22,6 +22,10 @@ def _run(args, cwd):
     # subprocess.run inherits the parent environment by default, and these
     # tests specifically exercise the "nothing set yet" default path.
     env = {k: v for k, v in os.environ.items() if k not in ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")}
+    # These direct-mode tests exercise the implementation entered by a model's
+    # isolated venv wrapper.  The public root-Python path is covered separately
+    # by the dispatch tests below.
+    env["DLLM_VENV"] = "1"
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         cwd=cwd,

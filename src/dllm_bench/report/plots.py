@@ -341,6 +341,255 @@ def plot_task4_draft_volatility(rows: list[dict[str, Any]], out_path: str) -> No
     plt.close(fig)
 
 
+def plot_task4_forward_yield(rows: list[dict[str, Any]], out_path: str) -> None:
+    """Native final-stable TPF and DFlash target-verification yield."""
+    values: list[tuple[dict[str, Any], float, str]] = []
+    for row in rows:
+        mean_tpf = row.get("Mean TPF")
+        speculative = (row.get("Aux") or {}).get(
+            "speculative_mean_acceptance_length"
+        )
+        if mean_tpf is not None:
+            values.append((row, float(mean_tpf), "final-stable / model forward"))
+        elif speculative is not None:
+            values.append((row, float(speculative), "accepted / target verification"))
+    if not values:
+        return
+    labels = [f"{_label(row)}\n{basis}" for row, _, basis in values]
+    fig, ax = plt.subplots(figsize=(max(8, len(values) * 0.95), 5.2))
+    ax.bar(
+        range(len(values)),
+        [value for _, value, _ in values],
+        color=["#4C78A8" if basis.startswith("final") else "#F28E2B" for _, _, basis in values],
+    )
+    ax.set_xticks(range(len(values)))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    ax.set_ylabel("Tokens advanced per primary/target forward")
+    ax.set_title("Forward yield (basis is explicit; draft-model overhead remains in Tps)")
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_task4_update_geometry(rows: list[dict[str, Any]], out_path: str) -> None:
+    usable = [
+        row for row in rows if (row.get("Trace Summary") or {}).get("update_geometry")
+    ]
+    if not usable:
+        return
+    labels = [_label(row) for row in usable]
+    x = list(range(len(labels)))
+    run_length = [
+        row["Trace Summary"]["update_geometry"]["mean_finalization_run_length"]["mean"]
+        for row in usable
+    ]
+    density = [
+        row["Trace Summary"]["update_geometry"]
+        ["mean_finalization_span_density"]["mean"]
+        for row in usable
+    ]
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(max(8, len(labels) * 0.9), 7.5),
+        constrained_layout=True,
+    )
+    axes[0].bar(x, run_length, color="#4C78A8")
+    axes[0].set_ylabel("Contiguous final tokens")
+    axes[0].set_title("Mean contiguous finalization-run length")
+    axes[1].bar(x, density, color="#59A14F")
+    axes[1].set_ylim(0, 1)
+    axes[1].set_ylabel("Positions / enclosing span")
+    axes[1].set_title("Finalization span density (1 = one compact region)")
+    for ax in axes:
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    fig.suptitle("Task 4 block-update geometry")
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_task4_visible_draft_correction(
+    rows: list[dict[str, Any]], out_path: str
+) -> None:
+    traced = [
+        row
+        for row in rows
+        if (row.get("Trace Summary") or {}).get("visible_draft_correction")
+    ]
+    if not traced:
+        return
+    labels = [_label(row) for row in traced]
+    x = list(range(len(labels)))
+    observable = [
+        row["Trace Summary"]["visible_draft_correction"]["observable_sample_rate"]
+        for row in traced
+    ]
+    eligible = [
+        (index, row["Trace Summary"]["visible_draft_correction"])
+        for index, row in enumerate(traced)
+        if row["Trace Summary"]["visible_draft_correction"].get(
+            "observation_status"
+        )
+        == "observable"
+    ]
+    fig, axes = plt.subplots(
+        4,
+        1,
+        figsize=(max(8, len(labels) * 0.9), 14),
+        constrained_layout=True,
+    )
+    axes[0].bar(x, observable, color="#9C9C9C")
+    axes[0].set_ylim(0, 1)
+    axes[0].set_ylabel("Sample ratio")
+    axes[0].set_title("Provisional visible-draft observability (0 means N/A, not no corrections)")
+    if eligible:
+        indices = [index for index, _ in eligible]
+        width_pair = 0.34
+        axes[1].bar(
+            [index - width_pair / 2 for index in indices],
+            [value["first_visible_final_match_rate"]["mean"] for _, value in eligible],
+            width_pair,
+            color="#59A14F",
+            label="first-visible final match",
+        )
+        axes[1].bar(
+            [index + width_pair / 2 for index in indices],
+            [value["wrong_draft_exposure_auc"]["mean"] for _, value in eligible],
+            width_pair,
+            color="#E15759",
+            label="wrong-draft exposure AUC",
+        )
+        axes[1].set_ylim(0, 1)
+        axes[1].set_ylabel("Rate / normalized area")
+        axes[1].set_title("First-visible final match and wrong-draft exposure")
+        axes[1].legend(fontsize=8)
+        width = 0.24
+        for offset, (key, label, color) in enumerate(
+            (
+                ("helpful_revision_share", "toward final", "#59A14F"),
+                ("lateral_revision_share", "wrong -> other wrong", "#F28E2B"),
+                ("harmful_revision_share", "away from final", "#E15759"),
+            )
+        ):
+            axes[2].bar(
+                [index + (offset - 1) * width for index in indices],
+                [value[key]["mean"] for _, value in eligible],
+                width,
+                label=label,
+                color=color,
+            )
+        axes[2].set_ylim(0, 1)
+        axes[2].set_ylabel("Revision-event share")
+        axes[2].set_title("Direction of visible-draft revisions")
+        axes[2].legend(fontsize=8)
+        bottom = [0.0] * len(indices)
+        for key, label, color in (
+            ("revision_early_share", "early", "#4C78A8"),
+            ("revision_middle_share", "middle", "#F28E2B"),
+            ("revision_late_share", "late", "#E15759"),
+        ):
+            vals = [value[key]["mean"] for _, value in eligible]
+            axes[3].bar(indices, vals, bottom=bottom, label=label, color=color)
+            bottom = [left + value for left, value in zip(bottom, vals)]
+        axes[3].set_ylim(0, 1)
+        axes[3].set_ylabel("Revision-event share")
+        axes[3].set_title("When visible-draft revisions happen")
+        axes[3].legend(fontsize=8)
+    else:
+        for ax in axes[1:]:
+            ax.text(
+                0.5,
+                0.5,
+                "N/A: selected traces expose commitments only",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+    for ax in axes:
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    fig.suptitle("Task 4 visible-draft correction (coverage-gated)")
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_task4_confidence_dynamics(rows: list[dict[str, Any]], out_path: str) -> None:
+    usable = []
+    for row in rows:
+        trace = row.get("Trace Summary") or {}
+        dynamics = trace.get("confidence_dynamics") or {}
+        if dynamics.get("backslide_step_rate"):
+            usable.append((row, trace, dynamics))
+    if not usable:
+        return
+    labels = []
+    for row, trace, _ in usable:
+        observation = trace.get("certainty_observation", {})
+        labels.append(
+            f"{_label(row)}\n{observation.get('entropy_scope', 'unknown')} "
+            f"cov={observation.get('entropy_position_coverage', 0):.2f}"
+        )
+    x = list(range(len(labels)))
+    backslide = [value["backslide_step_rate"]["mean"] for _, _, value in usable]
+    magnitude = [
+        value["mean_backslide_magnitude_per_transition"]["mean"]
+        for _, _, value in usable
+    ]
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(max(8, len(labels) * 1.0), 7.5),
+        constrained_layout=True,
+    )
+    axes[0].bar(x, backslide, color="#E15759")
+    axes[0].set_ylim(0, 1)
+    axes[0].set_ylabel("Observed transition share")
+    axes[0].set_title("Certainty-backslide step rate")
+    axes[1].bar(x, magnitude, color="#F28E2B")
+    axes[1].set_ylabel("Mean certainty decrease")
+    axes[1].set_title("Backslide magnitude per observed transition")
+    for ax in axes:
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    fig.suptitle("Task 4 confidence correction (compare matching coverage scopes)")
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def plot_speculative_acceptance(rows: list[dict[str, Any]], out_path: str) -> None:
+    usable = [
+        row
+        for row in rows
+        if (row.get("Aux") or {}).get("speculative_draft_acceptance_rate")
+        is not None
+    ]
+    if not usable:
+        return
+    labels = [_label(row) for row in usable]
+    x = list(range(len(labels)))
+    acceptance = [
+        row["Aux"]["speculative_draft_acceptance_rate"] for row in usable
+    ]
+    lengths = [
+        row["Aux"]["speculative_mean_acceptance_length"] for row in usable
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(max(9, len(labels) * 1.2), 4.8))
+    axes[0].bar(x, acceptance, color="#59A14F")
+    axes[0].set_ylim(0, 1)
+    axes[0].set_ylabel("Accepted draft tokens / drafted tokens")
+    axes[0].set_title("DFlash draft acceptance rate")
+    axes[1].bar(x, lengths, color="#F28E2B")
+    axes[1].set_ylabel("Tokens / target verification")
+    axes[1].set_title("Mean accepted span (+ target token)")
+    for ax in axes:
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 def plot_task4_style_coverage(rows: list[dict[str, Any]], out_path: str) -> None:
     usable = [row for row in rows if (row.get("Trace Summary") or {}).get("style")]
     if not usable:

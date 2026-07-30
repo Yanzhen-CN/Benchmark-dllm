@@ -85,7 +85,7 @@ class _GpuVramMonitor:
 
 
 def _transfer_status(label: str, elapsed: float, vram: _GpuVramMonitor) -> str:
-    status = f"Loading {label} on GPU ... {elapsed:.1f}s elapsed"
+    status = f"Moving {label} to GPU ... {elapsed:.1f}s elapsed"
     snapshot = vram.snapshot()
     return f"{status} | {snapshot}" if snapshot else status
 

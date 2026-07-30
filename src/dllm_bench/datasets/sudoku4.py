@@ -336,6 +336,7 @@ class Sudoku4Dataset(Dataset):
             generation.output_text, enable_reasoning=self._enable_reasoning
         )
         result.aux.update(trace_position_aux(region, generation.trace))
+        result.aux.update(self.trace_aux_metrics(sample, generation.trace))
         return result
 
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:

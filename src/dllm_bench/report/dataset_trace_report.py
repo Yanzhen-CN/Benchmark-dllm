@@ -215,6 +215,67 @@ def _plot_finalization_quantiles(summary: dict[str, Any], path: Path) -> None:
     plt.close(fig)
 
 
+def _plot_update_geometry(summary: dict[str, Any], path: Path) -> None:
+    geometry = summary.get("update_geometry", {})
+    if not geometry:
+        return
+    labels = ["Run length", "Runs / active forward", "Span density"]
+    keys = [
+        "mean_finalization_run_length",
+        "mean_finalization_run_count",
+        "mean_finalization_span_density",
+    ]
+    values = [geometry[key]["mean"] for key in keys]
+    fig, ax = plt.subplots(figsize=(7, 4.2))
+    ax.bar(labels, values, color=["#4C78A8", "#F28E2B", "#59A14F"])
+    ax.set_ylabel("Dataset-level mean")
+    ax.set_title("Final-stable update geometry")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _plot_visible_draft_correction(summary: dict[str, Any], path: Path) -> None:
+    correction = summary.get("visible_draft_correction", {})
+    if correction.get("observation_status") != "observable":
+        return
+    labels = ["First-visible\nfinal match", "Wrong-draft\nexposure AUC", "Relapse\npositions"]
+    keys = [
+        "first_visible_final_match_rate",
+        "wrong_draft_exposure_auc",
+        "relapse_position_share",
+    ]
+    values = [correction[key]["mean"] for key in keys]
+    fig, ax = plt.subplots(figsize=(7, 4.2))
+    ax.bar(labels, values, color=["#59A14F", "#E15759", "#B07AA1"])
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Share / normalized area")
+    ax.set_title("Visible-draft correction dynamics")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _plot_confidence_dynamics(summary: dict[str, Any], path: Path) -> None:
+    dynamics = summary.get("confidence_dynamics", {})
+    if not dynamics.get("backslide_step_rate"):
+        return
+    labels = ["Backslide\nstep rate", "Backslide magnitude\n/ transition", "Total variation\n/ transition"]
+    keys = [
+        "backslide_step_rate",
+        "mean_backslide_magnitude_per_transition",
+        "mean_total_variation_per_transition",
+    ]
+    values = [dynamics[key]["mean"] for key in keys]
+    fig, ax = plt.subplots(figsize=(7, 4.2))
+    ax.bar(labels, values, color=["#E15759", "#F28E2B", "#4C78A8"])
+    ax.set_ylabel("Dataset-level mean")
+    ax.set_title("Observed certainty correction / backslide")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
 def _plot_finalization_map(
     records: list[tuple[Sample, GenerationResult]], path: Path, bins: int = 32
 ) -> None:
@@ -343,6 +404,158 @@ def _revision_metrics(result: GenerationResult, length: int) -> tuple[float, flo
         sum(value > 0 for value in revisions) / len(revisions),
         sum(revisions) / len(revisions),
     )
+
+
+def _draft_correction_metrics(
+    result: GenerationResult, length: int
+) -> dict[str, float] | None:
+    """Correction dynamics for traces that expose provisional visible tokens.
+
+    Commitment-only traces (MASKED -> ACCEPTED with no VISIBLE draft state)
+    cannot reveal whether an internal proposal was corrected. They return N/A
+    rather than a misleading perfect first-pass or zero-revision score.
+    """
+
+    trace = result.trace
+    if not trace or not any(
+        PositionState.VISIBLE in step.position_states[:length] for step in trace
+    ):
+        return None
+    final_tokens = trace[-1].token_ids[:length]
+    first_matches: list[float] = []
+    correction_lags: list[float] = []
+    wrong_rates: list[float] = []
+    helpful = harmful = lateral = total_changes = relapsed = 0
+    changes_by_stage = {"early": 0, "middle": 0, "late": 0}
+    denominator = max(len(trace) - 1, 1)
+
+    for step in trace:
+        visible = [
+            position
+            for position in range(
+                min(length, len(step.token_ids), len(step.position_states))
+            )
+            if step.position_states[position] != PositionState.MASKED
+        ]
+        if visible:
+            wrong_rates.append(
+                sum(step.token_ids[position] != final_tokens[position] for position in visible)
+                / len(visible)
+            )
+
+    for position, final_token in enumerate(final_tokens):
+        sequence: list[tuple[int, int]] = []
+        for step_index, step in enumerate(trace):
+            if (
+                position < len(step.token_ids)
+                and position < len(step.position_states)
+                and step.position_states[position] != PositionState.MASKED
+            ):
+                sequence.append((step_index, step.token_ids[position]))
+        if not sequence:
+            continue
+        first_matches.append(float(sequence[0][1] == final_token))
+        stable_step = len(trace) - 1
+        for step_index in range(len(trace) - 1, -1, -1):
+            step = trace[step_index]
+            if position < len(step.token_ids) and step.token_ids[position] == final_token:
+                stable_step = step_index
+            else:
+                break
+        correction_lags.append((stable_step - sequence[0][0]) / denominator)
+        left_final = False
+        for (previous_step, previous), (current_step, current) in zip(
+            sequence, sequence[1:]
+        ):
+            if previous == current:
+                continue
+            total_changes += 1
+            progress = current_step / denominator
+            stage = (
+                "early"
+                if progress < 1 / 3
+                else "middle"
+                if progress < 2 / 3
+                else "late"
+            )
+            changes_by_stage[stage] += 1
+            if previous != final_token and current == final_token:
+                helpful += 1
+            elif previous == final_token and current != final_token:
+                harmful += 1
+                left_final = True
+            else:
+                lateral += 1
+        relapsed += int(left_final)
+
+    positions = max(len(first_matches), 1)
+    changes = max(total_changes, 1)
+    wrong_draft_exposure_auc = (
+        wrong_rates[0]
+        if len(wrong_rates) == 1
+        else sum(
+            (previous + current) / 2
+            for previous, current in zip(wrong_rates, wrong_rates[1:])
+        )
+        / (len(wrong_rates) - 1)
+        if wrong_rates
+        else 0.0
+    )
+    return {
+        "first_visible_final_match_rate": sum(first_matches) / positions,
+        "wrong_draft_exposure_auc": wrong_draft_exposure_auc,
+        "mean_correction_lag": (
+            sum(correction_lags) / len(correction_lags)
+            if correction_lags
+            else 0.0
+        ),
+        "changes_per_final_position": total_changes / positions,
+        "helpful_revision_share": helpful / changes,
+        "harmful_revision_share": harmful / changes,
+        "lateral_revision_share": lateral / changes,
+        "relapse_position_share": relapsed / positions,
+        **{
+            f"revision_{stage}_share": count / changes
+            for stage, count in changes_by_stage.items()
+        },
+    }
+
+
+def _update_geometry(stable_steps: list[int], num_steps: int) -> dict[str, float]:
+    run_lengths: list[int] = []
+    span_densities: list[float] = []
+    run_counts: list[int] = []
+    for step in range(num_steps):
+        positions = [
+            position
+            for position, stable_step in enumerate(stable_steps)
+            if stable_step == step
+        ]
+        if not positions:
+            continue
+        runs: list[int] = []
+        current = 1
+        for previous, position in zip(positions, positions[1:]):
+            if position == previous + 1:
+                current += 1
+            else:
+                runs.append(current)
+                current = 1
+        runs.append(current)
+        run_lengths.extend(runs)
+        run_counts.append(len(runs))
+        span_densities.append(len(positions) / (positions[-1] - positions[0] + 1))
+    return {
+        "mean_finalization_run_length": (
+            sum(run_lengths) / len(run_lengths) if run_lengths else 0.0
+        ),
+        "mean_finalization_run_count": (
+            sum(run_counts) / len(run_counts) if run_counts else 0.0
+        ),
+        "mean_finalization_span_density": (
+            sum(span_densities) / len(span_densities) if span_densities else 0.0
+        ),
+    }
 
 
 def _sudoku9_revision_summary(
@@ -504,6 +717,19 @@ def build_dataset_trace_summary(
         "p90": [],
         "p99": [],
     }
+    geometry_values: dict[str, list[float]] = {
+        "mean_finalization_run_length": [],
+        "mean_finalization_run_count": [],
+        "mean_finalization_span_density": [],
+    }
+    draft_metric_values: dict[str, list[float]] = {}
+    draft_observable_samples = 0
+    confidence_metric_values: dict[str, list[float]] = {
+        "backslide_step_rate": [],
+        "mean_backslide_magnitude_per_transition": [],
+        "mean_total_variation_per_transition": [],
+        "net_certainty_gain": [],
+    }
     shares: dict[str, list[float]] = {"early": [], "middle": [], "late": []}
     taus = []
     observed_entropy_steps = observed_top1_steps = total_steps = 0
@@ -551,10 +777,37 @@ def build_dataset_trace_summary(
         for stage, value in finalization_share(stable, len(sequences)).items():
             shares[stage].append(value)
         taus.append(commit_order_tau_windows(list(range(len(stable))), stable))
+        for key, value in _update_geometry(stable, len(sequences)).items():
+            geometry_values[key].append(value)
 
         certainty = build_observed_certainty_curve(result.trace, length)
         if len(certainty) >= 2:
             certainty_samples.append([(point[0], point[1]) for point in certainty])
+        # The curve appends a synthetic fully-certain endpoint for presentation.
+        # Backslide metrics must use only actually observed entropy checkpoints.
+        certainty_values = [
+            1.0 - sum(step.entropy_by_position.values()) / len(step.entropy_by_position)
+            for step in result.trace
+            if step.entropy_by_position
+        ]
+        if len(certainty_values) >= 2:
+            changes = [
+                current - previous
+                for previous, current in zip(certainty_values, certainty_values[1:])
+            ]
+            negative = [max(0.0, -change) for change in changes]
+            confidence_metric_values["backslide_step_rate"].append(
+                sum(value > 0 for value in negative) / len(changes)
+            )
+            confidence_metric_values[
+                "mean_backslide_magnitude_per_transition"
+            ].append(sum(negative) / len(changes))
+            confidence_metric_values["mean_total_variation_per_transition"].append(
+                sum(abs(value) for value in changes) / len(changes)
+            )
+            confidence_metric_values["net_certainty_gain"].append(
+                certainty_values[-1] - certainty_values[0]
+            )
         top1 = [(point[0], point[2]) for point in certainty if point[2] is not None]
         if len(top1) >= 2:
             top1_samples.append([(x, float(value)) for x, value in top1])
@@ -582,6 +835,11 @@ def build_dataset_trace_summary(
         revised_share, revision_mean = _revision_metrics(result, length)
         revised_shares.append(revised_share)
         revision_means.append(revision_mean)
+        draft_metrics = _draft_correction_metrics(result, length)
+        if draft_metrics is not None:
+            draft_observable_samples += 1
+            for key, value in draft_metrics.items():
+                draft_metric_values.setdefault(key, []).append(value)
 
         style = _style_observation(dataset_name, sample, result)
         if style is not None:
@@ -639,6 +897,10 @@ def build_dataset_trace_summary(
         label: _jsonable(summarize(values, seed=seed))
         for label, values in stable_progress_quantiles.items()
     }
+    summary["update_geometry"] = {
+        key: _jsonable(summarize(values, seed=seed))
+        for key, values in geometry_values.items()
+    }
     summary["tps"] = total_tokens / total_time if total_time > 0 else None
     summary["tpf_tps"] = {
         "mean_tpf": summary["mean_tpf"]["mean"],
@@ -677,9 +939,36 @@ def build_dataset_trace_summary(
     summary["certainty_observation"]["scope"] = summary[
         "certainty_observation"
     ]["entropy_scope"]
+    summary["confidence_dynamics"] = {
+        "observable_sample_rate": (
+            len(confidence_metric_values["backslide_step_rate"]) / len(usable)
+        ),
+        **{
+            key: _jsonable(summarize(values, seed=seed)) if values else None
+            for key, values in confidence_metric_values.items()
+        },
+        "comparison_note": (
+            "Direct comparison requires matching entropy scope/coverage; active-subset "
+            "curves remain model-local diagnostics."
+        ),
+    }
     summary["draft_volatility"] = {
         "revised_position_share": _jsonable(summarize(revised_shares, seed=seed)),
         "mean_revisions_per_position": _jsonable(summarize(revision_means, seed=seed)),
+    }
+    summary["visible_draft_correction"] = {
+        "observable_sample_rate": draft_observable_samples / len(usable),
+        "observation_status": (
+            "observable" if draft_observable_samples else "commitment_only_trace"
+        ),
+        **{
+            key: _jsonable(summarize(values, seed=seed))
+            for key, values in draft_metric_values.items()
+        },
+        "comparison_note": (
+            "N/A for MASKED-to-ACCEPTED commitment-only traces; zero must not be "
+            "reported as a correction result."
+        ),
     }
     if dataset_name in {"mbpp", "structeval_t"}:
         summary["style"] = {
@@ -765,6 +1054,21 @@ def render_dataset_trace_report(
             "draft_volatility",
             _plot_draft_volatility,
             "dataset_draft_volatility.png",
+        ),
+        (
+            "update_geometry",
+            _plot_update_geometry,
+            "dataset_update_geometry.png",
+        ),
+        (
+            "visible_draft_correction",
+            _plot_visible_draft_correction,
+            "dataset_visible_draft_correction.png",
+        ),
+        (
+            "confidence_dynamics",
+            _plot_confidence_dynamics,
+            "dataset_confidence_dynamics.png",
         ),
     ):
         path = out / filename

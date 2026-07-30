@@ -45,6 +45,14 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
         parser.set_defaults(resume=True)
     if stage == "visualize":
         parser.add_argument("--n-representative", type=int, default=3)
+        parser.add_argument(
+            "--sample-ids",
+            default=None,
+            help=(
+                "Comma-separated curated sample IDs. Matching IDs are rendered "
+                "per dataset; dataset-level Task 4 summaries still use all traces."
+            ),
+        )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -80,6 +88,8 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
         ]
         if stage == "visualize":
             command.extend(["--n-representative", str(args.n_representative)])
+            if args.sample_ids:
+                command.extend(["--sample-ids", args.sample_ids])
         if stage == "score":
             command.append("--resume" if args.resume else "--no-resume")
         if args.n_samples is not None:

@@ -138,7 +138,9 @@ def test_gsm8k_official_jsonl_loader_builds_stable_samples(tmp_path):
     assert samples[0].prompt == format_gsm8k_four_shot("Question 0")
     assert samples[0].prompt.count("Q: ") == 5
     assert samples[0].prompt.endswith("Q: Question 0\nA:")
-    assert samples[0].reference == 10.0
+    # Keep the exact lm-eval reference token; numeric normalization belongs to
+    # the official flexible-extract scorer rather than dataset preparation.
+    assert samples[0].reference == "10"
     assert samples[0].meta["source_revision"] == GSM8K_REVISION
     assert samples[0].meta["gold_solution"] == "Reasoning for 0.\n#### 10"
 

@@ -69,6 +69,10 @@ def test_ar_trace_without_logits_reports_certainty_as_unavailable():
     assert summary["certainty_observation"]["curve_sample_rate"] == 0.0
     assert summary["parallelism_signature"]["peak_to_mean_tpf"]["mean"] >= 1.0
     assert 0.0 <= summary["final_stable_progress"]["p90"]["mean"] <= 1.0
+    assert summary["visible_draft_correction"]["observation_status"] == (
+        "commitment_only_trace"
+    )
+    assert summary["update_geometry"]["mean_finalization_run_length"]["mean"] > 0
     assert "finalization_cdf" not in curves
 
 
@@ -98,6 +102,31 @@ def test_certainty_curve_uses_accepted_ratio_and_records_observation_scope():
     assert summary["certainty_observation"]["scope"] == "full_remaining"
     assert summary["certainty_observation"]["top1_scope"] == "full_remaining"
     assert summary["certainty_observation"]["curve_sample_rate"] == 1.0
+    assert summary["confidence_dynamics"]["backslide_step_rate"] is not None
+
+
+def test_visible_draft_correction_separates_helpful_changes_from_n_a():
+    trace = [
+        _step(
+            0,
+            [9, 2],
+            [PositionState.VISIBLE, PositionState.VISIBLE],
+        ),
+        _step(
+            1,
+            [1, 2],
+            [PositionState.VISIBLE, PositionState.VISIBLE],
+        ),
+        _step(2, [1, 2], [PositionState.ACCEPTED, PositionState.ACCEPTED]),
+    ]
+    summary, _ = build_dataset_trace_summary(
+        "gsm8k", [(Sample("s", "p", "r"), _result(trace, 2))]
+    )
+    correction = summary["visible_draft_correction"]
+    assert correction["observation_status"] == "observable"
+    assert correction["first_visible_final_match_rate"]["mean"] == pytest.approx(0.5)
+    assert correction["helpful_revision_share"]["mean"] == pytest.approx(1.0)
+    assert correction["harmful_revision_share"]["mean"] == pytest.approx(0.0)
 
 
 def test_sudoku_revision_is_easy_hard_and_mapping_coverage_gated(tmp_path: Path):
@@ -146,6 +175,7 @@ def test_sudoku_revision_is_easy_hard_and_mapping_coverage_gated(tmp_path: Path)
     assert Path(written["parallelism_signature"]).exists()
     assert Path(written["final_stable_progress"]).exists()
     assert Path(written["draft_volatility"]).exists()
+    assert Path(written["update_geometry"]).exists()
 
     comparison_path = tmp_path / "sudoku_comparison.png"
     plot_sudoku_revision_diagnostics(

@@ -118,6 +118,8 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert (
         output_root / "report" / "gsm8k" / "task4_draft_volatility.png"
     ).exists()
+    assert (output_root / "report" / "gsm8k" / "task4_update_geometry.png").exists()
+    assert (output_root / "report" / "gsm8k" / "task4_forward_yield.png").exists()
     assert (output_root / "report" / "gsm8k" / "task4_commit_tau_windows.png").exists()
 
 

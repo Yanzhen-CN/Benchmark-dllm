@@ -77,6 +77,22 @@ def test_local_visualization_forwards_report_dataset_filter(capsys):
     assert "report --output-root output --model qwen3_8b --dataset sudoku" in output
 
 
+def test_local_visualization_forwards_curated_sample_ids(capsys):
+    sample_ids = "gsm8k-test-0177,mbpp-sanitized-0131"
+    assert local_pipeline.main(
+        "visualize",
+        [
+            "--dry-run",
+            "-m",
+            "diffusiongemma",
+            "--sample-ids",
+            sample_ids,
+        ],
+    ) == 0
+    output = capsys.readouterr().out
+    assert f"--sample-ids {sample_ids}" in output
+
+
 def test_conversion_entrypoint_accepts_parallel_model_selector(capsys):
     assert run_conversion.main(
         [

@@ -121,6 +121,8 @@ python run_score.py
 python run_visualization.py
 python run_score.py -m qwen3_8b -d sudoku
 python run_visualization.py -m qwen3_8b -d sudoku
+python run_visualization.py -m diffusiongemma -d gsm8k mbpp structeval_t \
+  --sample-ids gsm8k-test-0177,mbpp-sanitized-0131,structeval-t-180530
 # Optional only; never called by run_visualization.py:
 python run_conversion.py -m illada --base-model qwen3_8b \
   --base-config ar-baseline --beta 50 --gamma 30
@@ -871,21 +873,21 @@ metric curves) — the visual language (colors, layout) is carried over from
 `Gemma/DGtest/visual.py` (*How DiffusionGemma Actually Commits Tokens*'
 own trace visualizer) for continuity with that prior art:
 
-- **token-grid GIF/PNG** — one cell per token position; gray = masked,
+- **token-canvas GIF and Position × Forward heatmap** — one cell per token position; gray = masked,
   brown text = visible-but-uncommitted, light green = just accepted,
   black = stable, green→teal→blue→purple→near-black gradient = revised
   multiple times (log-scaled by revision count), red outline = committed
   this frame.
-- **position vs first-commit scatter** and **commit-speed chart** — static
-  matplotlib companions, same color gradient.
 - **Effective Tokens per Forward**, **Structure/Content formation**,
   **Accepted-Ratio × Certainty** — the design doc's own Part 4 formulas
   (`metrics/trace_parallelism.py`/`strategy_score.py`/`certainty.py`).
 
-Dataset-level Task 4 output additionally includes the final-stable CDF, an
-equal-sample token-position × final-stable-forward density map, commit-order
-tau at 4/8/16/32/64-token windows, Early/Middle/Late finalization shares,
-TPF-vs-Tps, and bootstrap confidence bands on cross-model curves. Curve bins
+Dataset-level Task 4 output additionally includes an equal-sample token-position
+× final-stable-forward density map, commit-order tau at 4/8/16/32/64-token
+windows, Early/Middle/Late finalization shares, TPF-vs-Tps, a parallelism
+signature (Peak/Mean TPF, busiest-10%-forward share, P50/P90/P99 final-stable
+progress), block-update geometry, certainty-backslide dynamics, coverage-gated
+visible-draft correction, Draft Volatility, and bootstrap confidence bands. Curve bins
 are averaged within each sample before cross-sample aggregation, so models with
 longer traces do not receive more statistical weight. AR probability curves
 are N/A unless logits were actually recorded; diffusion backends label whether
@@ -917,6 +919,18 @@ This requires the trace's canvas to be exactly 81 positions, row-major
 (`derive_sudoku_frames`). `simulate_sudoku_frames` remains a self-contained
 demo/test fixture (the same role `models/mock.py` plays for the rest of the
 framework); real Sudoku9 runs use decoded model trace canvases when available.
+The generic token-canvas GIF is not this Sudoku board: it can illustrate a
+curated DiffusionGemma trace, while the 9x9 animation is emitted only for a
+successfully mapped Sudoku trajectory.
+
+Current iLLaDA/VarGen/Dream traces expose commitments but not provisional token
+IDs at masked positions, so visible-draft correction is explicitly N/A for
+them. Their behavior is instead compared through update geometry, finalization
+burst/tail metrics, and entropy backslides. DiffusionGemma exposes provisional
+visible tokens and receives the additional helpful/lateral/harmful revision
+analysis. Gemma DFlash exposes aggregate speculative-acceptance counters rather
+than a token trace; it gets a separate acceptance/yield figure with a visibly
+different denominator.
 The dataset-level Sudoku9 case-study figure is coverage-gated and separates
 Easy/Hard revision timing from correction success. A native 81-cell canvas is
 mappable while cells are still masked; a subword/free-form trace must expose an

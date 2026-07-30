@@ -677,6 +677,7 @@ class StructEvalTDataset(Dataset):
         result.aux.update(
             self._answer_local_style_metrics(sample, generation.trace, region)
         )
+        result.aux.update(self.trace_aux_metrics(sample, generation.trace))
         return result
 
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:

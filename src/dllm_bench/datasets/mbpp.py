@@ -217,6 +217,7 @@ class MBPPDataset(Dataset):
         result.aux.update(position_aux(region, generation.output_text))
         result.aux.update(trace_position_aux(region, generation.trace))
         result.aux.update(self._answer_local_style_metrics(generation.trace, region))
+        result.aux.update(self.trace_aux_metrics(sample, generation.trace))
         return result
 
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
