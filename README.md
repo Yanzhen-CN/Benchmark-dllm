@@ -297,6 +297,9 @@ The environment includes the `ninja` executable required by FlashInfer's
 first-start sampling-kernel JIT, and older DFlash environments repair that
 small dependency in place. Cold-start timeout is one hour so persistent-volume
 checkpoint reads and the initial JIT cannot be mistaken for a failed server.
+The launcher also persists vLLM's compile cache and FlashInfer's JIT workspace
+under `data/runtime-cache`; later pods reuse those artifacts when the GPU
+architecture, package versions, model, and runtime configuration still match.
 other dependency conflict remains fatal.
 
 The temporary DFlash vLLM build currently provides a CUDA 12.9 precompiled

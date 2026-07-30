@@ -132,6 +132,18 @@ class _ManagedVLLMServer:
             ]
             environment = os.environ.copy()
             environment.setdefault("PYTHONUNBUFFERED", "1")
+            runtime_cache = data_root() / "runtime-cache"
+            vllm_cache = runtime_cache / "vllm"
+            torch_extensions = runtime_cache / "torch-extensions"
+            for cache_dir in (runtime_cache, vllm_cache, torch_extensions):
+                cache_dir.mkdir(parents=True, exist_ok=True)
+            # Persist expensive first-start compilation across RunPod
+            # containers. FlashInfer appends `.cache/flashinfer` to its
+            # workspace base; vLLM stores Inductor/Triton/AOT artifacts below
+            # VLLM_CACHE_ROOT.
+            environment.setdefault("VLLM_CACHE_ROOT", str(vllm_cache))
+            environment.setdefault("FLASHINFER_WORKSPACE_BASE", str(runtime_cache))
+            environment.setdefault("TORCH_EXTENSIONS_DIR", str(torch_extensions))
             # Model preparation is a separate, explicit stage. Keep the
             # expensive GPU deployment deterministic and prevent Hub metadata
             # requests from stalling vLLM before it creates the engine process.

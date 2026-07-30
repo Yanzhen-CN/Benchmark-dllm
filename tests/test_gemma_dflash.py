@@ -88,6 +88,15 @@ def test_managed_vllm_server_forces_offline_model_resolution(
 
     assert captured["environment"]["HF_HUB_OFFLINE"] == "1"
     assert captured["environment"]["TRANSFORMERS_OFFLINE"] == "1"
+    assert captured["environment"]["VLLM_CACHE_ROOT"] == str(
+        tmp_path / "runtime-cache" / "vllm"
+    )
+    assert captured["environment"]["FLASHINFER_WORKSPACE_BASE"] == str(
+        tmp_path / "runtime-cache"
+    )
+    assert captured["environment"]["TORCH_EXTENSIONS_DIR"] == str(
+        tmp_path / "runtime-cache" / "torch-extensions"
+    )
     assert captured["environment"]["PATH"].split(gemma_dflash.os.pathsep)[0] == str(
         executable.parent
     )
