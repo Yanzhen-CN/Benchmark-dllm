@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
+import shutil
 import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
-import ctypes
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,40 +89,73 @@ def _clear_windows_readonly(path: Path) -> None:
         pass
 
 
-def native_remove(path: Path) -> bool:
+def _extended_windows_path(path: Path) -> str:
+    """Return a Win32 long-path form without passing through ``cmd.exe``."""
+    absolute = str(path.absolute())
+    if absolute.startswith("\\\\?\\"):
+        return absolute
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
+def native_remove(path: Path) -> tuple[bool, OSError | None]:
+    """Make one direct Win32 deletion attempt and preserve its real error."""
+    if os.name != "nt":
+        return False, None
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    remove_directory = kernel32.RemoveDirectoryW
+    remove_directory.argtypes = [ctypes.c_wchar_p]
+    remove_directory.restype = ctypes.c_int
+    delete_file = kernel32.DeleteFileW
+    delete_file.argtypes = [ctypes.c_wchar_p]
+    delete_file.restype = ctypes.c_int
+
+    native_path = _extended_windows_path(path)
+    removed = remove_directory(native_path) if path.is_dir() else delete_file(native_path)
+    if removed or not path.exists():
+        return True, None
+
+    error_code = ctypes.get_last_error()
+    return False, OSError(
+        None,
+        ctypes.FormatError(error_code).strip(),
+        str(path),
+        error_code,
+    )
+
+
+def _repair_windows_acl(path: Path) -> bool:
+    """Reset a broken temp-path ACL when the script is already elevated."""
     if os.name != "nt":
         return False
+    try:
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            return False
+    except Exception:
+        return False
 
-    quoted = f'"{path}"'
-    subprocess.run(
-        ["attrib", "-R", "-H", "-S", str(path), "/S", "/D"],
+    take_ownership = subprocess.run(
+        ["takeown", "/F", str(path), "/R", "/D", "Y"],
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    reset_acl = subprocess.run(
+        ["icacls", str(path), "/reset", "/T", "/C", "/Q"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return take_ownership.returncode == 0 and reset_acl.returncode == 0
 
-    if path.is_dir():
-        proc = subprocess.run(
-            ["cmd", "/c", f"rmdir /S /Q {quoted}"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    else:
-        proc = subprocess.run(
-            ["cmd", "/c", f"del /F /Q {quoted}"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
 
-    if proc.returncode != 0 and not path.exists():
-        # Some commands return non-zero for already gone paths.
-        return True
-    if proc.returncode != 0:
-        msg = proc.stderr.strip() or proc.stdout.strip()
-        print(f"[native-fallback-fail] {path}: {msg}", file=sys.stderr)
-    return proc.returncode == 0 and not path.exists()
+def _rmtree_on_error(function, path: str, _exc_info) -> None:
+    blocked = Path(path)
+    _clear_windows_readonly(blocked)
+    _chmod_user_writable(blocked)
+    function(path)
 
 
 def remove_target(target: Path, use_native_fallback: bool) -> tuple[int, int]:
@@ -130,40 +164,74 @@ def remove_target(target: Path, use_native_fallback: bool) -> tuple[int, int]:
             return 0, 0
 
         if target.is_dir() and not target.is_symlink():
-            make_writable(target, recursive=True)
+            last_error: BaseException | None = None
+            try:
+                make_writable(target, recursive=True)
+            except Exception as exc:
+                last_error = exc
             for attempt in range(2):
                 try:
-                    for child in sorted(target.rglob("*"), reverse=True):
-                        if child.is_file() or child.is_symlink():
-                            child.unlink(missing_ok=True)
-                        else:
-                            child.rmdir()
-                    if target.exists():
-                        target.rmdir()
+                    shutil.rmtree(target, onerror=_rmtree_on_error)
                     break
-                except Exception:
+                except Exception as exc:
+                    last_error = exc
                     if attempt == 1:
                         break
                     time.sleep(0.25)
 
             if use_native_fallback and target.exists():
-                for _ in range(4):
+                try:
                     make_writable(target, recursive=True)
-                    if native_remove(target):
-                        break
-                    time.sleep(0.25)
+                except Exception as exc:
+                    last_error = exc
+                removed, native_error = native_remove(target)
+                if not removed and native_error is not None:
+                    last_error = native_error
+                    windows_error = getattr(native_error, "winerror", None)
+                    if windows_error == 5 and _repair_windows_acl(target):
+                        try:
+                            make_writable(target, recursive=True)
+                            shutil.rmtree(target, onerror=_rmtree_on_error)
+                        except Exception as exc:
+                            last_error = exc
+                        if target.exists():
+                            removed, repaired_error = native_remove(target)
+                            if not removed and repaired_error is not None:
+                                last_error = repaired_error
 
             if target.exists():
-                raise OSError(f"failed to remove directory after cleanup: {target}")
+                raise OSError(
+                    f"failed to remove directory after cleanup; last error: "
+                    f"{last_error or 'unknown error'}"
+                )
             return 1, 0
 
-        make_writable(target)
-        target.unlink()
+        last_error = None
+        try:
+            make_writable(target)
+            target.unlink()
+        except Exception as exc:
+            last_error = exc
         if target.exists():
-            if use_native_fallback and not native_remove(target):
-                raise OSError(f"failed to remove file: {target}")
+            if use_native_fallback:
+                removed, native_error = native_remove(target)
+                if (
+                    not removed
+                    and native_error is not None
+                    and getattr(native_error, "winerror", None) == 5
+                    and _repair_windows_acl(target)
+                ):
+                    removed, native_error = native_remove(target)
+                if not removed:
+                    raise OSError(
+                        f"failed to remove file; last error: "
+                        f"{native_error or last_error or 'unknown error'}"
+                    )
             if target.exists():
-                raise OSError(f"failed to remove file: {target}")
+                raise OSError(
+                    f"failed to remove file; last error: "
+                    f"{last_error or 'unknown error'}"
+                )
         return 0, 1
     except (PermissionError, OSError, RuntimeError) as exc:
         print(f"[skip] {target}: {exc}", file=sys.stderr)
@@ -208,8 +276,14 @@ def main() -> int:
     print(f"Deleted {removed_dirs} directories and {removed_files} files.")
     if skipped:
         print(f"Skipped {skipped} path(s).")
-        print("Common cause: paths are still open in another process (VS Code explorer/search, terminal, or indexer).")
-        print("Run again after closing heavy file scanners, or run once from a fresh shell.")
+        print(
+            "WinError 5 means the path ACL denies access; WinError 32 means "
+            "another process still has it open."
+        )
+        print(
+            "For WinError 5, run this script once from an elevated terminal. "
+            "For WinError 32, close the owning process and retry."
+        )
     return 0
 
 
