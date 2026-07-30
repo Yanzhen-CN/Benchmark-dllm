@@ -188,12 +188,21 @@ def score_result_from_dict(data: dict[str, Any]) -> ScoreResult:
     )
 
 
-def save_score_result(score: ScoreResult, path: str | Path) -> None:
-    _write_json(score_result_to_dict(score), path)
+def save_score_result(
+    score: ScoreResult, path: str | Path, metadata: dict[str, Any] | None = None
+) -> None:
+    payload = score_result_to_dict(score)
+    if metadata is not None:
+        payload["_score_metadata"] = metadata
+    _write_json(payload, path)
 
 
 def load_score_result(path: str | Path) -> ScoreResult:
     return score_result_from_dict(_read_json(path))
+
+
+def load_score_metadata(path: str | Path) -> dict[str, Any]:
+    return dict(_read_json(path).get("_score_metadata", {}))
 
 
 def save_meta(meta: dict[str, Any], path: str | Path) -> None:

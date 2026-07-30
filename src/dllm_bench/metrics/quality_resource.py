@@ -1,10 +1,4 @@
-"""Quality/resource metrics from design document sections 3.2 and 3.3.
-
-The resource adjustment is deliberately calibrated with the AR baseline's
-quality.  ``q_model`` is only the model's measured quality to which that
-common adjustment is added; using it inside the retry curve would make the
-value of a resource advantage depend on the model being compared.
-"""
+"""Quality/resource metrics from design document sections 3.2 and 3.3."""
 
 from __future__ import annotations
 
@@ -19,15 +13,15 @@ def _validate_positive(value: float, name: str) -> None:
         raise ValueError(f"{name} must be positive")
 
 
-def score_per_unit_energy(q: float, eps: float) -> float:
-    """Section 3.2 ``q / EPS`` (score per unit energy-rate)."""
+def score_per_unit_energy(q: float, energy_per_sample: float) -> float:
+    """Section 3.2 ``q / EnergyPerSample`` (score per joule per sample)."""
     _validate_unit_score(q)
-    _validate_positive(eps, "eps")
-    return q / eps
+    _validate_positive(energy_per_sample, "energy_per_sample")
+    return q / energy_per_sample
 
 
 def score_per_compute(q: float, cps: float) -> float:
-    """Section 3.2 ``q / CPS`` (score per compute-rate)."""
+    """Section 3.2 ``q / Cps`` (score per compute-rate)."""
     _validate_unit_score(q)
     _validate_positive(cps, "cps")
     return q / cps
@@ -47,33 +41,24 @@ def speed_ratio(model_tps: float, baseline_tps: float) -> float:
     return model_tps / baseline_tps
 
 
-def resource_adjustment(q_ar: float, ratio: float) -> float:
-    """Common AR-calibrated adjustment ``Delta(r)``; it may be negative."""
-    _validate_unit_score(q_ar, "q_ar")
+def resource_adjustment(q_model: float, ratio: float) -> float:
+    """Pairwise retry adjustment computed from the evaluated model's quality."""
+    _validate_unit_score(q_model, "q_model")
     _validate_positive(ratio, "ratio")
-    return (1.0 - (1.0 - q_ar) ** ratio) - q_ar
+    return (1.0 - (1.0 - q_model) ** ratio) - q_model
 
 
 def resource_equivalent_quality(
     q_model: float,
     ratio: float,
     *,
-    q_ar: float | None = None,
     beta: float = 100.0,
 ) -> float:
-    """Return ``Q(r,beta) = q_model + beta/100 * Delta_AR(r)``.
-
-    ``q_ar`` is required by the design.  It defaults to ``q_model`` only for
-    backward compatibility with callers of the pre-design API; leaderboard
-    code always passes the actual AR quality explicitly.  The result is not
-    clipped: Q is an inferred score on q's scale, not an accuracy.
-    """
+    """Return directional ``Q_A|B(r, beta)`` for pairwise sensitivity analysis."""
     _validate_unit_score(q_model, "q_model")
-    if q_ar is None:
-        q_ar = q_model
     if not 0.0 <= beta <= 100.0:
         raise ValueError("beta must be in [0, 100]")
-    return q_model + (beta / 100.0) * resource_adjustment(q_ar, ratio)
+    return q_model + (beta / 100.0) * resource_adjustment(q_model, ratio)
 
 
 def scenario_score(q_speed: float, q_energy: float, *, gamma: float) -> float:

@@ -19,7 +19,8 @@ from dllm_bench.interfaces import (
     TimingResult,
 )
 from dllm_bench.models.mock import MockDiffusionAdapter
-from dllm_bench.report.tables import compute_converted_row, raw_results_row, render_raw_results_table
+from dllm_bench.report.pairwise import compute_pairwise_row
+from dllm_bench.report.tables import raw_results_row, render_raw_results_table
 from dllm_bench.report.trace_report import render_sample_report
 from dllm_bench.runner.demo_samples import build_demo_samples
 from dllm_bench.runner.orchestrator import SampleRecord, run_experiment, summarize_records
@@ -203,7 +204,7 @@ def test_run_summary_round_trips_through_persistence_and_report(tmp_path):
     assert "mock" in table
 
 
-def test_two_runs_feed_the_converted_results_table(tmp_path):
+def test_two_runs_feed_the_pairwise_report(tmp_path):
     baseline_adapter = MockDiffusionAdapter(name="qwen3_4b", config_name="ar-baseline", response_fn=_correct_gsm8k_response, steps=2)
     fast_adapter = MockDiffusionAdapter(name="illada", config_name="fast", response_fn=_correct_gsm8k_response, steps=8)
     dataset = GSM8KDataset()
@@ -214,9 +215,21 @@ def test_two_runs_feed_the_converted_results_table(tmp_path):
 
     baseline_dict = load_run_summary_dict(_dump(tmp_path / "baseline.json", baseline_summary))
     fast_dict = load_run_summary_dict(_dump(tmp_path / "fast.json", fast_summary))
+    protocol = {
+        "sample_set_hash": "same",
+        "dataset_revision": "same",
+        "prompt_protocol_revision": "same",
+        "generation_protocol_revision": "same",
+        "expected_sample_count": 3,
+    }
+    for summary in (baseline_dict, fast_dict):
+        summary["scoring_metadata"] = protocol
+        summary["run_metadata"]["measurement_protocol"] = "test-window"
 
-    row = compute_converted_row(fast_dict, baseline_dict)
-    assert row["Model"] == "illada"
+    row, metadata = compute_pairwise_row(
+        fast_dict, baseline_dict, beta=100, gamma=50
+    )
+    assert metadata["direction"].startswith("illada/fast relative to")
     assert row["r_speed"] is not None
 
 

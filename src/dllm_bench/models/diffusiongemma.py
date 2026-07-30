@@ -292,6 +292,8 @@ def _build_trace_from_captured_steps(
         final_tokens_per_canvas[canvas_index] = step_data["accepted_canvas"][0].tolist()
 
     trace: list[TraceStep] = []
+    previous_masks: dict[int, list[bool]] = {}
+    previous_tokens: dict[int, list[int]] = {}
     for step_data, canvas_index in zip(captured_steps, canvas_indices):
         offset = canvas_index * canvas_length
         accepted_canvas = step_data["accepted_canvas"][0].tolist()
@@ -307,7 +309,19 @@ def _build_trace_from_captured_steps(
         position_states = [PositionState.ACCEPTED] * offset + [
             PositionState.ACCEPTED if accepted else PositionState.VISIBLE for accepted in accepted_mask
         ]
-        committed_positions = [offset + i for i, accepted in enumerate(accepted_mask) if accepted]
+        prior_mask = previous_masks.get(canvas_index, [False] * len(accepted_mask))
+        prior_tokens = previous_tokens.get(canvas_index, accepted_canvas)
+        committed_positions = [
+            offset + index
+            for index, accepted in enumerate(accepted_mask)
+            if accepted
+            and (
+                not prior_mask[index]
+                or accepted_canvas[index] != prior_tokens[index]
+            )
+        ]
+        previous_masks[canvas_index] = list(accepted_mask)
+        previous_tokens[canvas_index] = list(accepted_canvas)
 
         token_texts = [tokenizer.decode([t]) for t in token_ids]
         entropy_by_position = {

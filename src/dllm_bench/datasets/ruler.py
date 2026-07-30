@@ -22,7 +22,16 @@ import random
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .answer_region import (
+    aggregate_answer_position_metrics,
+    locate_full_output,
+    position_aux,
+    scored_payload_aux,
+    trace_position_aux,
+)
 from .base import Dataset, Sample, ScoreResult
+from .official_metrics import ruler_string_match_all
+from ..interfaces import GenerationResult
 
 TaskType = Literal["niah", "multi_hop", "aggregation"]
 Position = Literal["front", "middle", "back"]
@@ -80,26 +89,60 @@ class RulerDataset(Dataset):
             "seed": self._seed,
         }
 
+    def scoring_signature(self) -> dict[str, object]:
+        return {
+            "upstream": "NVIDIA/RULER:scripts/eval/synthetic/constants.py::string_match_all",
+            "upstream_revision": RULER_UPSTREAM_REVISION,
+            "metric": "string_match_all",
+            "score_scale": "official percentage divided by 100",
+            "suite_scope": "controlled three-task diagnostic, not official 13-task suite",
+        }
+
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: RulerReference = sample.reference
+        region = locate_full_output(output_text, method="first_non_whitespace_to_eos")
         lowered = output_text.lower()
         hits = [a for a in ref.required_answers if a.lower() in lowered]
         exact = bool(ref.required_answers) and len(hits) == len(ref.required_answers)
         partial_rate = len(hits) / len(ref.required_answers) if ref.required_answers else 1.0
-        return ScoreResult(
+        result = ScoreResult(
             # NVIDIA RULER's official string_match_all gives fractional credit
             # for each required reference found in the prediction.
             primary_score=partial_rate,
-            aux={"all_answers_match": 1.0 if exact else 0.0},
+            aux={
+                "all_answers_match": 1.0 if exact else 0.0,
+                "official_ruler_prediction": output_text,
+            },
             valid=True,
             complete=bool(output_text.strip()),
         )
+        result.aux.update(position_aux(region, output_text))
+        result.aux.update(scored_payload_aux(output_text))
+        return result
+
+    def score_generation(
+        self, sample: Sample, generation: GenerationResult
+    ) -> ScoreResult:
+        result = self.score(sample, generation.output_text)
+        region = locate_full_output(
+            generation.output_text, method="first_non_whitespace_to_eos"
+        )
+        result.aux.update(trace_position_aux(region, generation.trace))
+        return result
 
     def aggregate_records(
         self, samples: list[Sample], results: list[ScoreResult]
     ) -> dict[str, float]:
         summary = super().aggregate_records(samples, results)
-        summary["ruler_string_match_all"] = summary[f"{self.name}_score"]
+        # Call NVIDIA RULER's pinned string_match_all port directly, then keep
+        # this project's [0, 1] convention by dividing its percentage by 100.
+        official_score = ruler_string_match_all(
+            [str(result.aux["official_ruler_prediction"]) for result in results],
+            [sample.reference.required_answers for sample in samples],
+        ) / 100.0
+        summary[f"{self.name}_score"] = official_score
+        summary["ruler_string_match_all"] = official_score
+        summary.update(aggregate_answer_position_metrics(results))
         grouped: dict[tuple[int, str, str], list[float]] = {}
         for sample, result in zip(samples, results):
             window = int(sample.meta.get("context_window_tokens", sample.reference.context_length))

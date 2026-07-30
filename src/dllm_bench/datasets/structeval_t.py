@@ -27,7 +27,15 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from ..interfaces import TraceStep
+from ..interfaces import GenerationResult, TraceStep
+from .answer_region import (
+    aggregate_answer_position_metrics,
+    answer_local_checkpoint_texts,
+    locate_structeval_answer,
+    position_aux,
+    scored_payload_aux,
+    trace_position_aux,
+)
 from .base import Dataset, Sample, ScoreResult
 from .remote import ensure_download
 
@@ -610,12 +618,26 @@ class StructEvalTDataset(Dataset):
             samples = [_official_structeval_sample(row) for row in rows]
         return samples[:n] if n is not None else samples
 
+    def scoring_signature(self) -> dict[str, object]:
+        return {
+            "upstream": "TIGER-AI-Lab/StructEval:eval_nonrenderable",
+            "upstream_revision": STRUCTEVAL_REVISION,
+            "metric": "round(0.2 * render_score + 0.8 * key_validation_score, 2)",
+            "aggregation": "fixed-subset micro mean",
+        }
+
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
+        region = locate_structeval_answer(output_text)
+        result = self._score_payload(sample, region.text)
+        result.aux.update(position_aux(region, output_text))
+        return result
+
+    def _score_payload(self, sample: Sample, payload: str) -> ScoreResult:
         schema: StructEvalSchema = sample.reference
         official_score, render_score, key_validation_score = (
-            official_structeval_nonrenderable_score(output_text, schema)
+            official_structeval_nonrenderable_score(payload, schema)
         )
-        progress = evaluate_struct_progress(output_text, schema)
+        progress = evaluate_struct_progress(payload, schema)
 
         complete_correct = (
             progress.parseability == 1.0
@@ -628,7 +650,7 @@ class StructEvalTDataset(Dataset):
                 or progress.numeric_bound_satisfaction == 1.0
             )
         )
-        return ScoreResult(
+        result = ScoreResult(
             primary_score=official_score,
             aux={
                 "official_render_score": render_score,
@@ -642,36 +664,79 @@ class StructEvalTDataset(Dataset):
             valid=render_score == 1.0,
             complete=complete_correct or progress.value_coverage > 0,
         )
+        result.aux.update(scored_payload_aux(payload))
+        return result
+
+    def score_generation(
+        self, sample: Sample, generation: GenerationResult
+    ) -> ScoreResult:
+        region = locate_structeval_answer(generation.output_text)
+        result = self._score_payload(sample, region.text)
+        result.aux.update(position_aux(region, generation.output_text))
+        result.aux.update(trace_position_aux(region, generation.trace))
+        result.aux.update(
+            self._answer_local_style_metrics(sample, generation.trace, region)
+        )
+        return result
 
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
         summary = super().aggregate(results)
         summary["final_eval_score"] = summary["structeval_t_score"]
+        summary.update(aggregate_answer_position_metrics(results))
         structure_first = [
-            result.aux["structure_first_score"]
+            result.aux["answer_local_structure_first_score"]
             for result in results
-            if "structure_first_score" in result.aux
+            if "answer_local_structure_first_score" in result.aux
         ]
-        summary["structure_first_eligible_ratio"] = len(structure_first) / len(results)
+        summary["style_trace_mappable_rate"] = sum(
+            float(result.aux.get("style_trace_mappable_rate", 0.0))
+            for result in results
+        ) / len(results)
+        summary["style_eligible_ratio"] = len(structure_first) / len(results)
         if structure_first:
-            summary["structure_first_score"] = sum(structure_first) / len(structure_first)
+            summary["answer_local_structure_first_score"] = (
+                sum(structure_first) / len(structure_first)
+            )
         return summary
 
-    def trace_aux_metrics(
-        self, sample: Sample, trace: list[TraceStep]
-    ) -> dict[str, float]:
-        if not trace:
-            return {"structure_first_eligible_rate": 0.0}
+    def _answer_local_style_metrics(self, sample, trace, region) -> dict[str, float]:
+        if not trace or not region.detected:
+            return {"style_trace_mappable_rate": 0.0, "style_eligible_rate": 0.0}
         from ..metrics.strategy_score import strategy_score
 
         schema: StructEvalSchema = sample.reference
-        structure, content = struct_eval_t_checkpoint_scores(trace, schema)
+        texts, mapped = answer_local_checkpoint_texts(
+            trace, region, checkpoint_indices(len(trace), 4)
+        )
+        if not mapped:
+            return {"style_trace_mappable_rate": 0.0, "style_eligible_rate": 0.0}
+        structure, content = struct_eval_t_text_checkpoint_scores(texts, schema)
         score = strategy_score(structure, content)
-        if score is None:
-            return {"structure_first_eligible_rate": 0.0}
+        if (
+            score is None
+            or not structure
+            or not content
+            or structure[-1] < 0.5
+            or content[-1] < 0.5
+        ):
+            return {"style_trace_mappable_rate": 1.0, "style_eligible_rate": 0.0}
         return {
-            "structure_first_score": score,
-            "structure_first_eligible_rate": 1.0,
+            "answer_local_structure_first_score": score,
+            "style_trace_mappable_rate": 1.0,
+            "style_eligible_rate": 1.0,
         }
+
+
+def struct_eval_t_text_checkpoint_scores(
+    texts: list[str], schema: StructEvalSchema
+) -> tuple[list[float], list[float]]:
+    structure_scores: list[float] = []
+    content_scores: list[float] = []
+    for text in texts:
+        progress = evaluate_struct_progress(text, schema)
+        structure_scores.append(progress.structure_progress)
+        content_scores.append(progress.content_progress)
+    return structure_scores, content_scores
 
 
 def _nesting_prefixes(paths: list[str]) -> list[str]:

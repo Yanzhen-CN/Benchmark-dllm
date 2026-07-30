@@ -20,7 +20,12 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, Normalize
 
 from ..interfaces import TraceStep
-from .token_grid_viz import compute_running_accept_counts, count_ticks, matplotlib_gradient_cmap
+from .token_grid_viz import (
+    compute_running_accept_counts,
+    count_ticks,
+    matplotlib_gradient_cmap,
+    meaningful_committed_positions,
+)
 
 
 def plot_position_vs_first_commit(
@@ -33,8 +38,8 @@ def plot_position_vs_first_commit(
     n_positions = len(trace[-1].position_states)
 
     first_step: dict[int, int] = {}
-    for step in trace:
-        for position in step.committed_positions:
+    for index, step in enumerate(trace):
+        for position in meaningful_committed_positions(trace, index):
             first_step.setdefault(position, step.forward_index)
 
     positions = sorted(first_step)
@@ -77,11 +82,14 @@ def plot_position_vs_first_commit(
 def plot_commit_speed(trace: list[TraceStep], out_path: str | Path, title: str = "") -> None:
     if not trace:
         return
-    committed_per_step = [len(step.committed_positions) for step in trace]
+    committed_per_step = [
+        len(meaningful_committed_positions(trace, index))
+        for index in range(len(trace))
+    ]
     seen: set[int] = set()
     cumulative_unique = []
-    for step in trace:
-        seen.update(step.committed_positions)
+    for index, step in enumerate(trace):
+        seen.update(meaningful_committed_positions(trace, index))
         cumulative_unique.append(len(seen))
 
     fig, axes = plt.subplots(2, 1, figsize=(7, 6), sharex=True)

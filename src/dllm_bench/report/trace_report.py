@@ -14,12 +14,12 @@ once per sample as a building block, then aggregated across the whole
 dataset, never shown redundantly for one sample here. Their dataset-level
 aggregate versions live in `report/dataset_trace_report.py`.
 
-On top of the design doc's exact 3 items, this also renders the animated
-token-grid GIF (the moving-picture form of the same heatmap data) and two
-DGtest-style diagnostics (position-vs-first-commit, commit speed) — these
-are still inherently single-sample, just not literally named in 4.1's list;
-kept because they were an explicit earlier ask to mirror DGtest's own
-per-sample trace visualizer.
+The optional animated token-canvas GIF is the moving form of the same generic
+position/forward data and is useful for a few curated diffusion examples.  It
+must not be confused with the separate Sudoku-only 9x9 board animation.
+Redundant final-frame, first-commit scatter, and per-sample speed plots are not
+emitted; their information is already clearer in the heatmap and dataset-level
+Task 4 summaries.
 
 :func:`render_sample_report` is what ``dllm-bench visualize`` calls once per
 sample. Sudoku gets one more artifact on top — an animated 9x9 grid walking
@@ -39,18 +39,16 @@ import matplotlib.pyplot as plt
 
 from ..datasets.base import Sample
 from ..interfaces import TraceStep
-from ..metrics.certainty import build_certainty_curve
+from ..metrics.certainty import build_observed_certainty_curve
 from .token_grid_viz import (
     plot_token_position_forward_heatmap,
-    render_token_grid_final_png,
     render_token_grid_gif,
 )
-from .trace_distribution_viz import plot_commit_speed, plot_position_vs_first_commit
 
 
 def plot_certainty_curve(trace: list[TraceStep], final_valid_length: int, out_path: str) -> None:
-    curve = build_certainty_curve(trace, final_valid_length)
-    if not curve:
+    curve = build_observed_certainty_curve(trace, final_valid_length)
+    if len(curve) < 2:
         return
     ratios = [c[0] for c in curve]
     certainties = [c[1] for c in curve]
@@ -108,21 +106,10 @@ def render_sample_report(
         render_token_grid_gif(trace, gif_path, title=title)
         written["token_grid_gif"] = str(gif_path)
 
-        final_png_path = out_dir_path / f"{sample_id}_trace_final.png"
-        render_token_grid_final_png(trace, final_png_path, title=title)
-        written["token_grid_final"] = str(final_png_path)
-
-        position_vs_commit_path = out_dir_path / f"{sample_id}_position_vs_commit.png"
-        plot_position_vs_first_commit(trace, position_vs_commit_path, title=title)
-        written["position_vs_commit"] = str(position_vs_commit_path)
-
-        speed_path = out_dir_path / f"{sample_id}_speed.png"
-        plot_commit_speed(trace, speed_path, title=title)
-        written["speed"] = str(speed_path)
-
     certainty_path = out_dir_path / f"{sample_id}_certainty.png"
     plot_certainty_curve(trace, final_valid_length, str(certainty_path))
-    written["certainty"] = str(certainty_path)
+    if certainty_path.exists():
+        written["certainty"] = str(certainty_path)
 
     if dataset_name is not None:
         sudoku_gif = _maybe_render_sudoku_gif(dataset_name, sample, trace, out_dir_path, sample_id)

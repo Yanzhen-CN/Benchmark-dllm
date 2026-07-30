@@ -401,7 +401,7 @@ def test_sudoku4_reports_d1_cell_accuracy_and_strict_puzzle_success():
     assert is_valid_sudoku4(reference.solution, reference.puzzle)
 
 
-def test_sudoku4_primary_metric_mirrors_d1_tag_and_padding_rules():
+def test_sudoku4_primary_metric_mirrors_d1_extraction_and_padding_rules():
     dataset = Sudoku4Dataset()
     reference = Sudoku4Reference(
         puzzle="3102200002100320",
@@ -410,12 +410,49 @@ def test_sudoku4_primary_metric_mirrors_d1_tag_and_padding_rules():
     sample = Sample("s4", "prompt", reference)
 
     shortened = dataset.score(sample, "<answer>314224314213</answer>")
+    overlong = dataset.score(sample, "<answer>31422431421313241111</answer>")
     tolerant_only = dataset.score(sample, "final: 3142243142131324")
 
     assert shortened.primary_score == pytest.approx(6 / 8)
     assert shortened.aux["puzzle_success_rate"] == 0.0
-    assert tolerant_only.primary_score == 0.0
+    assert overlong.primary_score == 1.0
+    assert tolerant_only.primary_score == 1.0
     assert tolerant_only.aux["puzzle_success_rate"] == 1.0
+    assert tolerant_only.aux["direct_answer_instruction_following_rate"] == 0.0
+
+
+def test_sudoku4_scores_the_last_complete_submission_not_the_copied_puzzle():
+    dataset = Sudoku4Dataset()
+    reference = Sudoku4Reference(
+        puzzle="3102200002100320",
+        solution="3142243142131324",
+    )
+    sample = Sample("s4", "prompt", reference)
+
+    result = dataset.score(
+        sample,
+        "thought\nCopied puzzle: 3102200002100320\n"
+        "Earlier guess: 3142243142131321\n"
+        "Final Answer: 3142243142131324",
+    )
+
+    assert result.primary_score == 1.0
+    assert result.aux["puzzle_success_rate"] == 1.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 0.0
+
+
+def test_sudoku4_unmarked_incomplete_reasoning_digits_get_no_partial_credit():
+    dataset = Sudoku4Dataset()
+    reference = Sudoku4Reference(
+        puzzle="3102200002100320",
+        solution="3142243142131324",
+    )
+    sample = Sample("s4", "prompt", reference)
+
+    result = dataset.score(sample, "thought\npartial row: 314224314213")
+
+    assert result.primary_score == 0.0
+    assert result.valid is False
 
 
 def test_sudoku4_thinking_aggregate_uses_its_dataset_score_key():
@@ -515,8 +552,8 @@ def test_sudoku_score_correct_solution():
     result = ds.score(sample, text)
     assert result.primary_score == 1.0
     assert result.valid is True
-    assert result.aux["official_exact_match_accuracy"] == 1.0
-    assert result.aux["official_format_valid"] == 1.0
+    assert result.aux["strict_reference_exact_match"] == 1.0
+    assert result.aux["strict_81_digit_format_rate"] == 1.0
     assert result.aux["direct_answer_instruction_following_rate"] == 1.0
     assert result.aux["exact_solve_rate"] == 1.0
     assert result.aux["blank_cell_accuracy"] == 1.0
@@ -559,6 +596,93 @@ def test_sudoku_score_tolerates_prose_wrapped_complete_grid_without_marker():
     assert result.primary_score == 1.0
     assert result.valid is True
     assert result.aux["answer_marker_present"] == 0.0
+    assert result.aux["strict_81_digit_format_rate"] == 1.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 0.0
+
+
+def test_sudoku_score_uses_last_complete_candidate_after_self_correction():
+    ds = Sudoku9Dataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
+    sample = Sample(sample_id="1", prompt="solve", reference=ref)
+    correct = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+    wrong = "1" * 81
+
+    result = ds.score(
+        sample,
+        f"thought\nEarlier guess: {wrong}\nWait, that is wrong.\n"
+        f"Final Answer: {correct}",
+    )
+
+    assert result.primary_score == 1.0
+    assert result.aux["reference_exact_match"] == 1.0
+    assert result.aux["strict_reference_exact_match"] == 1.0
+    assert result.aux["strict_81_digit_format_rate"] == 1.0
+    assert result.aux["direct_answer_instruction_following_rate"] == 0.0
+
+
+def test_sudoku_incomplete_final_cue_does_not_fall_back_to_rejected_draft():
+    ds = Sudoku9Dataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
+    sample = Sample(sample_id="1", prompt="solve", reference=ref)
+    correct = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+
+    result = ds.score(
+        sample,
+        f"Earlier candidate: {correct} (No)\n"
+        "Actually, the solution is: 534678912672195",
+    )
+
+    assert result.primary_score == 0.0
+    assert result.valid is False
+    assert result.aux["answer_detection_method"] == "final_cue_incomplete"
+
+
+def test_sudoku_rejected_complete_draft_is_not_a_final_answer():
+    ds = Sudoku9Dataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
+    sample = Sample(sample_id="1", prompt="solve", reference=ref)
+    correct = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+
+    result = ds.score(
+        sample,
+        f"thought\n{correct}\n\nWait, that is wrong. Let me re-solve it.",
+    )
+
+    assert result.primary_score == 0.0
+    assert result.valid is False
+    assert result.aux["answer_detection_method"] == (
+        "rejected_candidate_no_final_answer"
+    )
+
+
+def test_sudoku_unclosed_reasoning_grid_is_not_a_final_answer():
+    ds = Sudoku9Dataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
+    sample = Sample(sample_id="1", prompt="solve", reference=ref)
+    correct = "".join(str(v) for row in _EASY_PUZZLE for v in row)
+
+    result = ds.score(sample, f"<reasoning>Draft grid: {correct}")
+
+    assert result.primary_score == 0.0
+    assert result.valid is False
+    assert result.aux["answer_detection_method"] == "unclosed_thinking"
+
+
+def test_sudoku_completed_grid_cue_locates_the_final_submission():
+    ds = Sudoku9Dataset()
+    puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0)])
+    ref = SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE)
+    sample = Sample(sample_id="1", prompt="solve", reference=ref)
+    rows = "\n".join(" ".join(str(v) for v in row) for row in _EASY_PUZZLE)
+
+    result = ds.score(sample, f"After solving, the completed grid is:\n{rows}")
+
+    assert result.primary_score == 1.0
+    assert result.aux["answer_detection_method"].startswith("final_cue_")
 
 
 def test_sudoku_marker_prevents_reasoning_digits_from_being_scored():
@@ -581,6 +705,28 @@ def test_sudoku_constraint_validation_rejects_clue_change():
     assert is_valid_solution(changed, puzzle) is False
 
 
+def test_sudoku9_official_primary_is_reference_sequence_not_legality():
+    ds = Sudoku9Dataset()
+    puzzle = [[0] * 9 for _ in range(9)]
+    alternative = [
+        [2 if value == 1 else 1 if value == 2 else value for value in row]
+        for row in _EASY_PUZZLE
+    ]
+    sample = Sample(
+        sample_id="1",
+        prompt="solve",
+        reference=SudokuReference(puzzle=puzzle, solution=_EASY_PUZZLE),
+    )
+    text = "".join(str(value) for row in alternative for value in row)
+
+    result = ds.score(sample, text)
+
+    assert is_valid_solution(alternative, puzzle) is True
+    assert result.primary_score == 0.0
+    assert result.aux["constraint_valid"] == 1.0
+    assert result.aux["reference_exact_match"] == 0.0
+
+
 def test_sudoku_copied_puzzle_gets_no_solving_credit():
     ds = Sudoku9Dataset()
     puzzle = _blank_copy(_EASY_PUZZLE, [(0, 0), (0, 1)])
@@ -597,7 +743,7 @@ def test_sudoku_copied_puzzle_gets_no_solving_credit():
     assert result.aux["blank_cell_accuracy"] == 0.0
     assert result.aux["given_preservation_rate"] == 1.0
     assert result.aux["exact_solve_rate"] == 0.0
-    assert result.aux["official_format_valid"] == 0.0
+    assert result.aux["strict_81_digit_format_rate"] == 0.0
     assert result.aux["direct_answer_instruction_following_rate"] == 0.0
 
 
@@ -618,7 +764,7 @@ def test_sudoku_partial_solution_gets_proportional_credit():
     assert result.aux["blank_cell_accuracy"] == 0.5
     assert result.aux["given_preservation_rate"] == 1.0
     assert result.aux["exact_solve_rate"] == 0.0
-    assert result.aux["official_format_valid"] == 0.0
+    assert result.aux["strict_81_digit_format_rate"] == 0.0
 
 
 def test_sudoku_score_unparseable_output():

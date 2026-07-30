@@ -624,11 +624,11 @@ def test_run_scoring_keeps_sample_scores_but_refuses_partial_summary(tmp_path):
     score_out = tmp_path / "score_output"
 
     run_generation(adapter, "gsm8k", samples[:2], max_new_tokens=16, out_dir=model_out)
-    with pytest.raises(IncompleteTestError, match="1 of 3 selected generation"):
+    with pytest.raises(IncompleteTestError, match="selected_sample_ids mismatch"):
         run_scoring(dataset, samples, model_out, score_out)
 
-    assert (score_out / f"{samples[0].sample_id}.json").exists()
-    assert (score_out / f"{samples[1].sample_id}.json").exists()
+    assert not (score_out / f"{samples[0].sample_id}.json").exists()
+    assert not (score_out / f"{samples[1].sample_id}.json").exists()
     assert not (score_out / "summary.json").exists()
 
 
@@ -645,6 +645,48 @@ def test_run_scoring_resume_skips_rescoring(tmp_path):
 
     assert second.scored == 0
     assert second.skipped == 2
+
+
+def test_run_scoring_resume_invalidates_when_generation_text_changes(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
+    dataset = GSM8KDataset()
+    samples = build_demo_samples("gsm8k", n=1)
+    model_out = tmp_path / "model_output"
+    score_out = tmp_path / "score_output"
+
+    run_generation(adapter, "gsm8k", samples, max_new_tokens=16, out_dir=model_out)
+    run_scoring(dataset, samples, model_out, score_out)
+
+    generation_path = model_out / f"{samples[0].sample_id}.json"
+    generation = load_generation_result(generation_path)
+    generation.output_text = "#### -999"
+    save_generation_result(generation, generation_path)
+
+    rescored = run_scoring(dataset, samples, model_out, score_out)
+    assert rescored.scored == 1
+    assert rescored.skipped == 0
+    assert rescored.summary.q == 0.0
+    assert rescored.summary.scoring_metadata["expected_sample_count"] == 1
+
+
+def test_run_scoring_scores_truncated_text_but_forces_incomplete(tmp_path):
+    adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=4)
+    dataset = GSM8KDataset()
+    samples = build_demo_samples("gsm8k", n=1)
+    model_out = tmp_path / "model_output"
+    score_out = tmp_path / "score_output"
+
+    run_generation(adapter, "gsm8k", samples, max_new_tokens=16, out_dir=model_out)
+    generation_path = model_out / f"{samples[0].sample_id}.json"
+    generation = load_generation_result(generation_path)
+    generation.status = RunStatus.TRUNCATED
+    save_generation_result(generation, generation_path)
+
+    result = run_scoring(dataset, samples, model_out, score_out)
+    score = load_score_result(score_out / f"{samples[0].sample_id}.json")
+    assert result.summary.q == 1.0
+    assert score.complete is False
+    assert score.aux["truncated_rate"] == 1.0
 
 
 def test_generate_then_score_on_separate_dataset_objects_still_works(tmp_path):

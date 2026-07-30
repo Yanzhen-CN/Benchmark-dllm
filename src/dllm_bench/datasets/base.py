@@ -119,3 +119,7 @@ class Dataset(ABC):
         if len(samples) != len(generations):
             raise ValueError("samples and generations must have the same length")
         return {}
+
+    def scoring_signature(self) -> dict[str, Any]:
+        """Runtime scoring fields that cannot be recovered from source hashes."""
+        return {}

@@ -13,8 +13,12 @@ scoring a run that was generated on a different machine only ever needs
 
 from __future__ import annotations
 
+import hashlib
+import inspect
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ..datasets.base import Dataset, Sample, ScoreResult
 from ..interfaces import RunStatus
@@ -22,6 +26,7 @@ from .orchestrator import RunSummary, SampleRecord, summarize_records
 from .persistence import (
     load_generation_result,
     load_meta,
+    load_score_metadata,
     load_score_result,
     save_run_summary,
     save_score_result,
@@ -42,6 +47,65 @@ class InvalidTestError(RuntimeError):
 
 class IncompleteTestError(RuntimeError):
     """Raised when not every selected generation is available for aggregation."""
+
+
+def _hash_payload(value: Any) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, ensure_ascii=False, default=repr, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _scorer_revision(dataset: Dataset) -> str:
+    paths = {Path(__file__), Path(inspect.getsourcefile(type(dataset)) or __file__)}
+    dataset_root = Path(inspect.getsourcefile(Dataset) or __file__).parent
+    package_root = dataset_root.parent
+    for candidate in (
+        dataset_root / "answer_region.py",
+        dataset_root / "official_metrics.py",
+        package_root / "metrics" / "strategy_score.py",
+        Path(__file__).with_name("orchestrator.py"),
+    ):
+        if candidate.exists():
+            paths.add(candidate)
+    digest = hashlib.sha256()
+    for path in sorted(paths, key=str):
+        digest.update(str(path.name).encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _dataset_revision(dataset: Dataset, samples: list[Sample]) -> str:
+    signature = getattr(dataset, "preparation_signature", None)
+    if callable(signature):
+        return _hash_payload(signature())
+    return _hash_payload(
+        [
+            {
+                key: sample.meta.get(key)
+                for key in (
+                    "source",
+                    "source_revision",
+                    "protocol_revision",
+                    "prompt_protocol",
+                )
+            }
+            for sample in samples
+        ]
+    )
+
+
+def _generation_hash(generation) -> str:
+    return _hash_payload(
+        {
+            "status": generation.status.value,
+            "output_text": generation.output_text,
+            "request_prompt": generation.request.prompt,
+            "request_max_new_tokens": generation.request.max_new_tokens,
+            "request_config": generation.request.config,
+            "request_seed": generation.request.seed,
+        }
+    )
 
 
 def ensure_test_valid(model_output_dir: str | Path) -> dict:
@@ -92,6 +156,7 @@ def run_scoring(
     model_output_dir: str | Path,
     score_output_dir: str | Path,
     resume: bool = True,
+    primary_metric: str | None = None,
 ) -> ScoreStageResult:
     if not samples:
         raise ValueError("samples must be non-empty")
@@ -99,11 +164,37 @@ def run_scoring(
     model_output_dir = Path(model_output_dir)
     score_output_dir = Path(score_output_dir)
     meta = ensure_test_valid(model_output_dir)
+    expected_ids = [sample.sample_id for sample in samples]
+    generated_ids = list(meta.get("selected_sample_ids", []))
+    if generated_ids != expected_ids:
+        (score_output_dir / "summary.json").unlink(missing_ok=True)
+        raise IncompleteTestError(
+            "ordered selected_sample_ids mismatch: generation has "
+            f"{generated_ids}, scoring requested {expected_ids}"
+        )
     score_output_dir.mkdir(parents=True, exist_ok=True)
+
+    metric_name = primary_metric or f"{dataset.name}_score"
+    dataset_revision = _dataset_revision(dataset, samples)
+    prompt_protocol_revision = _hash_payload(
+        [
+            {
+                "sample_id": sample.sample_id,
+                "prompt": sample.prompt,
+                "protocol_revision": sample.meta.get("protocol_revision"),
+                "prompt_protocol": sample.meta.get("prompt_protocol"),
+            }
+            for sample in samples
+        ]
+    )
+    scorer_revision = _scorer_revision(dataset)
+    scoring_protocol = dataset.scoring_signature()
+    sample_set_hash = _hash_payload(expected_ids)
 
     records: list[SampleRecord] = []
     missing: list[str] = []
     scored = skipped = 0
+    score_fingerprints: list[str] = []
 
     for sample in samples:
         generation_path = model_output_dir / f"{sample.sample_id}.json"
@@ -114,16 +205,44 @@ def run_scoring(
         score_path = score_output_dir / f"{sample.sample_id}.json"
         generation = load_generation_result(generation_path)
 
-        if resume and score_path.exists():
+        if generation.status not in {RunStatus.SUCCESS, RunStatus.TRUNCATED}:
+            (score_output_dir / "summary.json").unlink(missing_ok=True)
+            raise InvalidTestError(
+                f"{sample.sample_id} has infrastructure status "
+                f"{generation.status.value}; the complete dataset row is invalid"
+            )
+
+        generation_hash = _generation_hash(generation)
+        score_metadata = {
+            "sample_id": sample.sample_id,
+            "generation_status": generation.status.value,
+            "dataset_revision": dataset_revision,
+            "prompt_protocol_revision": prompt_protocol_revision,
+            "scorer_revision": scorer_revision,
+            "sample_set_hash": sample_set_hash,
+            "generation_text_hash": generation_hash,
+            "primary_metric": metric_name,
+            "scoring_protocol": scoring_protocol,
+        }
+        score_metadata["fingerprint"] = _hash_payload(score_metadata)
+        score_fingerprints.append(score_metadata["fingerprint"])
+
+        if (
+            resume
+            and score_path.exists()
+            and load_score_metadata(score_path).get("fingerprint")
+            == score_metadata["fingerprint"]
+        ):
             score = load_score_result(score_path)
             skipped += 1
         else:
-            if generation.status == RunStatus.SUCCESS:
-                score = dataset.score(sample, generation.output_text)
-                score.aux.update(dataset.trace_aux_metrics(sample, generation.trace))
-            else:
-                score = ScoreResult(primary_score=0.0, valid=False, complete=False)
-            save_score_result(score, score_path)
+            score = dataset.score_generation(sample, generation)
+            score.aux["truncated_rate"] = float(
+                generation.status == RunStatus.TRUNCATED
+            )
+            if generation.status == RunStatus.TRUNCATED:
+                score.complete = False
+            save_score_result(score, score_path, metadata=score_metadata)
             scored += 1
 
         records.append(SampleRecord(sample=sample, generation=generation, score=score))
@@ -143,10 +262,36 @@ def run_scoring(
             f"under {model_output_dir}: {missing}"
         )
 
+    generation_protocol_revision = _hash_payload(
+        [
+            {
+                "sample_id": record.sample.sample_id,
+                "prompt": record.generation.request.prompt,
+                "max_new_tokens": record.generation.request.max_new_tokens,
+                "config": record.generation.request.config,
+                "seed": record.generation.request.seed,
+            }
+            for record in records
+        ]
+    )
+
     summary = summarize_records(
         meta["model_name"], meta["config_name"], dataset, records,
         run_metadata=meta.get("run_metadata", {}),
     )
+    summary.scoring_metadata = {
+        "fingerprint": _hash_payload(score_fingerprints),
+        "dataset_revision": dataset_revision,
+        "prompt_protocol_revision": prompt_protocol_revision,
+        "generation_protocol_revision": generation_protocol_revision,
+        "scorer_revision": scorer_revision,
+        "sample_set_hash": sample_set_hash,
+        "primary_metric": metric_name,
+        "scoring_protocol": scoring_protocol,
+        "expected_sample_count": len(expected_ids),
+        "actual_scored_sample_count": len(records),
+        "aggregation_method": "micro_mean_over_exact_selected_sample_set",
+    }
     save_run_summary(summary, score_output_dir / "summary.json")
 
     return ScoreStageResult(

@@ -3,13 +3,17 @@
 # marked reasoning prompt through Sudoku9ThinkingDataset.
 dataset: sudoku9_thinking
 dataset_class: dllm_bench.datasets.sudoku9.Sudoku9ThinkingDataset
-primary_metric: extracted_solution_constraint_accuracy
+primary_metric: complete_reference_sequence_accuracy
 aux_metrics:
   - reference_exact_match
-  - official_exact_match_accuracy
-  - official_format_valid
+  - strict_reference_exact_match
+  - strict_81_digit_format_rate
   - direct_answer_instruction_following_rate
+  - answer_marker_present
   - answer_marker_complete_rate
+  - answer_region_detected_rate
+  - answer_position_token_mapped_rate
+  - answer_start_ratio
   - exact_solve_rate
   - blank_cell_accuracy
   - blank_cell_accuracy_by_difficulty
@@ -21,6 +25,7 @@ aux_metrics:
   - conflict_rate
   - accuracy_easy
   - accuracy_hard
+  - truncated_rate
 sample_size: 100
 difficulty_counts:
   easy: 50

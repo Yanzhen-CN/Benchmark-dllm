@@ -77,9 +77,14 @@ def commit_order_tau_windows(
 def aggregate_commit_order(
     per_sample_window_taus: list[dict[int, list[float]]], seed: int = 42
 ) -> dict[int, SummaryStats]:
-    """Flatten every sample's per-window tau values by window size and summarize."""
+    """Summarize one mean tau per sample and window size.
+
+    This prevents longer answers (which contain more non-overlapping windows)
+    from receiving more weight than shorter answers in a dataset aggregate.
+    """
     by_window: dict[int, list[float]] = {}
     for sample_result in per_sample_window_taus:
         for window, taus in sample_result.items():
-            by_window.setdefault(window, []).extend(taus)
+            if taus:
+                by_window.setdefault(window, []).append(sum(taus) / len(taus))
     return {window: summarize(values, seed=seed) for window, values in by_window.items() if values}

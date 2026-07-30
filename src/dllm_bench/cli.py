@@ -53,21 +53,15 @@ from .registry import (
     load_yaml,
     model_name,
 )
-from .report.tables import (
-    compute_converted_row,
-    is_resource_baseline,
-    raw_results_row,
-    render_converted_results_table,
-    render_raw_results_table,
-    select_resource_baselines,
+from .report.tables import raw_results_row, render_raw_results_table
+from .report.raw_report import write_raw_report
+from .report.pairwise import (
+    PairwiseCompatibilityError,
+    compute_pairwise_row,
+    summary_label,
+    write_pairwise_outputs,
 )
 from .report.dataset_trace_report import render_dataset_trace_report
-from .report.plots import (
-    plot_best_vs_fast,
-    plot_quality_vs_resource,
-    plot_scenario_ranking,
-    plot_score_per_unit,
-)
 from .report.trace_report import render_sample_report
 from .runner.demo_samples import build_demo_samples
 from .runner.generate_stage import (
@@ -443,6 +437,7 @@ def score(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
+    primary_metric = load_yaml(dataset_config).get("primary_metric")
     samples, _ = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
     configured_model = model_name(model_config)
 
@@ -452,7 +447,14 @@ def score(
         model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
         score_out = score_output_dir(output_root, configured_model, v, dataset.name)
         try:
-            result = run_scoring(dataset, samples, model_out, score_out, resume=resume)
+            result = run_scoring(
+                dataset,
+                samples,
+                model_out,
+                score_out,
+                resume=resume,
+                primary_metric=primary_metric,
+            )
         except InvalidTestError as exc:
             invalid_rows.append(str(exc))
             click.echo(f"[{v}] INVALID OOM DATASET: {exc}")
@@ -460,6 +462,13 @@ def score(
         except IncompleteTestError as exc:
             incomplete_rows.append(str(exc))
             click.echo(f"[{v}] INCOMPLETE DATASET: {exc}")
+            continue
+        except FileNotFoundError as exc:
+            # Matrix scoring is intentionally allowed before every generation
+            # row exists. A missing model_output directory is one incomplete
+            # dataset, not a reason to abort scoring later completed rows.
+            incomplete_rows.append(str(exc))
+            click.echo(f"[{v}] MISSING DATASET OUTPUT: {exc}")
             continue
 
         click.echo(f"[{v}] q={result.summary.q:.4f}  scored={result.scored}  skipped={result.skipped}  -> {score_out / 'summary.json'}")
@@ -557,7 +566,14 @@ def visualize(
             rendered += 1
 
         if trace_records:
-            render_dataset_trace_report(dataset.name, trace_records, viz_out, seed=resolved_seed)
+            render_dataset_trace_report(
+                dataset.name,
+                trace_records,
+                viz_out,
+                seed=resolved_seed,
+                model_name=configured_model,
+                config_name=v,
+            )
 
         click.echo(f"[{v}] rendered {rendered} sample(s) -> {viz_out}")
 
@@ -567,95 +583,170 @@ def visualize(
         raise IncompleteTestError("; ".join(incomplete_rows))
 
 
-@main.command()
-@click.option("--run", "run_paths", multiple=True, type=click.Path(exists=True), help="One or more summary.json files from `dllm-bench score`")
-@click.option("--output-root", default=None, type=click.Path(), help="Auto-discover summary.json files under output_root/score_output/*/<dataset>/")
-@click.option("--dataset", "dataset_name", default=None, help="Dataset name to filter to when using --output-root")
-def report(run_paths: tuple[str, ...], output_root: str | None, dataset_name: str | None) -> None:
-    paths = list(run_paths)
-    if output_root:
-        score_root = Path(output_root) / "score_output"
-        pattern = f"*/{dataset_name}/summary.json" if dataset_name else "*/*/summary.json"
-        paths.extend(str(p) for p in sorted(score_root.glob(pattern)))
-
-    if not paths:
-        raise click.UsageError("no summary.json files found (pass --run, or --output-root [--dataset])")
-
+def _valid_summary_paths(paths: list[str]) -> list[str]:
     valid_paths = []
-    for raw_path in paths:
+    for raw_path in dict.fromkeys(paths):
         summary_path = Path(raw_path)
         dataset_dir = summary_path.parent
         run_dir = dataset_dir.parent
         score_root = run_dir.parent
-        model_out = (
-            score_root.parent
-            / "model_output"
-            / run_dir.name
-            / dataset_dir.name
-        )
+        model_out = score_root.parent / "model_output" / run_dir.name / dataset_dir.name
         if score_root.name == "score_output" and (model_out / "_meta.json").exists():
             try:
                 ensure_test_valid(model_out)
             except InvalidTestError as exc:
                 click.echo(
-                    f"WARNING: excluding OOM-invalid test from report: "
-                    f"{summary_path} ({exc})",
-                    err=True,
+                    f"WARNING: excluding OOM-invalid test: {summary_path} ({exc})", err=True
                 )
                 continue
             except IncompleteTestError as exc:
                 click.echo(
-                    f"WARNING: excluding incomplete test from report: "
-                    f"{summary_path} ({exc})",
-                    err=True,
+                    f"WARNING: excluding incomplete test: {summary_path} ({exc})", err=True
                 )
                 continue
-        valid_paths.append(raw_path)
-    paths = valid_paths
+        valid_paths.append(str(summary_path))
+    return valid_paths
+
+
+@main.command()
+@click.option("--run", "run_paths", multiple=True, type=click.Path(exists=True), help="One or more summary.json files from `dllm-bench score`")
+@click.option("--output-root", default=None, type=click.Path(), help="Auto-discover summary.json files under output_root/score_output/*/<dataset>/")
+@click.option("--model", "model_names", multiple=True, help="Only include these model names")
+@click.option("--dataset", "dataset_names", multiple=True, help="Only include these datasets")
+def report(
+    run_paths: tuple[str, ...],
+    output_root: str | None,
+    model_names: tuple[str, ...],
+    dataset_names: tuple[str, ...],
+) -> None:
+    """Build the measured-only report. Resource conversion is a separate command."""
+    paths = list(run_paths)
+    if output_root:
+        score_root = Path(output_root) / "score_output"
+        paths.extend(str(p) for p in sorted(score_root.glob("*/*/summary.json")))
+
+    if not paths:
+        raise click.UsageError("no summary.json files found (pass --run, or --output-root [--dataset])")
+
+    paths = _valid_summary_paths(paths)
     if not paths:
         raise click.UsageError("no valid summary.json files remain after exclusions")
 
     summaries = [load_run_summary_dict(p) for p in paths]
+    if model_names:
+        summaries = [s for s in summaries if s.get("model_name") in model_names]
+    if dataset_names:
+        summaries = [
+            s
+            for s in summaries
+            if s.get("dataset_name") in dataset_names
+            or ("sudoku" in dataset_names and str(s.get("dataset_name", "")).startswith("sudoku"))
+        ]
+    if not summaries:
+        raise click.UsageError("no summaries match the selected model/dataset filters")
     rows = [raw_results_row(s) for s in summaries]
     click.echo(render_raw_results_table(rows))
 
-    baselines = select_resource_baselines(summaries)
-    non_ranked_diagnostics = {"hellobench", "ruler_context_probe"}
-    converted = [
-        compute_converted_row(summary, baselines[summary["dataset_name"]])
-        for summary in summaries
-        if not is_resource_baseline(summary)
-        and summary["dataset_name"] in baselines
-        and summary["dataset_name"] not in non_ranked_diagnostics
-    ]
-    if converted:
-        click.echo("\nAR-relative converted results:\n")
-        click.echo(render_converted_results_table(converted))
-
     if output_root:
         report_root = Path(output_root) / "report"
-        dataset_names = sorted({row["Dataset"] for row in rows})
-        for name in dataset_names:
-            dataset_rows = [row for row in rows if row["Dataset"] == name]
-            dataset_converted = [row for row in converted if row["Dataset"] == name]
-            out_dir = report_root / name
-            out_dir.mkdir(parents=True, exist_ok=True)
-            if name in non_ranked_diagnostics:
-                continue
-            for key, filename in (
-                ("TPS", "quality_tps.png"),
-                ("SPS", "quality_sps.png"),
-                ("EPS", "quality_eps.png"),
-                ("CPS", "quality_cps.png"),
-            ):
-                plot_quality_vs_resource(dataset_rows, key, str(out_dir / filename))
-            plot_score_per_unit(dataset_rows, "Score/J", str(out_dir / "score_per_energy.png"))
-            plot_score_per_unit(dataset_rows, "Score/TFLOP", str(out_dir / "score_per_compute.png"))
-            plot_best_vs_fast(dataset_rows, "q", str(out_dir / "best_vs_fast_quality.png"))
-            plot_best_vs_fast(dataset_rows, "TPS", str(out_dir / "best_vs_fast_tps.png"))
-            plot_scenario_ranking(dataset_converted, "Speed-priority", str(out_dir / "speed_priority.png"))
-            plot_scenario_ranking(dataset_converted, "Energy-priority", str(out_dir / "energy_priority.png"))
-        click.echo(f"\nCharts -> {report_root}")
+        written = write_raw_report(summaries, report_root)
+        click.echo(f"\nMeasured-only report ({len(written)} files) -> {report_root}")
+
+
+@main.command("pairwise-report")
+@click.option("--output-root", default="output", show_default=True, type=click.Path())
+@click.option("--model", "model_names", multiple=True, required=True, help="Comparison model A; repeat for more independent A-vs-base analyses")
+@click.option("--model-config", "model_configs", multiple=True, help="Optional A variant/config filter")
+@click.option("--base-model", required=True, help="Explicit baseline model B")
+@click.option("--base-config", default=None, help="Baseline variant/config; required if B has multiple configs")
+@click.option("--dataset", "dataset_names", multiple=True, help="Dataset filter")
+@click.option("--beta", default=100.0, show_default=True, type=click.FloatRange(0, 100))
+@click.option("--gamma", default=50.0, show_default=True, type=click.FloatRange(0, 100), help="Energy weight percent; speed weight is 100-gamma")
+def pairwise_report(
+    output_root: str,
+    model_names: tuple[str, ...],
+    model_configs: tuple[str, ...],
+    base_model: str,
+    base_config: str | None,
+    dataset_names: tuple[str, ...],
+    beta: float,
+    gamma: float,
+) -> None:
+    """Write isolated A-relative-to-B sensitivity artifacts; never a leaderboard."""
+    score_root = Path(output_root) / "score_output"
+    paths = _valid_summary_paths(
+        [str(path) for path in sorted(score_root.glob("*/*/summary.json"))]
+    )
+    summaries = [load_run_summary_dict(path) for path in paths]
+    if dataset_names:
+        summaries = [
+            s
+            for s in summaries
+            if s.get("dataset_name") in dataset_names
+            or ("sudoku" in dataset_names and str(s.get("dataset_name", "")).startswith("sudoku"))
+        ]
+    bases = [s for s in summaries if s.get("model_name") == base_model]
+    if base_config:
+        bases = [s for s in bases if s.get("config_name") == base_config]
+    base_configs = sorted({s.get("config_name") for s in bases})
+    if not bases:
+        raise click.UsageError("no baseline summaries match --base-model/--base-config")
+    if not base_config and len(base_configs) > 1:
+        raise click.UsageError(
+            f"baseline {base_model} has multiple configs {base_configs}; pass --base-config"
+        )
+    selected_base_config = base_config or base_configs[0]
+    base_by_dataset = {s["dataset_name"]: s for s in bases}
+    comparisons = [s for s in summaries if s.get("model_name") in model_names]
+    if model_configs:
+        comparisons = [s for s in comparisons if s.get("config_name") in model_configs]
+    comparisons = [
+        s
+        for s in comparisons
+        if (s.get("model_name"), s.get("config_name"))
+        != (base_model, selected_base_config)
+        and s.get("dataset_name") not in {"hellobench", "ruler_context_probe"}
+    ]
+    if not comparisons:
+        raise click.UsageError("no comparison summaries match the requested filters")
+
+    written_count = 0
+    incompatibilities: list[str] = []
+    for model_summary in comparisons:
+        dataset_name = model_summary["dataset_name"]
+        base_summary = base_by_dataset.get(dataset_name)
+        if base_summary is None:
+            incompatibilities.append(
+                f"{summary_label(model_summary)} / {dataset_name}: baseline row missing"
+            )
+            continue
+        try:
+            row, metadata = compute_pairwise_row(
+                model_summary, base_summary, beta=beta, gamma=gamma
+            )
+        except PairwiseCompatibilityError as exc:
+            incompatibilities.append(
+                f"{summary_label(model_summary)} / {dataset_name}: {exc}"
+            )
+            continue
+        pair_slug = (
+            f"{model_summary['model_name']}_{model_summary['config_name']}__relative_to__"
+            f"{base_summary['model_name']}_{base_summary['config_name']}"
+        )
+        out_dir = (
+            Path(output_root)
+            / "conversion_output"
+            / pair_slug
+            / dataset_name
+            / f"beta-{beta:g}_gamma-{gamma:g}"
+        )
+        written_count += len(write_pairwise_outputs(row, metadata, out_dir))
+        click.echo(f"{metadata['direction']} / {dataset_name} -> {out_dir}")
+    for message in incompatibilities:
+        click.echo(f"WARNING: skipped incompatible pair: {message}", err=True)
+    if not written_count:
+        raise click.UsageError("no compatible pairwise rows were produced")
+    click.echo(f"Pairwise sensitivity artifacts: {written_count} file(s)")
 
 
 @main.command("matrix")
@@ -724,6 +815,7 @@ def matrix_command(
     click.echo(f"Matrix contains {len(jobs)} model x dataset jobs")
     valid_jobs = 0
     invalid_jobs = 0
+    incomplete_jobs = 0
     adapter_cache: dict[tuple[str, str], ModelAdapter] = {}
     for index, job in enumerate(jobs, start=1):
         selected_variants = job.variants
@@ -776,12 +868,15 @@ def matrix_command(
                 ctx.invoke(
                     visualize, **common, n_representative=n_representative, sample_ids=None,
                 )
-        except (
-            OOMInvalidTestError,
-            InvalidTestError,
-            IncompleteTestError,
-            FileNotFoundError,
-        ) as exc:
+        except (IncompleteTestError, FileNotFoundError) as exc:
+            incomplete_jobs += 1
+            click.echo(
+                f"ERROR: {job.model_name} x {job.dataset_config.stem} is "
+                f"incomplete; skipping this test and continuing. {exc}",
+                err=True,
+            )
+            continue
+        except (OOMInvalidTestError, InvalidTestError) as exc:
             invalid_jobs += 1
             click.echo(
                 f"ERROR: {job.model_name} x {job.dataset_config.stem} is invalid; "
@@ -795,11 +890,11 @@ def matrix_command(
             ctx.invoke(report, run_paths=(), output_root=output_root, dataset_name=None)
         else:
             click.echo("WARNING: no valid tests completed; aggregate report skipped", err=True)
-    if invalid_jobs:
+    if invalid_jobs or incomplete_jobs:
         click.echo(
-            f"Matrix completed with {invalid_jobs} invalid/incomplete/missing "
-            f"test(s) excluded "
-            f"and {valid_jobs} valid test(s)."
+            "Matrix completed with "
+            f"{invalid_jobs} invalid test(s), {incomplete_jobs} incomplete "
+            f"test(s) excluded, and {valid_jobs} valid test(s)."
         )
 
 

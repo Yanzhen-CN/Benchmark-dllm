@@ -3,7 +3,7 @@ dataset_class: dllm_bench.datasets.mbpp.MBPPDataset
 primary_metric: pass_at_1
 # Per-sample pass/fail is necessarily binary; the official aggregate pass@1
 # is its mean. Structure/content formation scores remain trace diagnostics.
-aux_metrics: [executable_rate, complete_rate, structure_progress, content_progress, structure_first_score, structure_first_eligible_ratio]
+aux_metrics: [executable_rate, complete_rate, truncated_rate, answer_region_detected_rate, answer_position_token_mapped_rate, answer_start_ratio, answer_marker_complete_rate, style_trace_mappable_rate, style_eligible_ratio, answer_local_structure_first_score]
 sample_size: 100
 seed: 42
 # Passed straight to MBPPDataset(**dataset_kwargs) by registry.build_dataset.

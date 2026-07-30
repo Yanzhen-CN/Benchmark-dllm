@@ -1,139 +1,90 @@
-"""Section 3.4's two result tables: the raw results table (one row per
-Dataset x Model x Config) and the AR-relative converted results table (needs
-an AR baseline run to compare against).
-"""
+"""Design-document section 3.4 measured-only result table helpers."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from ..metrics.quality_resource import (
-    energy_priority_score,
-    resource_equivalent_quality,
-    resource_ratio,
-    speed_ratio,
-    time_priority_score,
-)
 
 RAW_COLUMNS = [
     "Dataset",
     "Model",
     "Config",
+    "N",
+    "Sample Set",
     "q",
-    "TPS",
-    "SPS",
-    "EPS",
-    "CPS",
+    "Primary Aux",
+    "Answer Start Ratio",
+    "Answer Detect Rate",
+    "Tps",
+    "Seconds/Sample",
+    "Energy/Sample",
+    "Average Power",
     "Peak VRAM",
-    "Score/J",
-    "Score/TFLOP",
+    "Hardware",
     "Status",
     "Timing source",
 ]
 
-CONVERTED_COLUMNS = [
-    "Dataset",
-    "Model",
-    "Config",
-    "r_speed",
-    "r_energy",
-    "Q_speed",
-    "Q_energy",
-    "Speed-priority",
-    "Energy-priority",
-]
-
-RESOURCE_BASELINE_MODEL = "qwen3_4b"
-RESOURCE_BASELINE_CONFIG = "ar-baseline"
+PRIMARY_AUX_KEYS = {
+    "gsm8k": ("valid_rate",),
+    "mbpp": ("executable_rate",),
+    "structeval_t": ("official_render_score", "official_key_validation_score"),
+    "sudoku4": ("d1_blank_cell_accuracy", "given_preservation_rate"),
+    "sudoku4_thinking": ("d1_blank_cell_accuracy", "given_preservation_rate"),
+    "sudoku9": ("blank_cell_accuracy", "constraint_satisfaction_rate"),
+    "sudoku9_thinking": ("blank_cell_accuracy", "constraint_satisfaction_rate"),
+    "ruler": ("all_answers_match",),
+    "hellobench": ("length_compliance_rate", "major_issue_free_rate"),
+}
 
 
-def is_resource_baseline(summary: dict[str, Any]) -> bool:
-    """Whether a row is the design document's one resource baseline."""
-    return (
-        summary.get("model_name") == RESOURCE_BASELINE_MODEL
-        and summary.get("config_name") == RESOURCE_BASELINE_CONFIG
-    )
+def _primary_aux(summary: dict[str, Any]) -> str | None:
+    aux = summary.get("aux", {})
+    values = [
+        f"{key}={aux[key]:.4g}"
+        for key in PRIMARY_AUX_KEYS.get(summary.get("dataset_name"), ())
+        if isinstance(aux.get(key), (int, float))
+    ]
+    return ", ".join(values) or None
 
 
-def select_resource_baselines(
-    summaries: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """Select Qwen3-4B only, never another model named ``ar-baseline``."""
-    return {
-        summary["dataset_name"]: summary
-        for summary in summaries
-        if is_resource_baseline(summary)
-    }
+def _answer_start_ratio(aux: dict[str, Any]) -> float | None:
+    for key in ("answer_start_ratio_mean", "answer_start_ratio", "answer_start_char_ratio"):
+        value = aux.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
 
 
 def raw_results_row(summary: dict[str, Any]) -> dict[str, Any]:
-    """``summary`` is a run_summary_to_dict()-shaped dict (or an equivalent
-    :class:`~dllm_bench.runner.orchestrator.RunSummary`-like mapping)."""
     status_counts = summary["status_counts"]
     dominant_status = max(status_counts, key=status_counts.get) if status_counts else "unknown"
     status_label = dominant_status if len(status_counts) == 1 else f"{dominant_status}*"
-
+    aux = summary.get("aux", {})
+    scoring_metadata = summary.get("scoring_metadata", {})
+    cuda_devices = summary.get("run_metadata", {}).get("cuda_devices") or []
     return {
         "Dataset": summary["dataset_name"],
         "Model": summary["model_name"],
         "Config": summary["config_name"],
+        "N": summary.get("n_samples"),
+        "Sample Set": scoring_metadata.get("sample_set_hash"),
         "q": summary["q"],
-        "TPS": summary.get("tps"),
-        "SPS": summary.get("sps"),
-        "EPS": summary.get("eps"),
-        "CPS": summary.get("cps"),
+        "Primary Aux": _primary_aux(summary),
+        "Answer Start Ratio": _answer_start_ratio(aux),
+        "Answer Detect Rate": aux.get("answer_region_detected_rate"),
+        "Tps": summary.get("tps"),
+        "Seconds/Sample": summary.get("time_per_sample"),
+        "Energy/Sample": summary.get("energy_per_sample"),
+        "Average Power": summary.get("eps"),
         "Peak VRAM": summary["peak_vram_gb"],
-        "Score/J": summary["score_per_energy"],
-        "Score/TFLOP": summary["score_per_compute"],
+        "Hardware": ", ".join(str(value) for value in cuda_devices) or None,
         "Status": status_label,
         "Timing source": summary.get("timing_source", "unavailable"),
+        "Score per Unit Energy": summary.get("score_per_energy"),
+        "Primary Metric": scoring_metadata.get("primary_metric"),
+        "Aux": aux,
     }
-
-
-def compute_converted_row(
-    model_summary: dict[str, Any], baseline_summary: dict[str, Any]
-) -> dict[str, Any]:
-    """One row of the converted-results table, comparing ``model_summary``
-    against the AR baseline's ``baseline_summary`` (section 3.3)."""
-    q = model_summary["q"]
-    row: dict[str, Any] = {
-        "Dataset": model_summary["dataset_name"],
-        "Model": model_summary["model_name"],
-        "Config": model_summary["config_name"],
-        "r_speed": None,
-        "r_energy": None,
-        "Q_speed": None,
-        "Q_energy": None,
-        "Speed-priority": None,
-        "Energy-priority": None,
-    }
-
-    model_tps = model_summary.get("tps")
-    baseline_tps = baseline_summary.get("tps")
-    q_ar = baseline_summary["q"]
-    model_timing_source = model_summary.get("timing_source")
-    baseline_timing_source = baseline_summary.get("timing_source")
-    timing_is_comparable = (
-        model_timing_source == "measured"
-        and baseline_timing_source == "measured"
-    )
-    if model_tps and baseline_tps and timing_is_comparable:
-        r_speed = speed_ratio(model_tps, baseline_tps)
-        row["r_speed"] = r_speed
-        row["Q_speed"] = resource_equivalent_quality(q, r_speed, q_ar=q_ar)
-
-    model_eps = model_summary.get("eps")
-    baseline_eps = baseline_summary.get("eps")
-    if model_eps and baseline_eps:
-        r_energy = resource_ratio(baseline_eps, model_eps)
-        row["r_energy"] = r_energy
-        row["Q_energy"] = resource_equivalent_quality(q, r_energy, q_ar=q_ar)
-
-    if row["Q_speed"] is not None and row["Q_energy"] is not None:
-        row["Speed-priority"] = time_priority_score(row["Q_speed"], row["Q_energy"])
-        row["Energy-priority"] = energy_priority_score(row["Q_speed"], row["Q_energy"])
-
-    return row
 
 
 def _format_cell(value: Any) -> str:
@@ -147,21 +98,19 @@ def _format_cell(value: Any) -> str:
 def _render_table(columns: list[str], rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "(no rows)"
-    formatted_rows = [[_format_cell(row.get(col)) for col in columns] for row in rows]
+    formatted_rows = [[_format_cell(row.get(column)) for column in columns] for row in rows]
     widths = [
-        max(len(col), *(len(r[i]) for r in formatted_rows)) for i, col in enumerate(columns)
+        max(len(column), *(len(row[index]) for row in formatted_rows))
+        for index, column in enumerate(columns)
     ]
-    header = " | ".join(col.ljust(widths[i]) for i, col in enumerate(columns))
-    separator = "-+-".join("-" * w for w in widths)
+    header = " | ".join(column.ljust(widths[index]) for index, column in enumerate(columns))
+    separator = "-+-".join("-" * width for width in widths)
     body = "\n".join(
-        " | ".join(cell.ljust(widths[i]) for i, cell in enumerate(r)) for r in formatted_rows
+        " | ".join(cell.ljust(widths[index]) for index, cell in enumerate(row))
+        for row in formatted_rows
     )
     return f"{header}\n{separator}\n{body}"
 
 
 def render_raw_results_table(rows: list[dict[str, Any]]) -> str:
     return _render_table(RAW_COLUMNS, rows)
-
-
-def render_converted_results_table(rows: list[dict[str, Any]]) -> str:
-    return _render_table(CONVERTED_COLUMNS, rows)

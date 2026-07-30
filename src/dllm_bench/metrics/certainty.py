@@ -73,3 +73,34 @@ def build_certainty_curve(
 
         curve.append((ratio, cert, top1_mean))
     return curve
+
+
+def build_observed_certainty_curve(
+    trace: list[TraceStep], final_valid_length: int
+) -> list[tuple[float, float, float | None]]:
+    """Return only checkpoints with an observed distribution.
+
+    A fully accepted final checkpoint is retained with certainty 1 even though
+    there are no remaining-token distributions. Missing logits at an earlier
+    checkpoint are *not* interpreted as certainty 1; this is important for AR
+    traces, which currently expose commit state but not token probabilities.
+    """
+    curve: list[tuple[float, float, float | None]] = []
+    for step in trace:
+        num_accepted = sum(
+            1 for state in step.position_states if state == PositionState.ACCEPTED
+        )
+        ratio = accepted_ratio(num_accepted, final_valid_length)
+        entropies = list(step.entropy_by_position.values()) if step.entropy_by_position else []
+        if not entropies and ratio < 1.0:
+            continue
+        cert = certainty(entropies)
+        top1_values = (
+            list(step.top1_confidence_by_position.values())
+            if step.top1_confidence_by_position
+            else []
+        )
+        curve.append(
+            (ratio, cert, statistics.fmean(top1_values) if top1_values else None)
+        )
+    return curve

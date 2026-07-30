@@ -12,9 +12,15 @@ from dllm_bench.datasets.structeval_t import (
     StructEvalTDataset,
     checkpoint_indices,
     struct_eval_t_checkpoint_scores,
+    struct_eval_t_text_checkpoint_scores,
 )
 from dllm_bench.interfaces import PositionState, TraceStep
-from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample, mbpp_checkpoint_scores
+from dllm_bench.datasets.mbpp import (
+    MBPPDataset,
+    MbppSample,
+    mbpp_checkpoint_scores,
+    mbpp_text_checkpoint_scores,
+)
 from dllm_bench.metrics.strategy_score import strategy_score
 
 
@@ -91,11 +97,15 @@ def test_struct_eval_t_checkpoint_scores_feed_directly_into_strategy_score():
     score = strategy_score(structure_scores, content_scores)
     assert score is not None
     assert score > 0.5  # structure formed before content did
-    aux = StructEvalTDataset().trace_aux_metrics(
-        Sample(sample_id="1", prompt="p", reference=schema), trace
+    localized_structure, localized_content = struct_eval_t_text_checkpoint_scores(
+        [step.decoded_text for step in trace], schema
     )
-    assert aux["structure_first_score"] == pytest.approx(score)
-    assert aux["structure_first_eligible_rate"] == 1.0
+    assert strategy_score(localized_structure, localized_content) == pytest.approx(score)
+    # Whole-trace scoring is deliberately disabled; the generation scorer
+    # first maps these checkpoints to the detected final-answer token span.
+    assert StructEvalTDataset().trace_aux_metrics(
+        Sample(sample_id="1", prompt="p", reference=schema), trace
+    ) == {}
 
 
 def test_mbpp_checkpoint_scores_feed_directly_into_structure_first_score():
@@ -108,12 +118,15 @@ def test_mbpp_checkpoint_scores_feed_directly_into_structure_first_score():
     assert content[-1] == pytest.approx(1.0)
     assert structure[0] > content[0]
     assert strategy_score(structure, content) > 0.5
-    aux = MBPPDataset().trace_aux_metrics(
+    localized_structure, localized_content = mbpp_text_checkpoint_scores(
+        [step.decoded_text for step in trace]
+    )
+    assert strategy_score(localized_structure, localized_content) > 0.5
+    assert MBPPDataset().trace_aux_metrics(
         Sample(
             sample_id="1",
             prompt="p",
             reference=MbppSample(test_list=["assert solve(1) == 2"]),
         ),
         trace,
-    )
-    assert aux["structure_first_score"] > 0.5
+    ) == {}

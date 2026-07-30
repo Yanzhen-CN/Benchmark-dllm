@@ -92,6 +92,18 @@ def test_build_trace_allows_revision_of_a_previously_accepted_position():
     assert 0 in trace[1].committed_positions  # re-committed, not skipped
 
 
+def test_build_trace_does_not_repeat_unchanged_cumulative_accepts():
+    captured = [
+        _uniform_entropy_step(2, [10, 9], [True, False]),
+        _uniform_entropy_step(1, [10, 21], [True, True]),
+    ]
+    trace = _build_trace_from_captured_steps(
+        captured, canvas_length=2, tokenizer=_RecordingTokenizer()
+    )
+    assert trace[0].committed_positions == [0]
+    assert trace[1].committed_positions == [1]
+
+
 def test_build_trace_multi_canvas_offsets_positions_globally():
     # canvas 0 counts fully down (2, 1) before canvas 1's first step (2)
     # registers as a new canvas — a same-or-lower cur_step never does (the

@@ -97,6 +97,12 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             sys.executable, "-m", "dllm_bench.cli", "report",
             "--output-root", args.output_root,
         ]
+        for model in models:
+            report_command.extend(["--model", model])
+        for value in args.dataset:
+            for dataset_name in value.split(","):
+                if dataset_name.strip():
+                    report_command.extend(["--dataset", dataset_name.strip()])
         print(f"Report: {' '.join(report_command)}", flush=True)
         if not args.dry_run:
             subprocess.run(report_command, cwd=PROJECT_ROOT, check=True)

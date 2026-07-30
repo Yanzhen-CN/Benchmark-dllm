@@ -32,6 +32,11 @@ class RunSummary:
     config_name: str
     dataset_name: str
     q: float
+    total_time_seconds: float | None
+    total_energy_joules: float | None
+    total_output_tokens: int
+    timed_sample_count: int
+    energy_sample_count: int
     tps: float | None
     sps: float | None
     eps: float | None
@@ -47,6 +52,7 @@ class RunSummary:
     timing_source: str
     aux: dict[str, float] = field(default_factory=dict)
     run_metadata: dict[str, object] = field(default_factory=dict)
+    scoring_metadata: dict[str, object] = field(default_factory=dict)
     records: list[SampleRecord] = field(default_factory=list, repr=False)
 
 
@@ -89,9 +95,13 @@ def run_experiment(
             compute_handle = adapter.profile_compute(request)
             generation.compute_tflops = compute_handle.tflops if compute_handle.available else None
 
-        if generation.status == RunStatus.SUCCESS:
-            score = dataset.score(sample, generation.output_text)
-            score.aux.update(dataset.trace_aux_metrics(sample, generation.trace))
+        if generation.status in {RunStatus.SUCCESS, RunStatus.TRUNCATED}:
+            score = dataset.score_generation(sample, generation)
+            score.aux["truncated_rate"] = float(
+                generation.status == RunStatus.TRUNCATED
+            )
+            if generation.status == RunStatus.TRUNCATED:
+                score.complete = False
         else:
             score = ScoreResult(primary_score=0.0, valid=False, complete=False)
 
@@ -199,6 +209,7 @@ def summarize_records(
 
     total_time = sum(times)
     total_tokens = sum(r.generation.final_valid_length for r in timed)
+    total_energy = sum(energies) if len(energies) == len(records) else None
     # Appendix B requires ratios of window totals, never a mean of per-sample
     # rates.  Energy/compute rates are only available if every timed sample in
     # the measurement window has the corresponding counter.
@@ -219,7 +230,11 @@ def summarize_records(
         else None
     )
 
-    score_per_energy = _score_per_unit_energy(q, eps) if eps else None
+    score_per_energy = (
+        _score_per_unit_energy(q, energy_per_sample)
+        if energy_per_sample
+        else None
+    )
     score_per_compute = _score_per_compute(q, cps) if cps else None
 
     status_counts = dict(Counter(r.generation.status.value for r in records))
@@ -238,6 +253,11 @@ def summarize_records(
         config_name=config_name,
         dataset_name=dataset.name,
         q=q,
+        total_time_seconds=total_time if complete_timing else None,
+        total_energy_joules=total_energy,
+        total_output_tokens=total_tokens,
+        timed_sample_count=len(timed),
+        energy_sample_count=len(energies),
         tps=tps,
         sps=sps,
         eps=eps,

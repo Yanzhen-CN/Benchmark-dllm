@@ -10,13 +10,28 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from .answer_region import (
+    AnswerRegion,
+    aggregate_answer_position_metrics,
+    empty_answer_region,
+    position_aux,
+    scored_payload_aux,
+    trace_position_aux,
+)
 from .base import Dataset, Sample, ScoreResult
+from .official_metrics import (
+    GSM8K_FLEXIBLE_PATTERN,
+    gsm8k_exact_match,
+    gsm8k_flexible_extract,
+)
 from ..data_paths import ensure_data_layout
+from ..interfaces import GenerationResult
 
-_FLEXIBLE_NUMBER_RE = re.compile(r"-?[$0-9.,]{2,}|-?[0-9]+")
+_FLEXIBLE_NUMBER_RE = GSM8K_FLEXIBLE_PATTERN
 _GENERATE_UNTIL = ("Q:", "</s>", "<|im_end|>")
 
 GSM8K_REVISION = "3101c7d5072418e28b9008a6636bde82a006892c"
+GSM8K_LM_EVAL_REVISION = "f4d4b3de3ee6741a7151a9fe74945ee515262f4c"
 GSM8K_TEST_SHA256 = "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14"
 GSM8K_TEST_URL = (
     "https://raw.githubusercontent.com/openai/grade-school-math/"
@@ -63,10 +78,24 @@ def format_gsm8k_four_shot(question: str) -> str:
 
 def extract_final_number(text: str) -> float | None:
     """Port lm-eval ``gsm8k_cot``'s ``flexible-extract`` last match."""
-    numbers = _FLEXIBLE_NUMBER_RE.findall(truncate_generate_until(text))
-    if not numbers:
-        return None
-    return _to_float(numbers[-1])
+    extracted = gsm8k_flexible_extract(truncate_generate_until(text))
+    return _to_float(extracted) if extracted is not None else None
+
+
+def locate_gsm8k_answer(text: str) -> AnswerRegion:
+    """Locate the exact final numeric match used by flexible-extract."""
+    scored_text = truncate_generate_until(text)
+    matches = list(_FLEXIBLE_NUMBER_RE.finditer(scored_text))
+    if not matches:
+        return empty_answer_region(text, "flexible_number_not_found")
+    match = matches[-1]
+    return AnswerRegion(
+        text=match.group(0),
+        start_char=match.start(),
+        end_char=match.end(),
+        detected=True,
+        method="flexible_last_number",
+    )
 
 
 def truncate_generate_until(text: str) -> str:
@@ -122,16 +151,50 @@ class GSM8KDataset(Dataset):
             samples = _load_official_test_samples(_ensure_official_test_file(self._cache_path))
         return samples[:n] if n is not None else samples
 
+    def scoring_signature(self) -> dict[str, object]:
+        return {
+            "upstream": "EleutherAI/lm-evaluation-harness:gsm8k_cot",
+            "upstream_revision": GSM8K_LM_EVAL_REVISION,
+            "filter": "flexible-extract",
+            "metric": "exact_match",
+            "num_fewshot": 4,
+            "official_default_deviation": "4-shot fixed subset instead of current 8-shot full task",
+        }
+
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
-        predicted = extract_final_number(output_text)
+        region = locate_gsm8k_answer(output_text)
         scored_text = truncate_generate_until(output_text)
-        valid = predicted is not None
-        correct = valid and abs(predicted - float(sample.reference)) < 1e-4
-        return ScoreResult(
+        valid = region.detected
+        reference_text = (
+            str(int(sample.reference))
+            if isinstance(sample.reference, float) and sample.reference.is_integer()
+            else str(sample.reference)
+        )
+        correct = gsm8k_exact_match(
+            region.text if valid else None, reference_text
+        )
+        result = ScoreResult(
             primary_score=1.0 if correct else 0.0,
             valid=valid,
             complete=_looks_complete(scored_text),
         )
+        result.aux.update(position_aux(region, output_text))
+        result.aux.update(scored_payload_aux(region.text if region.detected else ""))
+        return result
+
+    def score_generation(
+        self, sample: Sample, generation: GenerationResult
+    ) -> ScoreResult:
+        result = self.score(sample, generation.output_text)
+        region = locate_gsm8k_answer(generation.output_text)
+        result.aux.update(trace_position_aux(region, generation.trace))
+        return result
+
+    def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
+        summary = super().aggregate(results)
+        summary["accuracy"] = summary["gsm8k_score"]
+        summary.update(aggregate_answer_position_metrics(results))
+        return summary
 
 
 def _ensure_official_test_file(path: Path) -> Path:
@@ -170,7 +233,7 @@ def _load_official_test_samples(path: Path) -> list[Sample]:
             if not line.strip():
                 continue
             row = json.loads(line)
-            reference = extract_final_number(row["answer"])
+            reference = gsm8k_flexible_extract(row["answer"])
             if reference is None:
                 raise ValueError(f"GSM8K test row {index} has no parseable gold answer")
             samples.append(

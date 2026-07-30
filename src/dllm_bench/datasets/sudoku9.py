@@ -2,13 +2,13 @@
 
 The paper uses Park's one-million-game dataset, rows 0..99,999 for training
 and rows 100,000..100,999 for testing. This benchmark preserves the official
-81-digit puzzle/solution representation and zero-shot constraint-validity
-score. The prompt asks checkpoints to copy the puzzle and replace only its
+81-digit puzzle/solution representation and complete-sequence accuracy.
+The prompt asks checkpoints to copy the puzzle and replace only its
 zeros, returning the completed grid directly without a reasoning process.
 The scorer tolerates missing markers, incidental wrappers, or row formatting,
-extracts the final complete grid, and checks its legality; direct-output/marker
-compliance is a separate diagnostic.
-Blank-cell accuracy, exact reference match, given preservation, completion,
+extracts the final complete grid, and compares it with the reference sequence;
+direct-output/marker compliance is a separate diagnostic.
+Constraint validity, blank-cell accuracy, given preservation, completion,
 and constraint satisfaction are retained as diagnostics. Easy/Hard is a
 reporting stratum only; it never changes the source puzzle or score protocol.
 """
@@ -27,8 +27,18 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from .answer_region import (
+    AnswerRegion,
+    aggregate_answer_position_metrics,
+    locate_digit_answer,
+    position_aux,
+    scored_payload_aux,
+    trace_position_aux,
+)
 from .base import Dataset, Sample, ScoreResult
+from .official_metrics import ye_sudoku_sequence_accuracy
 from ..data_paths import ensure_data_layout
+from ..interfaces import GenerationResult
 
 Grid = list[list[int]]
 
@@ -54,6 +64,56 @@ _LEGACY_FINAL_ANSWER_MARKER_RE = re.compile(
     r"(?im)^\s*(?:####|final\s+answer\s*:)\s*"
 )
 _COMPACT_SOLUTION_RE = re.compile(r"(?<![0-9])([1-9]{81})(?![0-9])")
+
+
+def locate_sudoku9_answer(text: str, *, enable_reasoning: bool) -> AnswerRegion:
+    region = locate_digit_answer(
+        text,
+        expected_length=81,
+        allowed_digits="123456789",
+        marker_pairs=(
+            (SUDOKU_ANSWER_BEGIN, SUDOKU_ANSWER_END),
+            ("<answer>", "</answer>"),
+        ),
+        minimum_partial_length=81,
+        marker_minimum_partial_length=1,
+    )
+    if region.detected or region.method != "not_found":
+        return region
+
+    # Compatibility for checkpoints that label each final row instead of
+    # emitting one compact string. A final-answer cue is required so an
+    # initial puzzle restatement cannot become the submitted solution.
+    rows: list[tuple[int, int, str]] = []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        row_match = re.search(
+            r"(?i)\brow\s*(?:[1-9])?\s*[:=-]?\s*"
+            r"([1-9](?:[ \t,|/-]*[1-9]){8})\s*$",
+            line.rstrip("\r\n"),
+        )
+        if row_match:
+            rows.append(
+                (
+                    offset + row_match.start(1),
+                    offset + row_match.end(1),
+                    "".join(re.findall(r"[1-9]", row_match.group(1))),
+                )
+            )
+        offset += len(line)
+    for end_index in range(len(rows), 8, -1):
+        block = rows[end_index - 9 : end_index]
+        cue = text[max(0, block[0][0] - 300) : block[0][0]].lower()
+        if not re.search(r"(?:final\s+grid|final\s+answer|solution\s+is)", cue):
+            continue
+        return AnswerRegion(
+            text="".join(row[2] for row in block),
+            start_char=block[0][0],
+            end_char=block[-1][1],
+            detected=True,
+            method="final_nine_row_grid",
+        )
+    return region
 
 
 def _reasoning_enabled(configured: bool | None = None) -> bool:
@@ -271,34 +331,61 @@ class Sudoku9Dataset(Dataset):
             "formal_subset_seed": self._seed,
         }
 
+    def scoring_signature(self) -> dict[str, object]:
+        return {
+            "upstream_data": "bryanpark/sudoku; Ye et al. test split",
+            "metric_owner": "HKUNLP/diffusion-vs-ar",
+            "upstream_revision": "6743981a4ba42062c95279e590f3991de3985581",
+            "metric": "complete reference-sequence accuracy",
+            "official_scorer_available": True,
+            "answer_extraction": "final-submission-adapter-v1",
+            "enable_reasoning": self._enable_reasoning,
+        }
+
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: SudokuReference = sample.reference
         prediction = output_text.strip()
         target = _grid_to_digits(ref.solution)
-        answer_region, marker_present, marker_complete = _extract_answer_region(
+        located_region = locate_sudoku9_answer(
+            output_text, enable_reasoning=self._enable_reasoning
+        )
+        _, marker_present, marker_complete = _extract_answer_region(
             output_text
         )
-        marked_answer = answer_region.strip()
+        located_marker = located_region.method.startswith("answer_marker")
+        if located_marker:
+            marker_present = True
+            marker_complete = bool(located_region.marker_complete)
         direct_answer = (
             prediction if re.fullmatch(r"[1-9]{81}", prediction) else None
         )
-        submitted_answer = (
-            marked_answer
-            if self._enable_reasoning or direct_answer is None
-            else direct_answer
+        submitted_answer = located_region.text if located_region.detected else ""
+        if self._enable_reasoning:
+            marker_complete = bool(located_region.marker_complete)
+        source_payload = (
+            output_text[
+                located_region.start_char : located_region.end_char
+            ].strip()
+            if located_region.detected
+            else ""
         )
-        official_format_valid = bool(
-            re.fullmatch(r"[1-9]{81}", submitted_answer)
+        strict_format_valid = bool(
+            re.fullmatch(r"[1-9]{81}", source_payload)
         )
-        official_exact = 1.0 if submitted_answer == target else 0.0
-        grid, marker_present = extract_final_grid(output_text)
+        strict_reference_exact = 1.0 if submitted_answer == target else 0.0
+        if located_region.detected:
+            grid, _ = extract_final_grid(located_region.text)
+        else:
+            # No final submission region means no answer. Reasoning grids,
+            # copied puzzles, and rejected drafts are never scored as payload.
+            grid = None
 
         if grid is None:
-            return ScoreResult(
+            result = ScoreResult(
                 primary_score=0.0,
                 aux={
-                    "official_exact_match_accuracy": official_exact,
-                    "official_format_valid": 0.0,
+                    "strict_reference_exact_match": strict_reference_exact,
+                    "strict_81_digit_format_rate": 0.0,
                     "direct_answer_instruction_following_rate": 0.0,
                     "exact_solve_rate": 0.0,
                     "blank_cell_accuracy": 0.0,
@@ -315,18 +402,21 @@ class Sudoku9Dataset(Dataset):
                 valid=False,
                 complete=False,
             )
+            result.aux.update(position_aux(located_region, output_text))
+            result.aux.update(scored_payload_aux(""))
+            return result
 
-        exact = 1.0 if grid == ref.solution else 0.0
+        exact = ye_sudoku_sequence_accuracy(_grid_to_digits(grid), target)
         partial_credit = blank_cell_accuracy(grid, ref.puzzle, ref.solution)
         satisfaction = constraint_satisfaction_rate(grid)
         constraint_valid = is_valid_solution(grid, ref.puzzle)
-        return ScoreResult(
-            primary_score=float(constraint_valid),
+        result = ScoreResult(
+            primary_score=exact,
             aux={
-                "official_exact_match_accuracy": official_exact,
-                "official_format_valid": float(official_format_valid),
+                "strict_reference_exact_match": strict_reference_exact,
+                "strict_81_digit_format_rate": float(strict_format_valid),
                 "direct_answer_instruction_following_rate": float(
-                    marker_complete and official_format_valid
+                    marker_complete and strict_format_valid
                     if self._enable_reasoning
                     else direct_answer is not None
                 ),
@@ -347,11 +437,26 @@ class Sudoku9Dataset(Dataset):
             valid=True,
             complete=completion_rate(grid) == 1.0,
         )
+        result.aux.update(position_aux(located_region, output_text))
+        result.aux.update(scored_payload_aux(_grid_to_digits(grid)))
+        return result
+
+    def score_generation(
+        self, sample: Sample, generation: GenerationResult
+    ) -> ScoreResult:
+        result = self.score(sample, generation.output_text)
+        region = locate_sudoku9_answer(
+            generation.output_text, enable_reasoning=self._enable_reasoning
+        )
+        result.aux.update(trace_position_aux(region, generation.trace))
+        result.aux.update(self.trace_aux_metrics(sample, generation.trace))
+        return result
 
     def aggregate_records(
         self, samples: list[Sample], results: list[ScoreResult]
     ) -> dict[str, float]:
         summary = super().aggregate_records(samples, results)
+        summary.update(aggregate_answer_position_metrics(results))
         for difficulty, group in group_by_difficulty(samples, results).items():
             if group:
                 summary[f"blank_cell_accuracy_{difficulty}"] = (

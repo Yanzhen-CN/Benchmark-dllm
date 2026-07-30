@@ -8,8 +8,14 @@ aux_metrics:
   - puzzle_success_rate
   - reference_exact_match
   - given_preservation_rate
-  - answer_format_valid
+  - strict_16_digit_format_rate
+  - direct_answer_instruction_following_rate
+  - answer_marker_present_rate
   - answer_marker_complete_rate
+  - answer_region_detected_rate
+  - answer_position_token_mapped_rate
+  - answer_start_ratio
+  - truncated_rate
 sample_size: 100
 seed: 42
 dataset_kwargs:

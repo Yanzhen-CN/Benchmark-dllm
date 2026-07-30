@@ -45,20 +45,19 @@ def test_resource_equivalent_quality_perfect_score_is_resource_independent():
 
 
 def test_resource_equivalent_quality_matches_hand_computation():
-    # Delta is calibrated by q_AR, then added to the model's own q.
-    q_model, q_ar, r = 0.6, 0.5, 2.0
-    expected = q_model + ((1 - (1 - q_ar) ** r) - q_ar)
-    assert resource_equivalent_quality(q_model, r, q_ar=q_ar) == pytest.approx(expected)
+    q_model, r = 0.6, 2.0
+    expected = q_model + ((1 - (1 - q_model) ** r) - q_model)
+    assert resource_equivalent_quality(q_model, r) == pytest.approx(expected)
 
 
 def test_resource_adjustment_can_be_negative_and_q_is_not_clipped():
-    delta = resource_adjustment(q_ar=0.5, ratio=0.25)
+    delta = resource_adjustment(q_model=0.5, ratio=0.25)
     assert delta < 0
-    assert resource_equivalent_quality(0.1, 0.25, q_ar=0.5) < 0
+    assert resource_equivalent_quality(0.1, 0.25) < 0.1
 
 
 def test_beta_controls_how_much_of_adjustment_is_used():
-    assert resource_equivalent_quality(0.6, 10, q_ar=0.5, beta=0) == pytest.approx(0.6)
+    assert resource_equivalent_quality(0.6, 10, beta=0) == pytest.approx(0.6)
 
 
 def test_scenario_scores_weight_time_and_energy_oppositely():

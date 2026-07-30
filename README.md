@@ -48,7 +48,7 @@ What's still open, and why:
 | HelloBench semantic judge | Deliberately excluded | Official HelloEval requires checklist-based LLM judging. This project reports a clearly named, judge-free `objective_quality_score` plus observable major-failure rates; it never labels that score HelloEval. |
 | Real dataset loading | GSM8K + local files | `--no-demo` downloads pinned/checksummed official GSM8K; every dataset also accepts local JSON/JSONL through `--samples-file`. Remaining official task-bank downloaders are external preparation. |
 | Batch experiment runner | Implemented with isolated environments | `run_bench.py` reads the matrix and delegates each model to its own script/venv. |
-| Running the real models end-to-end | Diagnostic runs imported | Qwen3-4B, iLLaDA, and DreamReasoner outputs from RTX 4090 runs are available locally. Coverage, OOM rows, protocol failures, and missing model pairs are audited in `docs/CURRENT_RESULTS.md`; these results are not yet publication-ready. |
+| Running the real models end-to-end | Generation and local scoring are separated | Server output is transferred under `output/model_output`; local scoring and visualization derive the remaining artifacts without loading model weights. |
 
 None of these block the framework from being extended — each is isolated
 behind the same `ModelAdapter`/`Dataset` interface, with a TODO at the exact
@@ -61,14 +61,15 @@ run_bench.py                   # compatibility: same-machine all-in-one pipeline
 run_model.py                   # server: generate model_output only
 run_score.py                   # local: score transferred model_output
 run_visualization.py           # local: visualize + build reports
+run_conversion.py              # local: optional isolated A-vs-base sensitivity charts
 setup_venv.py / run_tests.py   # venv dispatcher / test runner (see below)
 prepare_model.py               # pre-warm a model's HF checkpoint cache (see below)
 prepare_data.py                # prepare/cache every real dataset in the matrix
 run_prepare.py                 # one-shot: all venvs + datasets + model snapshots
 venv_scripts/                  # one Python venv/install/run script per model
-docs/                          # benchmark audit, task taxonomy, and artifact layout
+docs/IMPLEMENTATION.md         # code, artifact, scoring-cache, and execution details
 configs/
-  models/       # one YAML per model, one or more named `configs:` variants (Appendix D)
+  models/       # one YAML per model, one or more named `configs:` variants
   datasets/     # one YAML per dataset (section 1/6): dataset class + sample size + seed
   experiments/  # executable model x dataset matrices
 src/dllm_bench/
@@ -81,7 +82,7 @@ src/dllm_bench/
                      # illada.py, dreamreasoner.py (each model's real sampler — see Status),
                      # diffusiongemma.py, gemma4_ar.py, w1_api.py, mock.py
   datasets/         # base.py + gsm8k/mbpp/structeval_t/sudoku4/sudoku9/ruler/hellobench
-  resource/         # timing.py/energy.py/compute.py/vram.py (Appendix B protocol)
+  resource/         # timing.py/energy.py/compute.py/vram.py
   metrics/          # quality_resource.py/long_context.py (Part 3),
                      # trace_parallelism.py/strategy_score.py/commit_order.py/
                      # certainty.py (Part 4), stats_utils.py (shared aggregation)
@@ -97,16 +98,9 @@ output/             # ignored canonical generate/score/visualize artifacts
 artifacts/          # ignored transfer archives and superseded local analyses
 ```
 
-See `docs/PROJECT_LAYOUT.md` for the ownership and retention rules for every
-top-level directory. The complete imported-run tables, task diagnostics,
-matched comparisons, and figures live in `docs/TECHNICAL_DATA_REPORT.md`;
-`docs/CURRENT_RESULTS.md` remains the compact result ledger.
-
-Rebuild the tracked technical report from the current local result snapshot:
-
-```bash
-python scripts/build_technical_report.py
-```
+See `docs/IMPLEMENTATION.md` for directory ownership, artifact contracts,
+stage boundaries, score fingerprints, and failure handling. Generated tables,
+figures, and result snapshots stay under the ignored `output/` tree.
 
 ## Main entry points
 
@@ -127,6 +121,9 @@ python run_score.py
 python run_visualization.py
 python run_score.py -m qwen3_8b -d sudoku
 python run_visualization.py -m qwen3_8b -d sudoku
+# Optional only; never called by run_visualization.py:
+python run_conversion.py -m illada --base-model qwen3_8b \
+  --base-config ar-baseline --beta 50 --gamma 30
 ```
 
 Useful controls:
@@ -155,7 +152,7 @@ model loading or warmup follows the same rule and records `failure_stage` with
 zero attempted formal samples. Matrix execution prints the invalid-test error
 and continues later datasets. Scoring, visualization, and reporting exclude
 only the marked row; even a stale score summary from an earlier run cannot enter
-aggregate quality, latency, TPS/SPS/EPS, energy, or ranking statistics.
+aggregate quality, latency, Tps/Seconds-per-Sample/Eps, energy, or ranking statistics.
 
 ## Environment setup
 
@@ -310,7 +307,7 @@ it to the benchmark and vLLM child processes. `DLLM_CUDA_COMPAT_DIR` can point
 to a compatible package extracted elsewhere.
 
 Run on the same exclusive A100 80GB used by the native pair. DFlash keeps the
-normal measured timing, energy, peak-memory, TPS/SPS/EPS and dataset score
+normal measured timing, energy, peak-memory, Tps/Seconds-per-Sample/Eps and dataset score
 fields. Peak memory is sampled as total NVML device-used memory so it includes
 both target and draft server processes; acceptance rate, mean acceptance
 length, target verification passes, TTFT and TPOT are persisted in each
@@ -364,8 +361,8 @@ For formal comparisons, keep GPU type, precision, dataset sample set, output
 caps, trace policy, and compute-profiling flag identical. Formal RULER uses a
 shared 4096-token encoded input plus a 64-token answer allowance. A separate
 one-sample diagnostic probes half of each model's declared context and is not
-mixed into primary quality or resource aggregates. The complete execution
-contract and acceptance checklist are in `docs/TEST_PROTOCOL.md`.
+mixed into primary quality or resource aggregates. The code-level execution
+contract and acceptance checklist are in `docs/IMPLEMENTATION.md`.
 `run_model.py` creates the environment automatically when it is missing, then
 launches the model's generation rows with that venv's Python executable. It does
 not depend on shell activation. Override settings with environment variables:
@@ -399,8 +396,10 @@ clue preservation, and answer-format compliance are reported alongside d1's
 partial-credit primary score. There is no Easy/Hard split for 4x4.
 
 `sudoku9` retains the Park split used by Ye et al. (ICLR 2025), the adapted
-general-instruction prompt, and strict whole-puzzle constraint validity as its
-primary score. Its output cap is 256 tokens. The prepared bank contains 50
+general-instruction prompt, and the upstream complete reference-sequence
+Accuracy as its primary score: the extracted 81-cell sequence must equal the
+81-cell label. Constraint validity and blank-cell accuracy remain diagnostics.
+Its output cap is 256 tokens. The prepared bank contains 50
 Easy + 50 Hard rows; a 10-row override deterministically selects 5 + 5. The
 Qwen3-4B, iLLaDA, iLLaDA VarGen, and DreamReasoner run one fixed row from each
 direct Sudoku dataset because pilot runs show that they still expand into
@@ -420,7 +419,7 @@ matrix, iLLaDA and DreamReasoner run only the 2K profile, one sample per
 variant. These generation caps are attached
 per sample by the runner, so the matrix-wide fallback cannot accidentally
 reduce both groups to 256 tokens. Every model uses the same deterministic
-configured shared subset. Per-sample wall-clock, output length, TPS, energy, peak VRAM,
+configured shared subset. Per-sample wall-clock, output length, Tps, energy, peak VRAM,
 objective quality, and major-failure flags describe long-output feasibility
 and cost; the subset is not presented as a full HelloBench leaderboard score.
 Its primary `objective_quality_score` is explicitly not official HelloEval:
@@ -607,7 +606,7 @@ aligned time/energy/VRAM measurement around trace-only entropy calculation,
 tensor copies, token decoding, and trace construction, then accumulate the
 remaining generation segments. Complete traces therefore still come from the
 same generation, but their instrumentation cost only increases end-to-end job
-duration, not the reported TPS/SPS/EPS windows. Energy defaults to the physical GPU
+duration, not the reported Tps/Seconds-per-Sample/Eps windows. Energy defaults to the physical GPU
 mapped to CUDA logical device 0; set `DLLM_NVML_GPU_INDICES=0,1` explicitly
 for a future multi-GPU model.
 
@@ -693,20 +692,26 @@ The formal evaluation plan is diagnostic rather than a full-leaderboard run:
 
 Sudoku4's primary score is d1 blank-cell accuracy. Its strict
 `puzzle_success_rate` requires a complete legal 4x4 board preserving every
-clue. Sudoku9 uses the inverse emphasis: strict whole-puzzle constraint
-validity is primary and blank-cell accuracy is diagnostic. Only Sudoku9 has
-the Easy/Hard reporting split.
+clue. Sudoku9 instead follows Ye et al.'s complete reference-sequence
+Accuracy; whole-puzzle constraint validity and blank-cell accuracy are
+diagnostic. Only Sudoku9 has the Easy/Hard reporting split.
 
-When a 256-token output ends in reasoning without a complete answer marker,
-do not interpret that row alone as pure instruction-following failure. Every
-model can run a temporary length probe through the normal entry point, for
-example `python run_model.py -m qwen3_4b -d sudoku9 --real-data --n-samples 1
---max-new-tokens 512 --output-root output/sudoku_length_probe/qwen4b_512
---no-resume`. If the answer appears only there, report output-budget/verbosity
-pressure; if it still does not appear, report persistent answer non-completion.
-Temporary overrides are diagnostic and are never pooled with formal scores or
-resource measurements. Use a fresh output root (recommended) or `--no-resume`;
-resume rejects an existing sample generated with a different output cap.
+Sudoku direct has a 256-token cap and *requests* the exact marker-free digit
+string. Because Qwen, iLLaDA, DreamReasoner, and DiffusionGemma may still emit
+thinking, the semantic scorer first locates the final submitted answer: the
+last explicit answer block wins, followed by a final-answer candidate and then
+the last complete row-major digit string/grid. An explicit final marker/cue
+whose payload is incomplete does not fall back to an earlier rejected draft.
+Likewise, a candidate followed by `Wait`, `wrong`, `re-solve`, or another
+explicit correction is a rejected draft, not a submission. Unclosed
+`<think>`, `<analysis>`, and `<reasoning>` blocks are never parsed for task
+credit. Extra reasoning is therefore an
+instruction-following failure, not an automatic correctness failure. The
+separate `sudoku4_thinking` and `sudoku9_thinking` companions use their marked
+reasoning contracts and a 2048-token cap, but share the corresponding direct
+track's semantic task scorer. Their scores and artifacts are never pooled.
+Temporary length overrides are diagnostics and are never pooled with formal
+scores or resource measurements; use a fresh output root.
 
 For HelloBench, repeat `--hellobench-length` to select `2k`, `4k`, or both.
 `--n-samples` is the total across the selected output profiles: selecting only
@@ -739,8 +744,8 @@ target. Local HF model records include the observed count in
 `extra.input_tokens`; W1 remains dependent on the external API's tokenizer.
 
 HelloBench is the separate long-output axis. Its short-prompt 2K- and 4K-word
-samples carry per-sample generation caps of 3072 and 6144 tokens respectively,
-so they do not inherit the matrix-wide 256-token fallback.
+samples carry per-sample generation caps of 3072 and 6144 tokens respectively;
+other dataset ceilings are configured independently in the experiment matrix.
 
 Resource measurements reuse the formal task samples. Generation history is
 captured and persisted for every sample whenever the model adapter exposes it,
@@ -754,13 +759,14 @@ analysis can therefore use the complete run without scheduling a
 separate 20–30 sample subset. W1 remains the exception until its API exposes a
 validated per-step trace payload.
 
-The aggregate speed summary records both TPS (tokens/s) and SPS (samples/s).
-SPS is computed as `completed timed samples / total measured generation time`,
-equivalently `1 / mean seconds per sample`; it is a ratio of totals, not the
-mean of per-sample inverse latencies. This also exposes useful per-sample
-totals without another run: `TPS / SPS` is tokens/sample, `EPS / SPS` is
-joules/sample, and `1 / SPS` is seconds/sample. If optional compute profiling
-was run, `CPS / SPS` additionally gives TFLOPs/sample.
+The aggregate report displays Tps (tokens/s) and Seconds/Sample. The latter is
+`total measured generation time / completed timed samples`; it is a ratio of
+window totals, not a mean of per-sample inverse throughput. The summary also
+stores Energy/Sample and Eps (`total joules / total seconds`, displayed as
+average power). The internal lowercase `sps` field remains the compatibility
+inverse of Seconds/Sample, but is not the primary report label. Optional Cps is
+available only after a separate compute-profiling replay and is not collected
+in the formal first pass.
 
 Output lands under `output/` (override with `--output-root`), split by
 stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-best` and
@@ -795,9 +801,9 @@ dllm-bench generate --model-config configs/models/qwen3_8b.yaml \
 
 iLLaDA and DiffusionGemma work the same way (`configs/models/illada.yaml`,
 `configs/models/diffusiongemma.yaml`). Their isolated scripts install the
-appropriate transformer versions. Imported iLLaDA runs have been scored;
-DiffusionGemma and its same-scale Gemma AR reference are still missing from the
-current result snapshot — see `docs/CURRENT_RESULTS.md`.
+appropriate transformer versions. Current coverage is read directly from
+`output/model_output/*/*/_meta.json`; the repository does not track a separate
+result snapshot.
 
 ## Model checkpoints and caching
 
@@ -841,6 +847,24 @@ window.
 
 ## Visualization
 
+`run_visualization.py` produces trace artifacts plus the measured-only raw
+report. Its `-m/-d` selection is forwarded to the report scan, so an unfinished
+or intentionally omitted model (for example a Gemma row awaiting rerun) is not
+silently reintroduced from an older summary. The report writes
+`report/raw_results.{txt,csv}`, full summary/protocol details, and the design
+document's raw charts. Eps is displayed as Average Power. Resource charts are
+partitioned by dataset, exact sample-set hash, and reported GPU hardware; labels
+include N so reference-only rows cannot masquerade as full runs.
+
+Quality/resource conversion is not part of this command. Use the separate
+`run_conversion.py` entry point and explicitly select comparison model(s), a
+base model/config, beta, and gamma. Every A-vs-base pair gets its own directory
+under `conversion_output/`; multiple pairs are never combined into a ranking.
+The speed track uses Seconds/Sample, the energy track uses Energy/Sample, beta
+scales the ideal-retry adjustment, and gamma is the energy-track percentage.
+Pairwise conversion refuses mismatched sample sets, prompts/output budgets,
+dataset revisions, measurement boundaries, and non-measured timing.
+
 Every dataset renders through the same unified set (`report/trace_report.py`
 calling `token_grid_viz.py` + `trace_distribution_viz.py` + the Part 4
 metric curves) — the visual language (colors, layout) is carried over from
@@ -858,11 +882,20 @@ own trace visualizer) for continuity with that prior art:
   **Accepted-Ratio × Certainty** — the design doc's own Part 4 formulas
   (`metrics/trace_parallelism.py`/`strategy_score.py`/`certainty.py`).
 
+Dataset-level Task 4 output additionally includes the final-stable CDF, an
+equal-sample token-position × final-stable-forward density map, commit-order
+tau at 4/8/16/32/64-token windows, Early/Middle/Late finalization shares,
+TPF-vs-Tps, and bootstrap confidence bands on cross-model curves. Curve bins
+are averaged within each sample before cross-sample aggregation, so models with
+longer traces do not receive more statistical weight. AR probability curves
+are N/A unless logits were actually recorded; diffusion backends label whether
+entropy/top-1 covers the full remaining canvas or only an active subset.
+
 For StructEval-T and MBPP, framework features and substantive-content
 features are classified separately at each checkpoint. `strategy_score.py`
 uses their first-formation increments in a Kendall-like pairwise ordering:
 structure earlier = 1, tie = 0.5, content earlier = 0. The resulting
-`structure_first_score` is in `[0,1]`; 1 means a strong framework-first
+`answer_local_structure_first_score` is in `[0,1]`; 1 means a strong framework-first
 generation preference, while 0.5 means synchronized or order-balanced
 formation. It is a trace diagnostic only and never replaces official
 StructEval `final_eval_score` or MBPP `pass_at_1`.
@@ -884,6 +917,12 @@ This requires the trace's canvas to be exactly 81 positions, row-major
 (`derive_sudoku_frames`). `simulate_sudoku_frames` remains a self-contained
 demo/test fixture (the same role `models/mock.py` plays for the rest of the
 framework); real Sudoku9 runs use decoded model trace canvases when available.
+The dataset-level Sudoku9 case-study figure is coverage-gated and separates
+Easy/Hard revision timing from correction success. A native 81-cell canvas is
+mappable while cells are still masked; a subword/free-form trace must expose an
+unambiguous complete grid at enough checkpoints. Below 0.5 mapping coverage the
+figure says N/A rather than turning an unavailable trajectory into zero
+revisions.
 
 ## Configuration: what lives where
 
@@ -895,7 +934,7 @@ Two separate config trees, both under `configs/`, both loaded by
   `w1.yaml`'s `standard`/`jump`/`gidd`). Each variant has `adapter` (dotted
   class path), `init_kwargs` (passed straight to the constructor),
   `step_config` (diffusion-only: `gen_length`/`steps`/`block_length`/
-  `steps_per_block`, see Appendix D). `registry.build_model_adapter(path,
+  `steps_per_block`, documented in `docs/IMPLEMENTATION.md`). `registry.build_model_adapter(path,
   variant=...)` builds one; the CLI defaults to building *every* variant a
   file declares (see "The three-stage pipeline" above) since they're meant
   to be tested together.

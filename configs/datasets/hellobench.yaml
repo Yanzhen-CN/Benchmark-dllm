@@ -9,7 +9,27 @@ dataset_class: dllm_bench.datasets.hellobench.HelloBenchDataset
 # combines objective length/repetition/segment signals and explicit major
 # observable failure penalties.
 primary_metric: objective_quality_score
-aux_metrics: [length_compliance_rate, seq_rep_4, repeated_segment_fraction, major_issue_free_rate, refusal_issue_rate, prompt_echo_issue_rate, corrupt_text_issue_rate, generation_time_mean_seconds_by_length, generation_time_median_seconds_by_length, generation_success_rate_by_length]
+aux_metrics:
+  - length_compliance_rate
+  - complete_rate
+  - truncated_rate
+  - seq_rep_4
+  - repeated_segment_fraction
+  - empty_output_issue_rate
+  - severe_underlength_issue_rate
+  - severe_overlength_issue_rate
+  - high_repetition_issue_rate
+  - repeated_segment_loop_issue_rate
+  - refusal_issue_rate
+  - prompt_echo_issue_rate
+  - corrupt_text_issue_rate
+  - major_issue_count
+  - major_issue_free_rate
+  - generation_time_mean_seconds_by_length
+  - generation_time_median_seconds_by_length
+  - generation_success_rate_by_length
+  - case_study_only
+  - official_helloeval_compatible
 samples_per_length: 1
 output_profiles:
   - target_words: 2000

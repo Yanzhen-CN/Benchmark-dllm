@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import keyword
+import platform
 import re
 import subprocess
 import sys
@@ -22,7 +23,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .base import Dataset, Sample, ScoreResult
-from ..interfaces import TraceStep
+from ..interfaces import GenerationResult, TraceStep
+from .answer_region import (
+    aggregate_answer_position_metrics,
+    answer_local_checkpoint_texts,
+    locate_mbpp_answer,
+    position_aux,
+    scored_payload_aux,
+    trace_position_aux,
+)
 from .remote import ensure_download
 
 MBPP_REVISION = "ec7c3d346277b737bc2decffcd1b533d4b7ec105"
@@ -166,51 +175,97 @@ class MBPPDataset(Dataset):
             ]
         return samples[:n] if n is not None else samples
 
+    def scoring_signature(self) -> dict[str, object]:
+        return {
+            "candidate_count": 1,
+            "execution_isolation": "temporary_directory_python_subprocess",
+            "timeout_seconds": float(self._timeout_s),
+            "python_implementation": platform.python_implementation(),
+            "python_version": platform.python_version(),
+            "operating_system": platform.platform(),
+            "answer_extraction": "final_answer_region_then_python_code_extraction_v1",
+        }
+
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
+        region = locate_mbpp_answer(output_text)
+        result = self._score_payload(sample, region.text)
+        result.aux.update(position_aux(region, output_text))
+        return result
+
+    def _score_payload(self, sample: Sample, payload: str) -> ScoreResult:
         ref: MbppSample = sample.reference
-        code = extract_code(output_text)
+        code = extract_code(payload)
         complete = _looks_complete(code)
 
         executable, all_passed = run_tests(
             code, ref.test_list, ref.test_setup_code, timeout_s=self._timeout_s
         )
-        return ScoreResult(
+        result = ScoreResult(
             primary_score=1.0 if all_passed else 0.0,
             aux={"executable_rate": 1.0 if executable else 0.0},
             valid=executable,
             complete=complete,
         )
+        result.aux.update(scored_payload_aux(code))
+        return result
+
+    def score_generation(
+        self, sample: Sample, generation: GenerationResult
+    ) -> ScoreResult:
+        region = locate_mbpp_answer(generation.output_text)
+        result = self._score_payload(sample, region.text)
+        result.aux.update(position_aux(region, generation.output_text))
+        result.aux.update(trace_position_aux(region, generation.trace))
+        result.aux.update(self._answer_local_style_metrics(generation.trace, region))
+        return result
 
     def aggregate(self, results: list[ScoreResult]) -> dict[str, float]:
         summary = super().aggregate(results)
         # Keep the generic key for pipeline compatibility and expose the
         # official metric name explicitly in summary.json.
         summary["pass_at_1"] = summary["mbpp_score"]
+        summary.update(aggregate_answer_position_metrics(results))
         structure_first = [
-            result.aux["structure_first_score"]
+            result.aux["answer_local_structure_first_score"]
             for result in results
-            if "structure_first_score" in result.aux
+            if "answer_local_structure_first_score" in result.aux
         ]
-        summary["structure_first_eligible_ratio"] = len(structure_first) / len(results)
+        summary["style_trace_mappable_rate"] = sum(
+            float(result.aux.get("style_trace_mappable_rate", 0.0))
+            for result in results
+        ) / len(results)
+        summary["style_eligible_ratio"] = len(structure_first) / len(results)
         if structure_first:
-            summary["structure_first_score"] = sum(structure_first) / len(structure_first)
+            summary["answer_local_structure_first_score"] = (
+                sum(structure_first) / len(structure_first)
+            )
         return summary
 
-    def trace_aux_metrics(
-        self, sample: Sample, trace: list[TraceStep]
-    ) -> dict[str, float]:
-        del sample
-        if not trace:
-            return {"structure_first_eligible_rate": 0.0}
+    def _answer_local_style_metrics(self, trace, region) -> dict[str, float]:
+        if not trace or not region.detected:
+            return {"style_trace_mappable_rate": 0.0, "style_eligible_rate": 0.0}
         from ..metrics.strategy_score import strategy_score
+        from .structeval_t import checkpoint_indices
 
-        structure, content = mbpp_checkpoint_scores(trace)
+        texts, mapped = answer_local_checkpoint_texts(
+            trace, region, checkpoint_indices(len(trace), 4)
+        )
+        if not mapped:
+            return {"style_trace_mappable_rate": 0.0, "style_eligible_rate": 0.0}
+        structure, content = mbpp_text_checkpoint_scores(texts)
         score = strategy_score(structure, content)
-        if score is None:
-            return {"structure_first_eligible_rate": 0.0}
+        if (
+            score is None
+            or not structure
+            or not content
+            or structure[-1] < 0.5
+            or content[-1] < 0.5
+        ):
+            return {"style_trace_mappable_rate": 1.0, "style_eligible_rate": 0.0}
         return {
-            "structure_first_score": score,
-            "structure_first_eligible_rate": 1.0,
+            "answer_local_structure_first_score": score,
+            "style_trace_mappable_rate": 1.0,
+            "style_eligible_rate": 1.0,
         }
 
 
@@ -277,6 +332,20 @@ def mbpp_checkpoint_scores(
     content_scores: list[float] = []
     for index in checkpoint_indices(len(trace), interval):
         structure, content = _python_feature_sets(trace[index].decoded_text)
+        structure_scores.append(_mean_feature_coverage(structure, final_structure))
+        content_scores.append(_mean_feature_coverage(content, final_content))
+    return structure_scores, content_scores
+
+
+def mbpp_text_checkpoint_scores(texts: list[str]) -> tuple[list[float], list[float]]:
+    """Score already-localized answer text at each selected checkpoint."""
+    if not texts:
+        return [], []
+    final_structure, final_content = _python_feature_sets(texts[-1])
+    structure_scores: list[float] = []
+    content_scores: list[float] = []
+    for text in texts:
+        structure, content = _python_feature_sets(text)
         structure_scores.append(_mean_feature_coverage(structure, final_structure))
         content_scores.append(_mean_feature_coverage(content, final_content))
     return structure_scores, content_scores

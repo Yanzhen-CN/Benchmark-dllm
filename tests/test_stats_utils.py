@@ -65,15 +65,15 @@ def test_aggregate_curve_by_bins_combines_multiple_samples_in_one_bin():
     assert result[0].stats.mean == pytest.approx(20.0)
 
 
-def test_aggregate_curve_by_bins_one_sample_can_contribute_many_points():
-    # a sample with more forward steps contributes more points to the curve
-    # than a sample with fewer — that's fine, this is a dataset-level
-    # average, not a per-sample one.
-    samples = [[(0.0, 1.0), (0.5, 2.0), (0.9, 3.0)], [(0.05, 5.0)]]
+def test_aggregate_curve_by_bins_gives_each_sample_one_value_per_bin():
+    # Multiple checkpoints from one sample are averaged inside the bin first,
+    # so a longer trace still contributes exactly one value to that bin.
+    samples = [[(0.0, 1.0), (0.1, 3.0), (0.9, 3.0)], [(0.05, 5.0)]]
     result = aggregate_curve_by_bins(samples, n_bins=2)
     assert len(result) == 2
     low_bin = next(p for p in result if p.bin_center < 0.5)
-    assert low_bin.stats.n == 2  # (0.0,1.0) and (0.05,5.0) both land here
+    assert low_bin.stats.n == 2
+    assert low_bin.stats.mean == pytest.approx(3.5)
 
 
 def test_aggregate_curve_by_bins_omits_empty_bins():

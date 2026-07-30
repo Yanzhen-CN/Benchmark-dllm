@@ -96,6 +96,11 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
         (viz_out / "dataset_trace_summary.json").read_text(encoding="utf-8")
     )
     assert trace_summary["trace_samples"] == 3
+    assert trace_summary["model"] == "mock"
+    assert trace_summary["config"] == "default"
+    assert (viz_out / "dataset_finalization_map.png").exists()
+    assert (viz_out / "dataset_commit_order_tau.png").exists()
+    assert (viz_out / "dataset_tpf_tps.txt").exists()
 
     report_result = _run(runner, [
         "report", "--output-root", str(output_root), "--dataset", "gsm8k",
@@ -103,7 +108,17 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert "gsm8k" in report_result.output
     assert "mock" in report_result.output
     assert (output_root / "report" / "gsm8k" / "quality_tps.png").exists()
-    assert (output_root / "report" / "gsm8k" / "quality_sps.png").exists()
+    assert (output_root / "report" / "gsm8k" / "quality_seconds_per_sample.png").exists()
+    assert not (output_root / "report" / "gsm8k" / "quality_energy_per_sample.png").exists()
+    assert (output_root / "report" / "raw_results.csv").exists()
+    assert (output_root / "report" / "gsm8k" / "task4_tpf_vs_tps.png").exists()
+    assert (
+        output_root / "report" / "gsm8k" / "task4_parallelism_signature.png"
+    ).exists()
+    assert (
+        output_root / "report" / "gsm8k" / "task4_draft_volatility.png"
+    ).exists()
+    assert (output_root / "report" / "gsm8k" / "task4_commit_tau_windows.png").exists()
 
 
 def test_generate_uses_persistent_sample_progress_lines(tmp_path):

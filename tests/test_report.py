@@ -5,19 +5,18 @@ import pytest
 from dllm_bench.interfaces import GenerationRequest
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.report.plots import (
+    plot_answer_region_diagnostics,
     plot_best_vs_fast,
     plot_quality_vs_resource,
-    plot_scenario_ranking,
     plot_score_per_unit,
 )
-from dllm_bench.report.tables import (
-    compute_converted_row,
-    is_resource_baseline,
-    raw_results_row,
-    render_converted_results_table,
-    render_raw_results_table,
-    select_resource_baselines,
+from dllm_bench.report.pairwise import (
+    PairwiseCompatibilityError,
+    compute_pairwise_row,
+    render_pairwise_table,
+    write_pairwise_outputs,
 )
+from dllm_bench.report.tables import raw_results_row, render_raw_results_table
 from dllm_bench.report.trace_report import render_sample_report
 
 
@@ -39,6 +38,23 @@ def _summary(model, config, q, tps=1.0, eps=None):
         "score_per_compute": None,
         "status_counts": {"success": 5},
         "timing_source": "measured",
+        "n_samples": 5,
+        "aux": {
+            "answer_start_char_ratio": 0.4,
+            "answer_region_detected_rate": 1.0,
+        },
+        "run_metadata": {
+            "measurement_protocol": "gpu-synced-v4",
+            "cuda_devices": ["test GPU"],
+        },
+        "scoring_metadata": {
+            "sample_set_hash": "same-samples",
+            "dataset_revision": "same-dataset",
+            "prompt_protocol_revision": "same-prompts",
+            "generation_protocol_revision": "same-budgets",
+            "expected_sample_count": 5,
+            "primary_metric": "accuracy",
+        },
     }
 
 
@@ -47,7 +63,7 @@ def test_raw_results_row_shape():
     assert row["Dataset"] == "gsm8k"
     assert row["Model"] == "mock"
     assert row["q"] == 0.8
-    assert row["SPS"] == pytest.approx(0.5)
+    assert row["Seconds/Sample"] == pytest.approx(1.0)
     assert row["Status"] == "success"
 
 
@@ -70,34 +86,32 @@ def test_render_raw_results_table_handles_no_rows():
     assert render_raw_results_table([]) == "(no rows)"
 
 
-def test_compute_converted_row_faster_model_gets_higher_q_speed():
-    baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
-    fast_model = _summary("illada", "fast", 0.5, tps=50.0)
-    row = compute_converted_row(fast_model, baseline)
+def test_compute_pairwise_row_uses_seconds_per_sample_not_tps():
+    baseline = _summary("qwen3_8b", "ar-baseline", 0.5, tps=100.0)
+    fast_model = _summary("illada", "fast", 0.5, tps=1.0)
+    baseline["time_per_sample"] = 10.0
+    fast_model["time_per_sample"] = 2.0
+    row, metadata = compute_pairwise_row(fast_model, baseline, beta=100, gamma=50)
     assert row["r_speed"] == pytest.approx(5.0)
     assert row["Q_speed"] > 0.5
+    assert metadata["direction"] == "illada/fast relative to qwen3_8b/ar-baseline"
 
 
-def test_compute_converted_row_missing_energy_leaves_energy_fields_none():
+def test_compute_pairwise_row_missing_energy_leaves_energy_fields_none():
     baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
     model = _summary("illada", "best", 0.6, tps=8.0)
-    row = compute_converted_row(model, baseline)
+    row, _ = compute_pairwise_row(model, baseline, beta=50, gamma=75)
     assert row["r_energy"] is None
     assert row["Q_energy"] is None
-    assert row["Energy-priority"] is None
+    assert row["Q_beta_gamma"] is None
 
 
-def test_resource_baseline_is_qwen3_4b_not_every_ar_baseline():
-    qwen4 = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
-    qwen8 = _summary("qwen3_8b", "ar-baseline", 0.6, tps=12.0)
-    gemma = _summary("gemma", "ar-baseline", 0.7, tps=8.0)
-
-    selected = select_resource_baselines([qwen8, gemma, qwen4])
-
-    assert selected == {"gsm8k": qwen4}
-    assert is_resource_baseline(qwen4)
-    assert not is_resource_baseline(qwen8)
-    assert not is_resource_baseline(gemma)
+def test_pairwise_requires_matching_sample_set():
+    baseline = _summary("qwen3_8b", "ar-baseline", 0.5)
+    model = _summary("illada", "fast", 0.6)
+    model["scoring_metadata"]["sample_set_hash"] = "different"
+    with pytest.raises(PairwiseCompatibilityError, match="sample set hash differs"):
+        compute_pairwise_row(model, baseline, beta=50, gamma=50)
 
 
 def test_self_reported_timing_is_not_compared_with_measured_baseline():
@@ -105,18 +119,22 @@ def test_self_reported_timing_is_not_compared_with_measured_baseline():
     w1 = _summary("w1", "standard", 0.6, tps=50.0)
     w1["timing_source"] = "self_reported"
 
-    row = compute_converted_row(w1, baseline)
-
-    assert row["r_speed"] is None
-    assert row["Q_speed"] is None
+    with pytest.raises(PairwiseCompatibilityError, match="timing sources"):
+        compute_pairwise_row(w1, baseline, beta=50, gamma=50)
 
 
-def test_render_converted_results_table_smoke():
+def test_render_and_write_pairwise_outputs_smoke(tmp_path):
     baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
     model = _summary("illada", "best", 0.6, tps=8.0)
-    row = compute_converted_row(model, baseline)
-    table = render_converted_results_table([row])
+    baseline["energy_per_sample"] = 20.0
+    model["energy_per_sample"] = 10.0
+    row, metadata = compute_pairwise_row(model, baseline, beta=60, gamma=30)
+    table = render_pairwise_table(row, metadata)
     assert "r_speed" in table
+    assert "sample_set_hash=same-samples" in table
+    written = write_pairwise_outputs(row, metadata, tmp_path)
+    assert len(written) == 4
+    assert all(path.exists() for path in written)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +145,7 @@ def test_render_converted_results_table_smoke():
 def test_plot_quality_vs_resource_writes_file(tmp_path):
     rows = [raw_results_row(_summary("mock", "default", 0.8, tps=1.5))]
     out = tmp_path / "quality_time.png"
-    plot_quality_vs_resource(rows, "TPS", str(out))
+    plot_quality_vs_resource(rows, "Tps", str(out))
     assert out.exists()
     assert out.stat().st_size > 0
 
@@ -135,8 +153,8 @@ def test_plot_quality_vs_resource_writes_file(tmp_path):
 def test_plot_score_per_unit_skips_when_no_data(tmp_path):
     rows = [raw_results_row(_summary("mock", "default", 0.8))]
     out = tmp_path / "score_per_j.png"
-    plot_score_per_unit(rows, "Score/J", str(out))
-    assert not out.exists()  # no Score/J values -> nothing to plot
+    plot_score_per_unit(rows, "Score per Unit Energy", str(out))
+    assert not out.exists()
 
 
 def test_plot_best_vs_fast_writes_file_when_both_configs_present(tmp_path):
@@ -149,13 +167,11 @@ def test_plot_best_vs_fast_writes_file_when_both_configs_present(tmp_path):
     assert out.exists()
 
 
-def test_plot_scenario_ranking_writes_file(tmp_path):
-    baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
-    model = _summary("illada", "best", 0.6, tps=8.0)
-    row = compute_converted_row(model, baseline)
-    out = tmp_path / "ranking.png"
-    plot_scenario_ranking([row], "Speed-priority", str(out))
-    assert not out.exists()  # only one row and Speed-priority is None (no energy) -> nothing to plot
+def test_plot_answer_region_diagnostics_writes_file(tmp_path):
+    row = raw_results_row(_summary("illada", "best", 0.6))
+    out = tmp_path / "answer_region.png"
+    plot_answer_region_diagnostics([row], str(out))
+    assert out.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -175,17 +191,11 @@ def test_render_sample_report_writes_expected_files(tmp_path):
         final_output_text=result.output_text,
         final_score=1.0,
     )
-    # design doc 4.1's exact 3 items (heatmap, certainty, result) plus the
-    # DGtest-style single-sample extras (GIF/final-PNG/position-vs-commit/
-    # speed) — NOT "parallelism"/"strategy": those are 4.2 dataset-level
-    # aggregates now, see report/dataset_trace_report.py, never shown
-    # redundantly for one sample here.
+    # Design-doc single-sample evidence plus one animated form of the same
+    # token canvas. Parallelism/speed/first-commit are dataset-level only.
     for key in (
         "heatmap",
         "token_grid_gif",
-        "token_grid_final",
-        "position_vs_commit",
-        "speed",
         "certainty",
         "result",
     ):
@@ -193,6 +203,9 @@ def test_render_sample_report_writes_expected_files(tmp_path):
         assert Path(written[key]).exists()
     assert "parallelism" not in written
     assert "strategy" not in written
+    assert "token_grid_final" not in written
+    assert "position_vs_commit" not in written
+    assert "speed" not in written
 
 
 def test_render_sample_report_skips_sudoku_gif_for_non_sudoku_dataset(tmp_path):

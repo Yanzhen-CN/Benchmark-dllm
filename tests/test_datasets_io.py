@@ -154,10 +154,11 @@ def test_load_samples_file_reconstructs_the_sudoku_reference_dataclass(tmp_path)
         '"difficulty": "easy"}}\n',
     )
 
-    samples = load_samples_file(path, "sudoku9")
-    reference = samples[0].reference
-    assert isinstance(reference, SudokuReference)
-    assert reference.difficulty == "easy"
+    for dataset_name in ("sudoku9", "sudoku9_thinking"):
+        samples = load_samples_file(path, dataset_name)
+        reference = samples[0].reference
+        assert isinstance(reference, SudokuReference)
+        assert reference.difficulty == "easy"
 
 
 def test_load_samples_file_reconstructs_instructed_sudoku_reference(tmp_path):
@@ -182,9 +183,9 @@ def test_load_samples_file_reconstructs_sudoku4_reference(tmp_path):
         encoding="utf-8",
     )
 
-    samples = load_samples_file(path, "sudoku4")
-
-    assert isinstance(samples[0].reference, Sudoku4Reference)
+    for dataset_name in ("sudoku4", "sudoku4_thinking"):
+        samples = load_samples_file(path, dataset_name)
+        assert isinstance(samples[0].reference, Sudoku4Reference)
 
 
 @pytest.mark.parametrize(

@@ -159,14 +159,43 @@ def token_grid_geometry(n_positions: int) -> tuple[int, int, int, int]:
     return cols, rows, 54, 31
 
 
+def meaningful_committed_positions(
+    trace: list[TraceStep], step_index: int
+) -> set[int]:
+    """Normalize cumulative backend masks to actual writes/modifications.
+
+    Some persisted DiffusionGemma traces stored the whole accepted mask in
+    ``committed_positions``. An already-accepted, unchanged token is not a new
+    commit and must not inflate revision colors or commit-speed plots.
+    """
+    step = trace[step_index]
+    if step_index == 0:
+        return set(step.committed_positions)
+    previous = trace[step_index - 1]
+    meaningful: set[int] = set()
+    for position in step.committed_positions:
+        if position >= len(step.token_ids):
+            continue
+        previous_accepted = (
+            position < len(previous.position_states)
+            and previous.position_states[position] == PositionState.ACCEPTED
+        )
+        previous_token = (
+            previous.token_ids[position] if position < len(previous.token_ids) else None
+        )
+        if not previous_accepted or previous_token != step.token_ids[position]:
+            meaningful.add(position)
+    return meaningful
+
+
 def compute_running_accept_counts(trace: list[TraceStep]) -> list[dict[int, int]]:
     """Per-step cumulative accept count per position (position i's count
     increments every time it appears in that step's `committed_positions`,
     whether that's its first acceptance or a later revision)."""
     counts: dict[int, int] = {}
     running: list[dict[int, int]] = []
-    for step in trace:
-        for position in step.committed_positions:
+    for step_index, step in enumerate(trace):
+        for position in meaningful_committed_positions(trace, step_index):
             counts[position] = counts.get(position, 0) + 1
         running.append(dict(counts))
     return running
@@ -208,8 +237,10 @@ def render_frame(
     n = n_positions or max(len(item.position_states) for item in trace)
     cols, rows, cell_w, cell_h = token_grid_geometry(n)
 
-    prev_committed = set(trace[step_index - 1].committed_positions) if step_index > 0 else set()
-    committed = set(step.committed_positions)
+    prev_committed = (
+        meaningful_committed_positions(trace, step_index - 1) if step_index > 0 else set()
+    )
+    committed = meaningful_committed_positions(trace, step_index)
     counts = accept_counts_by_step[step_index]
 
     width = 28 + cols * cell_w
@@ -386,7 +417,7 @@ def plot_token_position_forward_heatmap(
 
     rgb = np.zeros((n_steps, n_positions, 3), dtype=np.uint8)
     for t, step in enumerate(trace):
-        committed = set(step.committed_positions)
+        committed = meaningful_committed_positions(trace, t)
         counts = accept_counts_by_step[t]
         for position in range(n_positions):
             state = (

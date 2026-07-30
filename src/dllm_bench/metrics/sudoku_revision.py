@@ -68,7 +68,33 @@ def trace_step_grid(step: TraceStep) -> Grid | None:
 
 
 def trace_parseable_step_count(trace: list[TraceStep]) -> int:
-    return sum(trace_step_grid(step) is not None for step in trace)
+    """Count checkpoints whose Sudoku cell trajectory is unambiguous.
+
+    A native 81-position row-major canvas is mappable even while some cells
+    are still masked: those masks are precisely the visibility information
+    needed by Task 4.2.4.  A free-form/subword canvas, by contrast, is only
+    mappable at checkpoints where its decoded text contains one unambiguous
+    81-digit grid.  Keeping these cases separate prevents an AR trace's lone
+    final answer from being mistaken for full-step Sudoku coverage.
+    """
+
+    count = 0
+    for step in trace:
+        if len(step.position_states) == 81 and step.token_texts is not None:
+            mappable = True
+            for position, state in enumerate(step.position_states):
+                if state == PositionState.MASKED:
+                    continue
+                if position >= len(step.token_texts) or _parse_digit(
+                    step.token_texts[position]
+                ) is None:
+                    mappable = False
+                    break
+            if mappable:
+                count += 1
+        elif _decoded_grid(step) is not None:
+            count += 1
+    return count
 
 
 def _uses_row_major_token_canvas(trace: list[TraceStep]) -> bool:

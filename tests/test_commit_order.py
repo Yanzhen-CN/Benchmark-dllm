@@ -58,13 +58,13 @@ def test_commit_order_tau_windows_perfect_order_gives_tau_one_everywhere():
             assert tau == pytest.approx(1.0)
 
 
-def test_aggregate_commit_order_flattens_across_samples():
+def test_aggregate_commit_order_gives_each_sample_equal_weight():
     per_sample = [
         {4: [1.0, 0.5]},
         {4: [0.0]},
         {8: [-1.0]},
     ]
     summary = aggregate_commit_order(per_sample)
-    assert summary[4].n == 3
-    assert summary[4].mean == pytest.approx((1.0 + 0.5 + 0.0) / 3)
+    assert summary[4].n == 2
+    assert summary[4].mean == pytest.approx(((1.0 + 0.5) / 2 + 0.0) / 2)
     assert summary[8].n == 1

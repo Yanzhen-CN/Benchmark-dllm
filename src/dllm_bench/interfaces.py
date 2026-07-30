@@ -83,7 +83,7 @@ class TimingResult:
     wall_clock_seconds: float
     source: str = "measured"
     """"measured" (our own before/after+sync protocol) or "self_reported"
-    (e.g. W1 API TPS) — must be surfaced separately in reports, never mixed
+    (e.g. W1 API Tps) — must be surfaced separately in reports, never mixed
     into the same column as "measured" numbers (design doc section 5)."""
 
 

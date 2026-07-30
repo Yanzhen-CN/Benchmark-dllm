@@ -19,6 +19,7 @@ import statistics
 import unicodedata
 
 from .base import Dataset, Sample, ScoreResult
+from .answer_region import scored_payload_aux
 from ..interfaces import GenerationResult, RunStatus
 from .remote import ensure_download
 
@@ -269,6 +270,15 @@ class HelloBenchDataset(Dataset):
                         )
         return samples[:n] if n is not None else samples
 
+    def scoring_signature(self) -> dict[str, object]:
+        return {
+            "upstream": "Quehry/HelloBench",
+            "upstream_revision": HELLOBENCH_REVISION,
+            "official_helloeval_used": False,
+            "metric_owner": "dllm-bench judge-free reference diagnostic",
+            "reporting_scope": "case_study_only",
+        }
+
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: HelloBenchReference = sample.reference
         word_count = len(output_text.split())
@@ -286,7 +296,7 @@ class HelloBenchDataset(Dataset):
         score, length_score, repetition_score, segment_score = objective_quality_score(
             length_ratio, rep4, repeated_fraction, issues
         )
-        return ScoreResult(
+        result = ScoreResult(
             primary_score=score,
             aux={
                 "length_compliance_rate": 1.0 if length_ok else 0.0,
@@ -297,11 +307,15 @@ class HelloBenchDataset(Dataset):
                 "objective_repetition_score": repetition_score,
                 "objective_segment_score": segment_score,
                 "repeated_segment_fraction": repeated_fraction,
+                "case_study_only": 1.0,
+                "official_helloeval_compatible": 0.0,
                 **issues.as_metrics(),
             },
             valid=word_count > 0 and not issues.corrupt_text,
             complete=length_ok,
         )
+        result.aux.update(scored_payload_aux(output_text))
+        return result
 
     def aggregate_records(
         self, samples: list[Sample], results: list[ScoreResult]

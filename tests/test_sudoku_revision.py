@@ -31,6 +31,10 @@ def test_first_assignment_is_not_a_revision():
     assert compute_revision_count(trace) == 0
 
 
+def test_masked_row_major_canvas_is_mappable_before_completion():
+    assert trace_parseable_step_count([_step({0: "5"})]) == 1
+
+
 def test_changing_to_a_different_value_counts_as_one_revision():
     trace = [_step({}), _step({0: "5"}), _step({0: "7"})]
     assert compute_revision_count(trace) == 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import local_pipeline
+import run_conversion
 import run_model
 
 
@@ -65,4 +66,34 @@ def test_local_visualization_also_builds_report(capsys):
     assert local_pipeline.main("visualize", ["--dry-run", "-m", "illada"]) == 0
     output = capsys.readouterr().out
     assert "--stage visualize" in output
-    assert "dllm_bench.cli report --output-root output" in output
+    assert "dllm_bench.cli report --output-root output --model illada" in output
+
+
+def test_local_visualization_forwards_report_dataset_filter(capsys):
+    assert local_pipeline.main(
+        "visualize", ["--dry-run", "-m", "qwen3_8b", "-d", "sudoku"]
+    ) == 0
+    output = capsys.readouterr().out
+    assert "report --output-root output --model qwen3_8b --dataset sudoku" in output
+
+
+def test_conversion_entrypoint_accepts_parallel_model_selector(capsys):
+    assert run_conversion.main(
+        [
+            "--dry-run",
+            "-m",
+            "illada",
+            "dreamreasoner",
+            "--base-model",
+            "qwen3_8b",
+            "--base-config",
+            "ar-baseline",
+            "--beta",
+            "40",
+            "--gamma",
+            "25",
+        ]
+    ) == 0
+    output = capsys.readouterr().out
+    assert "--model illada --model dreamreasoner" in output
+    assert "--base-model qwen3_8b" in output

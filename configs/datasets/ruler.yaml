@@ -12,7 +12,14 @@ official_deviations:
   - reduced_three_task_bank
   - explicit_front_middle_back_strata
   - single_shared_4096_input_length
-aux_metrics: [all_answers_match, position_robustness]
+aux_metrics:
+  - all_answers_match
+  - position_robustness
+  - complete_rate
+  - truncated_rate
+  - answer_region_detected_rate
+  - answer_position_token_mapped_rate
+  - answer_start_ratio
 task_types: [niah, multi_hop, aggregation]
 positions: [front, middle, back]
 samples_per_context_window_position: 10

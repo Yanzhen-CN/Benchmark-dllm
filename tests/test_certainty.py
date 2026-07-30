@@ -6,6 +6,7 @@ from dllm_bench.interfaces import PositionState, TraceStep
 from dllm_bench.metrics.certainty import (
     accepted_ratio,
     build_certainty_curve,
+    build_observed_certainty_curve,
     certainty,
     normalized_entropy,
 )
@@ -98,3 +99,12 @@ def test_build_certainty_curve_is_monotonic_in_accepted_ratio_for_well_behaved_t
     curve = build_certainty_curve(trace, final_valid_length=2)
     ratios = [c[0] for c in curve]
     assert ratios == sorted(ratios)
+
+
+def test_observed_certainty_does_not_turn_missing_ar_logits_into_one():
+    trace = [
+        _make_step([PositionState.ACCEPTED, PositionState.MASKED]),
+        _make_step([PositionState.ACCEPTED, PositionState.ACCEPTED]),
+    ]
+    curve = build_observed_certainty_curve(trace, final_valid_length=2)
+    assert curve == [(1.0, 1.0, None)]

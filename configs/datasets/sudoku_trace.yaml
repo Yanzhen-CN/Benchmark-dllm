@@ -4,11 +4,11 @@
 # intermediate diffusion canvases for cell-revision analysis.
 dataset: sudoku_trace
 dataset_class: dllm_bench.datasets.sudoku9.SudokuTraceDataset
-primary_metric: extracted_solution_constraint_accuracy
+primary_metric: complete_reference_sequence_accuracy
 aux_metrics:
   - reference_exact_match
-  - official_exact_match_accuracy
-  - official_format_valid
+  - strict_reference_exact_match
+  - strict_81_digit_format_rate
   - direct_answer_instruction_following_rate
   - exact_solve_rate
   - blank_cell_accuracy
