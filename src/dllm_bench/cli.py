@@ -44,7 +44,7 @@ from pathlib import Path
 import click
 
 from .hf_cache import configure_default_cache_dir
-from .interfaces import GenerationRequest
+from .interfaces import GenerationRequest, ModelAdapter
 from .registry import (
     build_dataset,
     build_model_adapter,
@@ -248,6 +248,7 @@ def generate(
     require_all_metrics: bool,
     resume: bool,
     force_max_new_tokens: bool = False,
+    adapter_cache: dict[tuple[str, str], ModelAdapter] | None = None,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset_settings = load_yaml(dataset_config)
@@ -264,7 +265,12 @@ def generate(
     click.echo(f"Sweeping variants {variant_list} of {model_config} on {dataset.name} ({len(samples)} samples)")
     invalid_variant_errors: list[str] = []
     for v in variant_list:
-        adapter = build_model_adapter(model_config, variant=v)
+        adapter_key = (str(Path(model_config).resolve()), v)
+        adapter = adapter_cache.get(adapter_key) if adapter_cache is not None else None
+        if adapter is None:
+            adapter = build_model_adapter(model_config, variant=v)
+            if adapter_cache is not None:
+                adapter_cache[adapter_key] = adapter
         out_dir = model_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
         meta_path = out_dir / "_meta.json"
         if (
@@ -718,6 +724,7 @@ def matrix_command(
     click.echo(f"Matrix contains {len(jobs)} model x dataset jobs")
     valid_jobs = 0
     invalid_jobs = 0
+    adapter_cache: dict[tuple[str, str], ModelAdapter] = {}
     for index, job in enumerate(jobs, start=1):
         selected_variants = job.variants
         if variant_names:
@@ -761,6 +768,7 @@ def matrix_command(
                     force_max_new_tokens=max_new_tokens is not None,
                     measure_compute=measure_compute,
                     require_all_metrics=require_all_metrics, resume=resume,
+                    adapter_cache=adapter_cache,
                 )
             if stage in {"score", "all"}:
                 ctx.invoke(score, **common, resume=resume)
