@@ -287,7 +287,9 @@ unverifiable revision and verifies CUDA plus the `qwen3_dflash` runtime module.
 During server startup, the main terminal periodically mirrors the latest vLLM
 status and prints the persistent `data/logs/gemma_dflash_vllm.log` path. Run
 `python run_prepare.py -m gemma_dflash --skip-data` before generation so target
-and draft downloads are complete before the GPU-loading phase.
+and draft downloads are complete before the GPU-loading phase. The generation
+stage resolves both checkpoints and the tokenizer from that prepared cache in
+offline mode, avoiding slow Hub metadata checks while an A100 is allocated.
 other dependency conflict remains fatal.
 
 The temporary DFlash vLLM build currently provides a CUDA 12.9 precompiled

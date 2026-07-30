@@ -35,6 +35,60 @@ def test_prometheus_parser_accepts_total_suffix_and_labels():
     assert parsed["vllm:spec_decode_num_accepted_tokens"] == 12
 
 
+def test_managed_vllm_server_forces_offline_model_resolution(
+    monkeypatch, tmp_path
+):
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["environment"] = kwargs["env"]
+        return FakeProcess()
+
+    class HealthyResponse:
+        ok = True
+
+    monkeypatch.setattr(gemma_dflash.subprocess, "Popen", fake_popen)
+    monkeypatch.setitem(
+        gemma_dflash.sys.modules,
+        "requests",
+        SimpleNamespace(
+            get=lambda *args, **kwargs: HealthyResponse(),
+            RequestException=Exception,
+        ),
+    )
+    monkeypatch.setattr(gemma_dflash, "data_root", lambda: tmp_path)
+    monkeypatch.setattr(gemma_dflash.sys, "executable", str(tmp_path / "python"))
+    executable = tmp_path / (
+        "vllm.exe" if gemma_dflash.os.name == "nt" else "vllm"
+    )
+    executable.touch()
+
+    server = gemma_dflash._ManagedVLLMServer()
+    try:
+        server.ensure(
+            target="target",
+            draft="draft",
+            host="127.0.0.1",
+            port=8000,
+            startup_timeout_seconds=1,
+            num_speculative_tokens=15,
+            max_model_len=16384,
+            max_num_batched_tokens=32768,
+            gpu_memory_utilization=0.9,
+        )
+    finally:
+        server._process = None
+        server.close()
+
+    assert captured["environment"]["HF_HUB_OFFLINE"] == "1"
+    assert captured["environment"]["TRANSFORMERS_OFFLINE"] == "1"
+
+
 def test_generate_keeps_common_metrics_interface_and_adds_dflash_stats(monkeypatch):
     adapter = gemma_dflash.GemmaDFlashAdapter()
     adapter._base_url = "http://127.0.0.1:8000"

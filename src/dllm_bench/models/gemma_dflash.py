@@ -131,6 +131,11 @@ class _ManagedVLLMServer:
             ]
             environment = os.environ.copy()
             environment.setdefault("PYTHONUNBUFFERED", "1")
+            # Model preparation is a separate, explicit stage. Keep the
+            # expensive GPU deployment deterministic and prevent Hub metadata
+            # requests from stalling vLLM before it creates the engine process.
+            environment["HF_HUB_OFFLINE"] = "1"
+            environment["TRANSFORMERS_OFFLINE"] = "1"
             environment["NO_PROXY"] = ",".join(
                 filter(None, [environment.get("NO_PROXY", ""), "127.0.0.1", "localhost"])
             )
@@ -296,7 +301,10 @@ class GemmaDFlashAdapter:
                 label="Gemma DFlash target + draft via vLLM",
             )
         if self._tokenizer is None:
-            self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self._model_name,
+                local_files_only=True,
+            )
 
     def warm(self) -> None:
         self._ensure_loaded()
