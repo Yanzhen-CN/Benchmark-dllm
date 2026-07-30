@@ -293,6 +293,10 @@ offline mode, avoiding slow Hub metadata checks while an A100 is allocated.
 Because every benchmark request is text-only, the server also runs with
 `--language-model-only`; this skips Gemma 4's unused image/video encoder cache
 and multimodal startup profiling without changing text generation.
+The environment includes the `ninja` executable required by FlashInfer's
+first-start sampling-kernel JIT, and older DFlash environments repair that
+small dependency in place. Cold-start timeout is one hour so persistent-volume
+checkpoint reads and the initial JIT cannot be mistaken for a failed server.
 other dependency conflict remains fatal.
 
 The temporary DFlash vLLM build currently provides a CUDA 12.9 precompiled

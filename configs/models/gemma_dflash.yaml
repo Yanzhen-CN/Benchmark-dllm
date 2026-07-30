@@ -13,5 +13,6 @@ configs:
       max_model_len: 16384
       max_num_batched_tokens: 32768
       gpu_memory_utilization: 0.90
+      startup_timeout_seconds: 3600
       enable_thinking: false
       require_spec_metrics: true

@@ -18,6 +18,7 @@ def test_config_builds_parallel_adapter_without_starting_server():
     assert adapter.supports_trace is False
     assert adapter._model_name == "google/gemma-4-26B-A4B-it"
     assert adapter._draft_model_name == "z-lab/gemma-4-26B-A4B-it-DFlash"
+    assert adapter._startup_timeout_seconds == 3600
 
 
 def test_prometheus_parser_accepts_total_suffix_and_labels():
@@ -87,6 +88,9 @@ def test_managed_vllm_server_forces_offline_model_resolution(
 
     assert captured["environment"]["HF_HUB_OFFLINE"] == "1"
     assert captured["environment"]["TRANSFORMERS_OFFLINE"] == "1"
+    assert captured["environment"]["PATH"].split(gemma_dflash.os.pathsep)[0] == str(
+        executable.parent
+    )
     assert "--language-model-only" in captured["command"]
 
 

@@ -163,13 +163,60 @@ def test_gemma_dflash_uses_its_own_vllm_environment():
         profile.transformers_version
         == _model_script.PROFILES["gemma"].transformers_version
     )
-    assert profile.required_distributions == ("vllm", "transformers", "torch")
+    assert profile.required_distributions == (
+        "vllm",
+        "transformers",
+        "torch",
+        "ninja",
+    )
     assert "8cb2db16072cebbb944564f84f21045a90151ad1" in profile.setup_requirements[0]
+    assert profile.setup_requirements[1] == "ninja>=1.11"
     assert profile.cuda_runtime == "12.9"
     assert profile.minimum_driver_version == "575.51.03"
     assert profile.uv_torch_backend == "cu129"
     assert profile.precompiled_wheel_variant == "cu129"
     assert profile.precompiled_wheel_commit == "84f7a55340601ddc77b850025ea1ca03f6b1fd82"
+
+
+def test_existing_gemma_dflash_environment_repairs_missing_ninja_in_place(
+    monkeypatch, tmp_path
+):
+    profile = _model_script.PROFILES["gemma_dflash"]
+    model_venv = tmp_path / "gemma-dflash"
+    python = _model_script.venv_python(model_venv)
+    python.parent.mkdir(parents=True)
+    python.touch()
+    commands = []
+    ninja_installed = False
+
+    def installed_version(_python, distribution):
+        if distribution == "ninja":
+            return "1.11" if ninja_installed else None
+        return "installed"
+
+    def capture_run(command, **kwargs):
+        nonlocal ninja_installed
+        commands.append(command)
+        if command[-1] == "ninja>=1.11":
+            ninja_installed = True
+
+    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setattr(
+        _model_script,
+        "_installed_distribution_version",
+        installed_version,
+    )
+    monkeypatch.setattr(
+        _model_script, "_profile_version_mismatches", lambda *args: {}
+    )
+    monkeypatch.setattr(
+        _model_script, "run", capture_run
+    )
+
+    assert _model_script.ensure_environment(profile, "cu124") == python
+    assert commands == [
+        [python, "-m", "pip", "install", "--upgrade", "ninja>=1.11"]
+    ]
 
 
 def test_installation_environment_keeps_large_build_files_under_data_root(

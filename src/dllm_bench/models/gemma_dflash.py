@@ -137,6 +137,9 @@ class _ManagedVLLMServer:
             # requests from stalling vLLM before it creates the engine process.
             environment["HF_HUB_OFFLINE"] = "1"
             environment["TRANSFORMERS_OFFLINE"] = "1"
+            environment["PATH"] = os.pathsep.join(
+                [str(executable.parent), environment.get("PATH", "")]
+            )
             environment["NO_PROXY"] = ",".join(
                 filter(None, [environment.get("NO_PROXY", ""), "127.0.0.1", "localhost"])
             )
@@ -241,7 +244,7 @@ class GemmaDFlashAdapter:
         gpu_memory_utilization: float = 0.90,
         server_host: str = "127.0.0.1",
         server_port: int = 8000,
-        startup_timeout_seconds: float = 1800.0,
+        startup_timeout_seconds: float = 3600.0,
         request_timeout_seconds: float = 7200.0,
         require_spec_metrics: bool = True,
         enable_thinking: bool = False,

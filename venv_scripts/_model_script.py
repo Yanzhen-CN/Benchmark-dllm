@@ -76,8 +76,9 @@ PROFILES: Mapping[str, ModelProfile] = {
         transformers_version="5.14.1",
         setup_requirements=(
             "vllm @ git+https://github.com/vllm-project/vllm.git@8cb2db16072cebbb944564f84f21045a90151ad1",
+            "ninja>=1.11",
         ),
-        required_distributions=("vllm", "transformers", "torch"),
+        required_distributions=("vllm", "transformers", "torch", "ninja"),
         cuda_runtime="12.9",
         minimum_driver_version="575.51.03",
         uv_torch_backend="cu129",
@@ -469,6 +470,19 @@ def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
     python = venv_python(venv_dir(profile))
     if not python.is_file():
         return setup_environment(profile, cuda_index)
+
+    if (
+        profile.model_id == "gemma_dflash"
+        and _installed_distribution_version(python, "ninja") is None
+    ):
+        # FlashInfer JIT-compiles its sampling extension during the first vLLM
+        # startup. Repair older DFlash venvs in place instead of reinstalling
+        # the heavyweight CUDA/Torch/vLLM stack just to add this small tool.
+        print("Installing missing Gemma DFlash JIT tool: ninja", flush=True)
+        run(
+            [python, "-m", "pip", "install", "--upgrade", "ninja>=1.11"],
+            env=installation_environment(),
+        )
 
     missing = [
         distribution
