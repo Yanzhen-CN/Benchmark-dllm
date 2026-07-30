@@ -76,9 +76,9 @@ models:
 
 datasets:
   - config: configs/datasets/gsm8k.yaml
-    max_new_tokens: 256
+    max_new_tokens: 512
   - config: configs/datasets/mbpp.yaml
-    max_new_tokens: 256
+    max_new_tokens: 512
   - config: configs/datasets/structeval_t.yaml
     # Structured payloads frequently exceed the former 256-token cap. Use a
     # uniform 512-token first-pass cap; 1024 is reserved for a sensitivity
