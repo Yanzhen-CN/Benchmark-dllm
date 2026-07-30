@@ -81,6 +81,13 @@ def test_managed_vllm_server_forces_offline_model_resolution(
         "vllm.exe" if gemma_dflash.os.name == "nt" else "vllm"
     )
     executable.touch()
+    ninja = tmp_path / "ninja"
+    ninja.touch()
+    monkeypatch.setattr(
+        gemma_dflash.shutil,
+        "which",
+        lambda *args, **kwargs: str(ninja),
+    )
 
     server = gemma_dflash._ManagedVLLMServer()
     try:
@@ -102,13 +109,13 @@ def test_managed_vllm_server_forces_offline_model_resolution(
     assert captured["environment"]["HF_HUB_OFFLINE"] == "1"
     assert captured["environment"]["TRANSFORMERS_OFFLINE"] == "1"
     assert captured["environment"]["VLLM_CACHE_ROOT"] == str(
-        tmp_path / "runtime-cache" / "vllm"
+        tmp_path / "runtime-cache" / "gemma_dflash" / "vllm"
     )
     assert captured["environment"]["FLASHINFER_WORKSPACE_BASE"] == str(
-        tmp_path / "runtime-cache"
+        tmp_path / "runtime-cache" / "gemma_dflash"
     )
     assert captured["environment"]["TORCH_EXTENSIONS_DIR"] == str(
-        tmp_path / "runtime-cache" / "torch-extensions"
+        tmp_path / "runtime-cache" / "gemma_dflash" / "torch-extensions"
     )
     assert captured["environment"]["PATH"].split(gemma_dflash.os.pathsep)[0] == str(
         executable.parent

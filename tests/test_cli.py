@@ -3,8 +3,11 @@ mock adapter, using Click's test runner (no subprocess needed)."""
 
 from __future__ import annotations
 
+import io
 import json
 import random
+import re
+import time
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -123,10 +126,37 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert (output_root / "report" / "gsm8k" / "task4_commit_tau_windows.png").exists()
 
 
-def test_generate_uses_persistent_sample_progress_lines(tmp_path):
+def test_generate_uses_sample_progress_bar_on_interactive_terminal(
+    tmp_path, monkeypatch
+):
+    class InteractiveStream(io.StringIO):
+        def isatty(self):
+            return True
+
+    terminal = InteractiveStream()
+    monkeypatch.setattr(
+        cli_module.click,
+        "get_text_stream",
+        lambda name: terminal if name == "stdout" else io.StringIO(),
+    )
+    real_run_generation = cli_module.run_generation
+
+    def slow_run_generation(*args, **kwargs):
+        real_progress = kwargs["progress"]
+
+        def slow_progress(event, *progress_args):
+            real_progress(event, *progress_args)
+            if event == "start":
+                time.sleep(0.12)
+
+        kwargs["progress"] = slow_progress
+        return real_run_generation(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "run_generation", slow_run_generation)
+    monkeypatch.setattr(cli_module, "_SAMPLE_PROGRESS_HEARTBEAT_SECONDS", 0.005)
     runner = CliRunner()
 
-    result = _run(runner, [
+    _run(runner, [
         "generate",
         "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
         "--variant", "default",
@@ -135,11 +165,15 @@ def test_generate_uses_persistent_sample_progress_lines(tmp_path):
         "--output-root", str(tmp_path / "output"),
     ])
 
-    assert "[default] [1/2] gsm8k-demo-0: generating ..." in result.output
-    assert "[default] [1/2] gsm8k-demo-0: success" in result.output
-    assert "[default] [2/2] gsm8k-demo-1: generating ..." in result.output
-    assert "[default] [2/2] gsm8k-demo-1: success" in result.output
-    assert "\r" not in result.output
+    rendered = terminal.getvalue()
+    assert "[default] gsm8k" in rendered
+    assert "2/2" in rendered
+    assert "gsm8k-demo-1" in rendered
+    elapsed_updates = [
+        float(value) for value in re.findall(r"(\d+\.\d+)s elapsed", rendered)
+    ]
+    assert elapsed_updates
+    assert max(elapsed_updates) > 0
 
 
 def test_long_task_warmup_uses_short_prompt_without_formal_context_budget(
@@ -466,7 +500,7 @@ def test_matrix_reports_missing_score_job_and_continues_later_jobs(
 
     assert result.exit_code == 0, result.output
     assert "skipping this test and continuing" in result.output
-    assert "invalid/incomplete/missing test(s) excluded" in result.output
+    assert "0 invalid test(s), 1 incomplete test(s) excluded" in result.output
     assert calls == [str(gsm8k_config), str(mbpp_config)]
 
 

@@ -237,4 +237,3 @@ def write_pairwise_outputs(
     )
     plot_pairwise(row, metadata, plot_path)
     return [table_path, csv_path, metadata_path, plot_path]
-

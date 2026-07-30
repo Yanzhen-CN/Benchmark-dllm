@@ -60,4 +60,3 @@ def test_formal_answer_start_aggregate_uses_token_ratio_not_char_fallback():
     assert summary["answer_position_token_mapped_rate"] == pytest.approx(0.5)
     assert summary["answer_start_ratio_mean"] == pytest.approx(0.25)
     assert summary["answer_start_ratio_iqr"] == pytest.approx(0.0)
-

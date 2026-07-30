@@ -80,4 +80,3 @@ def test_pairwise_cli_writes_each_model_in_an_independent_directory(tmp_path):
         assert (leaf / "pairwise.txt").exists()
         assert (leaf / "metadata.json").exists()
         assert (leaf / "pairwise.png").exists()
-
