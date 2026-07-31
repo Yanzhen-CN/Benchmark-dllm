@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
 *.egg-info/
 build/
 dist/
@@ -12,7 +19,14 @@ venv/
 # generate/score/visualize pipeline output (model_output/score_output/visualization_output)
 output/
 artifacts/
+model_output/
+score_output/
+visualization_output/
+temp_visualizaion/
+temp_visualization/
 .tmp_*/
+tmp/
+temp/
 *.png
 *.gif
 
@@ -30,3 +44,18 @@ artifacts/
 .pip_cache/
 .pytest*/
 .test-tmp/
+
+# Local experiment and process logs.
+logs/
+wandb/
+runs/
+nohup.out
+*.log
+*.pid
+
+# Notebook, editor, and operating-system metadata.
+.ipynb_checkpoints/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
