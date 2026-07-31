@@ -1,0 +1,27 @@
+sample_id: sudoku4-d1-0182
+final_score: 0.0
+output:
+We need to solve a 4x4 Sudoku (also known as "Sudoku of order 4" or "Mini Sudoku"). Input string: "2301000332004002". Let's parse: 16 characters.
+
+Rows 1-4, each row 4 digits.
+
+Row1: 2 3 0 1
+Row2: 0 0 3 3
+Row3: 2 0 0 4
+Row4: 0 0 4 0 2? Wait need to split correctly.
+
+Let's write string: characters: 2 3 0 1 0 0 3 3 2 0 0 4 0 0 4 0 2? Actually there are 16 characters. Let's count: given string "2301000332004002". Let's index:
+
+1:2
+2:3
+3:0
+4:1
+5:0
+6:0
+7:3
+8:3
+9:2
+10:0
+11:0
+12:4
+13

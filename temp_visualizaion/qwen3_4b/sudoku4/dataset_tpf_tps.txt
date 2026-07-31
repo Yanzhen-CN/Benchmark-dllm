@@ -1,0 +1,2 @@
+Model | Mean TPF (token/forward) | Tps (token/s)
+qwen3_4b / ar-baseline | 1 | 46.5792

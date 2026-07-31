@@ -1,0 +1,482 @@
+{
+  "dataset": "ruler",
+  "model": "gemma",
+  "config": "ar-baseline",
+  "selected_samples": 30,
+  "trace_samples": 30,
+  "trace_coverage_rate": 1.0,
+  "mean_tpf": {
+    "mean": 1.0,
+    "median": 1.0,
+    "iqr_low": 1.0,
+    "iqr_high": 1.0,
+    "ci_low": 1.0,
+    "ci_high": 1.0,
+    "n": 30
+  },
+  "peak_tpf": {
+    "mean": 1.0,
+    "median": 1.0,
+    "iqr_low": 1.0,
+    "iqr_high": 1.0,
+    "ci_low": 1.0,
+    "ci_high": 1.0,
+    "n": 30
+  },
+  "parallelism_signature": {
+    "peak_to_mean_tpf": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 30
+    },
+    "active_forward_ratio": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 30
+    },
+    "busiest_10pct_finalization_share": {
+      "mean": 0.1280904280904281,
+      "median": 0.125,
+      "iqr_low": 0.10980902777777778,
+      "iqr_high": 0.14285714285714285,
+      "ci_low": 0.12264364252645503,
+      "ci_high": 0.13378055104617606,
+      "n": 30
+    }
+  },
+  "final_stable_progress": {
+    "p50": {
+      "mean": 0.5,
+      "median": 0.5,
+      "iqr_low": 0.5,
+      "iqr_high": 0.5,
+      "ci_low": 0.5,
+      "ci_high": 0.5,
+      "n": 30
+    },
+    "p90": {
+      "mean": 0.9,
+      "median": 0.9,
+      "iqr_low": 0.8999999999999999,
+      "iqr_high": 0.9000000000000001,
+      "ci_low": 0.9,
+      "ci_high": 0.9000000000000001,
+      "n": 30
+    },
+    "p99": {
+      "mean": 0.99,
+      "median": 0.99,
+      "iqr_low": 0.9899999999999999,
+      "iqr_high": 0.99,
+      "ci_low": 0.99,
+      "ci_high": 0.99,
+      "n": 30
+    }
+  },
+  "update_geometry": {
+    "mean_finalization_run_length": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 30
+    },
+    "mean_finalization_run_count": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 30
+    },
+    "mean_finalization_span_density": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 30
+    }
+  },
+  "tps": 10.895291129015117,
+  "tpf_tps": {
+    "mean_tpf": 1.0,
+    "tps": 10.895291129015117
+  },
+  "finalization_share": {
+    "early": {
+      "mean": 0.35187590187590184,
+      "median": 0.35714285714285715,
+      "iqr_low": 0.328125,
+      "iqr_high": 0.375,
+      "ci_low": 0.3447238568722944,
+      "ci_high": 0.3588293650793651,
+      "n": 30
+    },
+    "middle": {
+      "mean": 0.2905663780663781,
+      "median": 0.2857142857142857,
+      "iqr_low": 0.25,
+      "iqr_high": 0.328125,
+      "ci_low": 0.27946321473665225,
+      "ci_high": 0.3018005388708514,
+      "n": 30
+    },
+    "late": {
+      "mean": 0.3575577200577201,
+      "median": 0.35714285714285715,
+      "iqr_low": 0.34375,
+      "iqr_high": 0.375,
+      "ci_low": 0.3529446248196248,
+      "ci_high": 0.3622213203463203,
+      "n": 30
+    }
+  },
+  "commit_order_tau": {
+    "4": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 30
+    },
+    "8": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 29
+    },
+    "16": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 10
+    },
+    "32": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 8
+    },
+    "64": {
+      "mean": 1.0,
+      "median": 1.0,
+      "iqr_low": 1.0,
+      "iqr_high": 1.0,
+      "ci_low": 1.0,
+      "ci_high": 1.0,
+      "n": 8
+    }
+  },
+  "certainty_observation": {
+    "entropy_step_rate": 0.0,
+    "top1_step_rate": 0.0,
+    "entropy_position_coverage": 0.0,
+    "top1_position_coverage": 0.0,
+    "curve_sample_rate": 0.0,
+    "top1_curve_sample_rate": 0.0,
+    "entropy_scope": "unavailable",
+    "top1_scope": "unavailable",
+    "scope": "unavailable"
+  },
+  "confidence_dynamics": {
+    "observable_sample_rate": 0.0,
+    "backslide_step_rate": null,
+    "mean_backslide_magnitude_per_transition": null,
+    "mean_total_variation_per_transition": null,
+    "net_certainty_gain": null,
+    "comparison_note": "Direct comparison requires matching entropy scope/coverage; active-subset curves remain model-local diagnostics."
+  },
+  "draft_volatility": {
+    "revised_position_share": {
+      "mean": 0.0,
+      "median": 0.0,
+      "iqr_low": 0.0,
+      "iqr_high": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 30
+    },
+    "mean_revisions_per_position": {
+      "mean": 0.0,
+      "median": 0.0,
+      "iqr_low": 0.0,
+      "iqr_high": 0.0,
+      "ci_low": 0.0,
+      "ci_high": 0.0,
+      "n": 30
+    }
+  },
+  "visible_draft_correction": {
+    "observable_sample_rate": 0.0,
+    "observation_status": "commitment_only_trace",
+    "comparison_note": "N/A for MASKED-to-ACCEPTED commitment-only traces; zero must not be reported as a correction result."
+  },
+  "curves": {
+    "tpf": [
+      {
+        "bin_center": 0.025,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 30
+        }
+      },
+      {
+        "bin_center": 0.075,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.125,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 19
+        }
+      },
+      {
+        "bin_center": 0.175,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.225,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 21
+        }
+      },
+      {
+        "bin_center": 0.275,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 19
+        }
+      },
+      {
+        "bin_center": 0.325,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 19
+        }
+      },
+      {
+        "bin_center": 0.375,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.425,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.475,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.525,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.575,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 19
+        }
+      },
+      {
+        "bin_center": 0.625,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 21
+        }
+      },
+      {
+        "bin_center": 0.675,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 19
+        }
+      },
+      {
+        "bin_center": 0.725,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 19
+        }
+      },
+      {
+        "bin_center": 0.775,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.825,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 21
+        }
+      },
+      {
+        "bin_center": 0.875,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 19
+        }
+      },
+      {
+        "bin_center": 0.925,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 20
+        }
+      },
+      {
+        "bin_center": 0.975,
+        "stats": {
+          "mean": 1.0,
+          "median": 1.0,
+          "iqr_low": 1.0,
+          "iqr_high": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 30
+        }
+      }
+    ]
+  }
+}

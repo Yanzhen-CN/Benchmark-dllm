@@ -1,0 +1,43 @@
+sample_id: gsm8k-test-0057
+final_score: 1.0
+output:
+We are given the following:
+
+- The **bridge can carry no more than 5000 pounds**.
+- The **empty truck and driver weigh 3755 pounds**.
+- Each **box weighs 15 pounds**.
+- We need to find the **maximum number of boxes** that can be loaded onto the truck **without exceeding the bridge's weight limit**.
+
+---
+
+### Step 1: Find the remaining weight capacity of the bridge
+
+$$
+\text{Bridge capacity} = 5000 \text{ pounds}
+$$
+$$
+\text{Weight of truck and driver} = 3755 \text{ pounds}
+$$
+$$
+\text{Remaining weight capacity} = 5000 - 3755 = 1245 \text{ pounds}
+$$
+
+---
+
+### Step 2: Find how many boxes can be loaded
+
+Each box weighs 15 pounds.
+
+$$
+\text{Number of boxes} = \frac{1245}{15} = 83
+$$
+
+---
+
+### Final Answer:
+
+$$
+\boxed{83}
+$$
+
+So, the **maximum number of boxes** that can be loaded onto the truck is **83**.

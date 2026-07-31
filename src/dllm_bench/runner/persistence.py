@@ -34,6 +34,88 @@ from ..interfaces import (
 from .orchestrator import RunSummary
 
 
+_LEGACY_EOS_TOKEN_TEXTS = frozenset(
+    {
+        "<[EOS]>",
+        "</s>",
+        "<|eos|>",
+        "<|eot_id|>",
+        "<|endoftext|>",
+        "<|im_end|>",
+    }
+)
+
+
+def _legacy_trace_eos_position(trace: list[TraceStep]) -> int | None:
+    """Recover EOS from old artifacts whose ``output_text`` hid it."""
+    if not trace or not trace[-1].token_texts:
+        return None
+    for position, token_text in enumerate(trace[-1].token_texts or []):
+        if token_text.strip() in _LEGACY_EOS_TOKEN_TEXTS:
+            return position
+    return None
+
+
+def _truncate_trace_step(step: TraceStep, valid_length: int) -> TraceStep:
+    limit = min(valid_length, len(step.token_ids))
+    token_texts = (
+        step.token_texts[:limit] if step.token_texts is not None else None
+    )
+    return TraceStep(
+        forward_index=step.forward_index,
+        token_ids=step.token_ids[:limit],
+        position_states=step.position_states[:limit],
+        committed_positions=[
+            position
+            for position in step.committed_positions
+            if position < valid_length
+        ],
+        decoded_text=(
+            "".join(token_texts)
+            if token_texts is not None
+            else step.decoded_text
+        ),
+        entropy_by_position=(
+            {
+                position: value
+                for position, value in step.entropy_by_position.items()
+                if int(position) < valid_length
+            }
+            if step.entropy_by_position is not None
+            else None
+        ),
+        top1_confidence_by_position=(
+            {
+                position: value
+                for position, value in step.top1_confidence_by_position.items()
+                if int(position) < valid_length
+            }
+            if step.top1_confidence_by_position is not None
+            else None
+        ),
+        token_texts=token_texts,
+    )
+
+
+def _recover_legacy_eos_boundary(
+    generation: GenerationResult,
+) -> GenerationResult:
+    position = _legacy_trace_eos_position(generation.trace)
+    if position is None:
+        return generation
+    final_token_texts = generation.trace[-1].token_texts or []
+    generation.output_text = "".join(final_token_texts[:position])
+    generation.final_valid_length = position
+    generation.trace = [
+        _truncate_trace_step(step, position) for step in generation.trace
+    ]
+    generation.extra = dict(generation.extra)
+    generation.extra.setdefault("stop_reason", "eos")
+    generation.extra.setdefault("stop_position", position)
+    generation.extra.setdefault("eos_boundary_recovered_from_trace", True)
+    return generation
+
+
 def _to_jsonable(obj: Any, include_trace: bool) -> Any:
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         result = {}
@@ -146,7 +228,7 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         for step in data.get("trace", [])
     ]
     timing = TimingResult(**data["timing"]) if data.get("timing") else None
-    return GenerationResult(
+    generation = GenerationResult(
         request=request,
         output_text=data["output_text"],
         status=RunStatus(data["status"]),
@@ -160,6 +242,7 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         error_message=data.get("error_message"),
         extra=data.get("extra", {}),
     )
+    return _recover_legacy_eos_boundary(generation)
 
 
 def save_generation_result(generation: GenerationResult, path: str | Path) -> None:

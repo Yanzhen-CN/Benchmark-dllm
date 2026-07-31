@@ -1,0 +1,31 @@
+sample_id: mbpp-sanitized-0455
+final_score: 1.0
+output:
+Sure! Here's the Python function to check whether a given month number (1-12) has 31 days:
+
+```python
+def check_monthnumb_number(month):
+    # List of months and the number of days they have
+    month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    
+    # Check if the month is between 1 and 12
+    if month < 1 or month > 12:
+        return False  # Invalid month number
+    
+    # Check if the month has 31 days
+    return month_days[month - 1] == 31
+```
+
+### Explanation:
+- The `month_days` list contains the number of days for each month (index 0 is January, index 1 is February, etc.).
+- If the input `month` is not between 1 and 12, the function returns `False`.
+- Otherwise, it checks if the month has 31 days and returns the result.
+
+### Test Cases:
+```python
+assert check_monthnumb_number(5) == True   # May has 31 days
+assert check_monthnumb_number(2) == False  # February has 28 days
+assert check_monthnumb_number(6) == False  # June has 30 days
+```
+
+This function should work correctly for all valid month numbers.

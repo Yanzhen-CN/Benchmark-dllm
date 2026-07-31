@@ -109,6 +109,13 @@ wall-clock interval, energy, peak VRAM, optional compute replay, forward-pass
 count, final valid length, adapter extras, and trace. Trace collection occurs
 after each timed forward boundary; serialization is outside the generation
 timing denominator. HelloBench disables trace through its dataset policy.
+Diffusion adapters define valid output as the token prefix before the first
+checkpoint EOS token. Incremental iLLaDA VarGen finishes the active block and
+then skips all later blocks, matching the upstream `var_generate` stop
+boundary. Legacy traced artifacts whose `output_text` was decoded with special
+tokens hidden are recovered from the final trace's token-level EOS marker at
+load time; the recovered prefix and valid token length participate in score
+fingerprints, summaries, and visualization.
 
 ## 4. Scoring contract
 

@@ -7,7 +7,13 @@ from __future__ import annotations
 import pytest
 
 from dllm_bench.datasets.base import ScoreResult
-from dllm_bench.interfaces import GenerationRequest
+from dllm_bench.interfaces import (
+    GenerationRequest,
+    GenerationResult,
+    PositionState,
+    RunStatus,
+    TraceStep,
+)
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.runner.persistence import (
     generation_result_from_dict,
@@ -67,6 +73,43 @@ def test_generation_result_with_no_trace_round_trips():
     generation.trace = []
     restored = generation_result_from_dict(generation_result_to_dict(generation))
     assert restored.trace == []
+
+
+def test_legacy_generation_recovers_first_eos_from_trace(tmp_path):
+    original = GenerationResult(
+        request=GenerationRequest(prompt="p", max_new_tokens=3),
+        output_text="answerjunk",
+        status=RunStatus.SUCCESS,
+        final_valid_length=3,
+        trace=[
+            TraceStep(
+                forward_index=0,
+                token_ids=[10, 11, 12],
+                position_states=[
+                    PositionState.ACCEPTED,
+                    PositionState.ACCEPTED,
+                    PositionState.ACCEPTED,
+                ],
+                committed_positions=[0, 1, 2],
+                decoded_text="answer<[EOS]>junk",
+                entropy_by_position={"0": 0.1, "2": 0.3},
+                top1_confidence_by_position={"0": 0.9, "2": 0.7},
+                token_texts=["answer", "<[EOS]>", "junk"],
+            )
+        ],
+    )
+    path = tmp_path / "legacy-eos.json"
+    save_generation_result(original, path)
+
+    restored = load_generation_result(path)
+
+    assert restored.output_text == "answer"
+    assert restored.final_valid_length == 1
+    assert restored.trace[-1].token_ids == [10]
+    assert restored.trace[-1].entropy_by_position == {"0": 0.1}
+    assert restored.trace[-1].top1_confidence_by_position == {"0": 0.9}
+    assert restored.extra["stop_reason"] == "eos"
+    assert restored.extra["eos_boundary_recovered_from_trace"] is True
 
 
 def test_score_result_round_trips_through_dict():

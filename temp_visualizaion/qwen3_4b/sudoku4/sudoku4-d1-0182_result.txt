@@ -1,0 +1,33 @@
+sample_id: sudoku4-d1-0182
+final_score: 0.0
+output:
+Let's solve the 4x4 Sudoku puzzle step by step.
+
+Given puzzle:
+```
+2 3 0 1 0 0 0 3 3 2 0 0 4 0 0 2
+```
+
+We'll represent it as a 4x4 grid:
+
+```
+Row 1: 2 3 0 1
+Row 2: 0 0 0 3
+Row 3: 3 2 0 0
+Row 4: 4 0 0 2
+```
+
+We need to fill in the 0s with digits 1-4 such that each row, column, and 2x2 subgrid contains all digits 1-4 exactly once.
+
+Let's solve it step by step.
+
+### Step 1: Analyze Row 1
+Row 1: 2 3 0 1  
+Missing: 4  
+So, Row 1, Column 3 = 4
+
+Row 1 becomes: 2 3 4 1
+
+### Step 2: Analyze Row 2
+Row 2: 0 0 0 3  
+Missing: 1, 2,

@@ -1,0 +1,4 @@
+sample_id: ruler-niah-4160-006
+final_score: 1.0
+output:
+R700832336208

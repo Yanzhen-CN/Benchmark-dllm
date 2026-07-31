@@ -1,0 +1,2 @@
+Model | Mean TPF (token/forward) | Tps (token/s)
+dreamreasoner / p2 | 2.84444 | 93.7059

@@ -31,6 +31,36 @@ from .device_transfer import move_model_to_device
 from .model_cache import get_or_load
 
 
+def first_eos_position(tokenizer, token_ids: list[int]) -> tuple[int, int] | None:
+    """Return ``(position, token_id)`` for the first checkpoint EOS token."""
+    configured = getattr(tokenizer, "eos_token_id", None)
+    if configured is None:
+        return None
+    if isinstance(configured, int):
+        eos_ids = {configured}
+    else:
+        try:
+            eos_ids = {int(token_id) for token_id in configured}
+        except TypeError:
+            eos_ids = {int(configured)}
+    for position, token_id in enumerate(token_ids):
+        if int(token_id) in eos_ids:
+            return position, int(token_id)
+    return None
+
+
+def decode_generated_ids_until_eos(
+    tokenizer, token_ids: list[int]
+) -> tuple[str, int, int | None]:
+    """Decode only the valid prefix before the first EOS token."""
+    stop = first_eos_position(tokenizer, token_ids)
+    valid_length = stop[0] if stop is not None else len(token_ids)
+    output_text = tokenizer.decode(
+        token_ids[:valid_length], skip_special_tokens=True
+    )
+    return output_text, valid_length, stop[1] if stop is not None else None
+
+
 @dataclass
 class DiffusionStepConfig:
     """Appendix D planned-parallelism knobs. ``gen_length``/``steps``/``block_length``/
@@ -155,6 +185,7 @@ class HFDiffusionAdapter(BaseModelAdapter):
             extra=extra,
         )
         self._last_input_tokens = None
+        self._last_stop_metadata: dict[str, object] = {}
         output_text, trace, final_valid_length = self._run_denoising(
             request.prompt,
             step_config,
@@ -172,6 +203,7 @@ class HFDiffusionAdapter(BaseModelAdapter):
             result_extra["trace_source"] = trace_source
         if self.sampling_profile is not None:
             result_extra["sampling_profile"] = self.sampling_profile
+        result_extra.update(self._last_stop_metadata)
         return GenerationResult(
             request=request,
             output_text=output_text,

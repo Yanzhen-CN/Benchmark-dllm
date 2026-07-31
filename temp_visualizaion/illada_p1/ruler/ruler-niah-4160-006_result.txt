@@ -1,0 +1,10 @@
+sample_id: ruler-niah-4160-006
+final_score: None
+output:
+<think>
+Got it, let's tackle this problem. First, I need to remember the access code structure. Let's break down the problem step by step.
+
+First, let's list the rules clearly:
+
+1. Rule 1: If input is 0, then output is 1.
+

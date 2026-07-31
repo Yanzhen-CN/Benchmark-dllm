@@ -27,7 +27,11 @@ from __future__ import annotations
 import math
 
 from ..interfaces import PositionState, TraceStep
-from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
+from .hf_diffusion import (
+    DiffusionStepConfig,
+    HFDiffusionAdapter,
+    decode_generated_ids_until_eos,
+)
 from .prompting import tokenize_instruction_prompt
 
 MASK_ID = 5
@@ -138,8 +142,16 @@ class IlladaAdapter(HFDiffusionAdapter):
         self._stop_measurement()
         self._last_num_forward_passes = global_step
         final_ids = x[0, prompt_len : prompt_len + gen_length].tolist()
-        output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
-        return output_text, trace, len(final_ids)
+        output_text, final_valid_length, eos_token_id = (
+            decode_generated_ids_until_eos(self._tokenizer, final_ids)
+        )
+        if eos_token_id is not None:
+            self._last_stop_metadata = {
+                "stop_reason": "eos",
+                "stop_token_id": eos_token_id,
+                "stop_position": final_valid_length,
+            }
+        return output_text, trace, final_valid_length
 
 
 def _add_gumbel_noise(logits, temperature: float):

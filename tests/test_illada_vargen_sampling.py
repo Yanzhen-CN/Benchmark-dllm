@@ -36,11 +36,16 @@ class _LengthAwareModel:
 
 
 class _FakeTokenizer:
+    eos_token_id = 9
+
     def __call__(self, text, return_tensors="pt"):
         return {"input_ids": torch.tensor([[1, 2]])}
 
     def decode(self, ids, skip_special_tokens=False):
-        return "".join(f"<{token_id}>" for token_id in ids)
+        return "".join(
+            "<[EOS]>" if token_id == self.eos_token_id else f"<{token_id}>"
+            for token_id in ids
+        )
 
 
 def _adapter(*, gen_length=4, block_length=2, steps_per_block=2):
@@ -110,3 +115,32 @@ def test_vargen_rejects_remasking_modes_not_supported_by_official_sampler():
 
     with pytest.raises(NotImplementedError, match="unknown"):
         adapter._run_denoising("prompt", adapter._step_config)
+
+
+def test_vargen_stops_after_the_first_block_containing_eos():
+    adapter, model = _adapter(
+        gen_length=4, block_length=2, steps_per_block=2
+    )
+
+    def eos_forward(x, attention_mask=None):
+        assert attention_mask is None
+        model.call_lengths.append(int(x.shape[1]))
+        logits = torch.zeros(1, x.shape[1], VOCAB_SIZE)
+        logits[:, 2:, _FakeTokenizer.eos_token_id] = 10.0
+
+        class _Output:
+            pass
+
+        output = _Output()
+        output.logits = logits
+        return output
+
+    adapter._model = eos_forward
+    output_text, trace, final_valid_length = adapter._run_denoising(
+        "prompt", adapter._step_config
+    )
+
+    assert model.call_lengths == [4, 4]
+    assert output_text == ""
+    assert final_valid_length == 0
+    assert len(trace) == 2

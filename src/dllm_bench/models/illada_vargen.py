@@ -12,7 +12,12 @@ from __future__ import annotations
 import math
 
 from ..interfaces import PositionState, TraceStep
-from .hf_diffusion import DiffusionStepConfig, HFDiffusionAdapter
+from .hf_diffusion import (
+    DiffusionStepConfig,
+    HFDiffusionAdapter,
+    decode_generated_ids_until_eos,
+    first_eos_position,
+)
 from .illada import (
     MASK_DISPLAY,
     MASK_ID,
@@ -145,12 +150,27 @@ class IlladaVarGenAdapter(HFDiffusionAdapter):
                 global_step += 1
 
             generated_so_far += active_length
+            generated_ids = x[
+                0, initial_prompt_len : initial_prompt_len + generated_so_far
+            ].tolist()
+            if first_eos_position(self._tokenizer, generated_ids) is not None:
+                # Match official var_generate: finish the active block, then
+                # skip all later blocks once EOS is present.
+                break
 
         self._stop_measurement()
         self._last_num_forward_passes = global_step
-        final_ids = x[0, initial_prompt_len : initial_prompt_len + gen_length].tolist()
-        output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
-        return output_text, trace, len(final_ids)
+        final_ids = x[0, initial_prompt_len:].tolist()
+        output_text, final_valid_length, eos_token_id = (
+            decode_generated_ids_until_eos(self._tokenizer, final_ids)
+        )
+        if eos_token_id is not None:
+            self._last_stop_metadata = {
+                "stop_reason": "eos",
+                "stop_token_id": eos_token_id,
+                "stop_position": final_valid_length,
+            }
+        return output_text, trace, final_valid_length
 
 
 def _build_variable_trace_step(

@@ -1,0 +1,5 @@
+sample_id: sudoku4-d1-0182
+final_score: 0.375
+output:
+thought
+2341423332141342
