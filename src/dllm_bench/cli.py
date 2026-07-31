@@ -880,9 +880,13 @@ def pairwise_report(
 @click.option("--n-samples", default=None, type=int)
 @click.option(
     "--max-new-tokens",
-    default=None,
+    "max_new_tokens_values",
+    multiple=True,
     type=click.IntRange(min=1),
-    help="Temporary override; supersedes matrix and per-sample output limits",
+    help=(
+        "Temporary override; repeat for a same-process length sweep. Multiple "
+        "values write to <output-root>/len<value>/"
+    ),
 )
 @click.option("--output-root", default="output", show_default=True, type=click.Path())
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
@@ -911,7 +915,7 @@ def matrix_command(
     stage: str,
     demo: bool,
     n_samples: int | None,
-    max_new_tokens: int | None,
+    max_new_tokens_values: tuple[int, ...],
     output_root: str,
     measure_compute: bool,
     require_all_metrics: bool,
@@ -938,7 +942,16 @@ def matrix_command(
     invalid_jobs = 0
     incomplete_jobs = 0
     adapter_cache: dict[tuple[str, str], ModelAdapter] = {}
-    for index, job in enumerate(jobs, start=1):
+    length_overrides = tuple(dict.fromkeys(max_new_tokens_values))
+    length_cases: tuple[int | None, ...] = length_overrides or (None,)
+    split_output_by_length = len(length_overrides) > 1
+    run_cases = [
+        (length_override, job)
+        for length_override in length_cases
+        for job in jobs
+    ]
+    valid_output_roots: set[str] = set()
+    for index, (length_override, job) in enumerate(run_cases, start=1):
         selected_variants = job.variants
         if variant_names:
             requested_variants = tuple(
@@ -959,31 +972,44 @@ def matrix_command(
             selected_variants = requested_variants
         variants = ",".join(selected_variants)
         samples_file = str(job.samples_file) if job.samples_file else None
+        case_output_root = (
+            str(Path(output_root) / f"len{length_override}")
+            if split_output_by_length
+            else output_root
+        )
         common = dict(
             model_config=str(job.model_config), variant=None, variants=variants,
             dataset_config=str(job.dataset_config), demo=demo,
             samples_file=samples_file,
             n_samples=n_samples if n_samples is not None else job.n_samples,
             seed=seed,
-            output_root=output_root,
+            output_root=case_output_root,
             hellobench_lengths=(
                 hellobench_lengths or job.hellobench_lengths
                 if job.dataset_config.stem == "hellobench"
                 else ()
             ),
         )
-        click.echo(f"[{index}/{len(jobs)}] {job.model_config.name} x {job.dataset_config.name}")
+        length_label = (
+            f" [max_new_tokens={length_override}]"
+            if length_override is not None
+            else ""
+        )
+        click.echo(
+            f"[{index}/{len(run_cases)}] {job.model_config.name} x "
+            f"{job.dataset_config.name}{length_label}"
+        )
         try:
             if stage in {"generate", "all"}:
                 ctx.invoke(
                     generate,
                     **common,
                     max_new_tokens=(
-                        max_new_tokens
-                        if max_new_tokens is not None
+                        length_override
+                        if length_override is not None
                         else job.max_new_tokens
                     ),
-                    force_max_new_tokens=max_new_tokens is not None,
+                    force_max_new_tokens=length_override is not None,
                     measure_compute=measure_compute,
                     require_all_metrics=require_all_metrics, resume=resume,
                     adapter_cache=adapter_cache,
@@ -1014,9 +1040,16 @@ def matrix_command(
             )
             continue
         valid_jobs += 1
+        valid_output_roots.add(case_output_root)
     if stage == "all":
         if valid_jobs:
-            ctx.invoke(report, run_paths=(), output_root=output_root, dataset_name=None)
+            for report_root in sorted(valid_output_roots):
+                ctx.invoke(
+                    report,
+                    run_paths=(),
+                    output_root=report_root,
+                    dataset_name=None,
+                )
         else:
             click.echo("WARNING: no valid tests completed; aggregate report skipped", err=True)
     if invalid_jobs or incomplete_jobs:

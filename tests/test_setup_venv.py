@@ -139,6 +139,19 @@ def test_model_run_forwards_temporary_output_length_override(monkeypatch):
     assert arguments[index + 1] == "512"
 
 
+def test_model_run_forwards_each_output_length_override(monkeypatch):
+    monkeypatch.setenv("MAX_NEW_TOKENS", "1024,2048")
+    arguments = _model_script.benchmark_arguments(
+        _model_script.PROFILES["illada_vargen"]
+    )
+
+    assert arguments.count("--max-new-tokens") == 2
+    first = arguments.index("--max-new-tokens")
+    second = arguments.index("--max-new-tokens", first + 1)
+    assert arguments[first + 1] == "1024"
+    assert arguments[second + 1] == "2048"
+
+
 def test_dreamreasoner_matches_checkpoint_transformers_version():
     assert _model_script.PROFILES["dreamreasoner"].transformers_version == "5.7.0"
 

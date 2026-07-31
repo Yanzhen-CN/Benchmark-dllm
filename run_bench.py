@@ -121,11 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-max",
         "--max-new-tokens",
+        action="extend",
+        nargs="+",
         type=int,
-        default=None,
+        default=[],
         help=(
-            "Temporary generation-length override for every selected dataset; "
-            "takes precedence over matrix and per-sample defaults"
+            "One or more temporary generation-length overrides for every "
+            "selected dataset. Multiple values run in one model process and "
+            "write under <output-root>/len<value>/"
         ),
     )
     parser.add_argument(
@@ -217,10 +220,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     env_updates["DLLM_BENCH_ENABLE_REASONING"] = (
         "1" if args.enable_reasoning else "0"
     )
-    if args.max_new_tokens is not None:
-        if args.max_new_tokens <= 0:
+    max_new_tokens = list(dict.fromkeys(args.max_new_tokens))
+    if max_new_tokens:
+        if any(value <= 0 for value in max_new_tokens):
             raise SystemExit("--max-new-tokens must be greater than zero")
-        env_updates["MAX_NEW_TOKENS"] = str(args.max_new_tokens)
+        env_updates["MAX_NEW_TOKENS"] = ",".join(
+            str(value) for value in max_new_tokens
+        )
     if args.hellobench_length:
         env_updates["HELLOBENCH_LENGTHS"] = ",".join(args.hellobench_length)
     selected_variants = (

@@ -261,6 +261,27 @@ python run_model.py -m illada dreamreasoner -d ruler hellobench
 python run_score.py -m illada dreamreasoner -d ruler hellobench
 ```
 
+Length probes can sweep several output budgets inside one model process, so
+the model environment and loaded adapter are reused:
+
+```bash
+python run_model.py -m illada_vargen \
+  -d gsm8k mbpp structeval_t \
+  -v p1 p2 p4 p8 \
+  -max 1024 2048 \
+  --n-samples 1 --no-resume \
+  --output-root output/length_probe
+
+python run_score.py -m illada_vargen \
+  -d gsm8k mbpp structeval_t \
+  -v p1 p2 p4 p8 \
+  -max 1024 2048 \
+  --output-root output/length_probe
+```
+
+With multiple values, artifacts are isolated under `len1024/`, `len2048/`,
+and so on. A single `-max` value keeps the legacy output layout.
+
 `run_visualization.py -m/-d` forwards the same selection to the final raw
 report, so unselected or unfinished models are not pulled in merely because an
 older `summary.json` exists. The raw report writes only measured values:
@@ -303,9 +324,9 @@ IDs, prompts/output budgets, dataset revisions, measurement boundaries, or
 unmeasured timing. It also excludes HelloBench and the RULER context probe from
 conversion.
 
-Use `--no-resume` only when intentionally replacing a generation row. A
-temporary `--max-new-tokens` diagnostic must use a separate `--output-root` so
-it cannot be mixed with formal output.
+Use `--no-resume` only when intentionally replacing a generation row. Keep
+temporary length diagnostics under a separate `--output-root`; multi-length
+runs additionally isolate each budget in their own `len<tokens>/` directory.
 
 ## 8. Verification
 

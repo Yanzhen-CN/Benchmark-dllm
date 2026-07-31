@@ -62,6 +62,30 @@ def test_local_score_forwards_sudoku_group_to_shared_matrix_filter(capsys):
     assert "--dataset sudoku" in output
 
 
+def test_local_score_forwards_length_and_variant_sweeps(capsys):
+    assert local_pipeline.main(
+        "score",
+        [
+            "--dry-run",
+            "-m",
+            "illada_vargen",
+            "-d",
+            "gsm8k",
+            "-max",
+            "1024",
+            "2048",
+            "-v",
+            "p1",
+            "p2",
+            "p4",
+            "p8",
+        ],
+    ) == 0
+    output = capsys.readouterr().out
+    assert "--max-new-tokens 1024 --max-new-tokens 2048" in output
+    assert "--variants p1,p2,p4,p8" in output
+
+
 def test_local_visualization_also_builds_report(capsys):
     assert local_pipeline.main("visualize", ["--dry-run", "-m", "illada"]) == 0
     output = capsys.readouterr().out

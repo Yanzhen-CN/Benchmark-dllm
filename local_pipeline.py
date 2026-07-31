@@ -37,6 +37,26 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
     data.add_argument("--real-data", dest="real_data", action="store_true")
     parser.set_defaults(real_data=True)
     parser.add_argument("--n-samples", type=int, default=None)
+    parser.add_argument(
+        "-max",
+        "--max-new-tokens",
+        action="extend",
+        nargs="+",
+        type=int,
+        default=[],
+        help=(
+            "One or more generation lengths. Multiple values read matching "
+            "<output-root>/len<value>/ trees."
+        ),
+    )
+    parser.add_argument(
+        "-v",
+        "--variant",
+        action="extend",
+        nargs="+",
+        default=[],
+        help="Variant subset; space-separate or repeat, e.g. -v p1 p2 p4 p8",
+    )
     parser.add_argument("--output-root", default="output")
     if stage == "score":
         resume = parser.add_mutually_exclusive_group()
@@ -74,6 +94,17 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
         models = normalize_model_names(args.model, matrix_model_names(matrix_path))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    max_new_tokens = list(dict.fromkeys(args.max_new_tokens))
+    if any(value <= 0 for value in max_new_tokens):
+        raise SystemExit("--max-new-tokens must be greater than zero")
+    selected_variants = ",".join(
+        dict.fromkeys(
+            part.strip()
+            for value in args.variant
+            for part in value.split(",")
+            if part.strip()
+        )
+    )
 
     print(f"Matrix: {matrix_path}")
     print(f"Local stage: {stage}")
@@ -102,6 +133,10 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             command.append("--resume" if args.resume else "--no-resume")
         if args.n_samples is not None:
             command.extend(["--n-samples", str(args.n_samples)])
+        for length in max_new_tokens:
+            command.extend(["--max-new-tokens", str(length)])
+        if selected_variants:
+            command.extend(["--variants", selected_variants])
         for value in args.dataset:
             for dataset_name in value.split(","):
                 if dataset_name.strip():
@@ -111,17 +146,23 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             subprocess.run(command, cwd=PROJECT_ROOT, check=True)
 
     if stage == "visualize":
-        report_command = [
-            sys.executable, "-m", "dllm_bench.cli", "report",
-            "--output-root", args.output_root,
-        ]
-        for model in models:
-            report_command.extend(["--model", model])
-        for value in args.dataset:
-            for dataset_name in value.split(","):
-                if dataset_name.strip():
-                    report_command.extend(["--dataset", dataset_name.strip()])
-        print(f"Report: {' '.join(report_command)}", flush=True)
-        if not args.dry_run:
-            subprocess.run(report_command, cwd=PROJECT_ROOT, check=True)
+        report_roots = (
+            [str(Path(args.output_root) / f"len{length}") for length in max_new_tokens]
+            if len(max_new_tokens) > 1
+            else [args.output_root]
+        )
+        for report_root in report_roots:
+            report_command = [
+                sys.executable, "-m", "dllm_bench.cli", "report",
+                "--output-root", report_root,
+            ]
+            for model in models:
+                report_command.extend(["--model", model])
+            for value in args.dataset:
+                for dataset_name in value.split(","):
+                    if dataset_name.strip():
+                        report_command.extend(["--dataset", dataset_name.strip()])
+            print(f"Report: {' '.join(report_command)}", flush=True)
+            if not args.dry_run:
+                subprocess.run(report_command, cwd=PROJECT_ROOT, check=True)
     return 0

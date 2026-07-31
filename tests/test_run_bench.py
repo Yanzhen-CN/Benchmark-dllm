@@ -117,6 +117,21 @@ def test_temporary_output_length_override_is_forwarded(monkeypatch):
     assert captured["env_updates"]["MAX_NEW_TOKENS"] == "512"
 
 
+def test_multiple_output_lengths_are_forwarded_as_one_sweep(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
+
+    assert run_bench.main([
+        "-m", "illada_vargen", "-d", "gsm8k",
+        "-max", "1024", "2048",
+    ]) == 0
+    assert captured["env_updates"]["MAX_NEW_TOKENS"] == "1024,2048"
+
+
 def test_variant_and_variants_are_mutually_exclusive():
     with pytest.raises(SystemExit):
         run_bench.main([

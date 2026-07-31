@@ -604,6 +604,58 @@ def test_matrix_output_length_override_has_highest_priority(tmp_path, monkeypatc
     assert captured == [(512, True)]
 
 
+def test_matrix_multiple_output_lengths_share_process_and_split_output(
+    tmp_path, monkeypatch
+):
+    runner = CliRunner()
+    model_config = CONFIGS_DIR / "models" / "mock.yaml"
+    dataset_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
+    experiment_config = tmp_path / "experiment.yaml"
+    experiment_config.write_text(
+        "seed: 42\n"
+        "models:\n"
+        f"  - name: mock\n    config: {model_config}\n"
+        "    variants: [default]\n"
+        "datasets:\n"
+        f"  - config: {dataset_config}\n    max_new_tokens: 16\n"
+    )
+    captured = []
+
+    def fake_generate(**kwargs):
+        captured.append(
+            (
+                kwargs["max_new_tokens"],
+                kwargs["force_max_new_tokens"],
+                kwargs["output_root"],
+                id(kwargs["adapter_cache"]),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "generate", fake_generate)
+    output_root = tmp_path / "output"
+    result = runner.invoke(
+        main,
+        [
+            "matrix", "--experiment-config", str(experiment_config),
+            "--model", "mock", "--stage", "generate", "--demo",
+            "--max-new-tokens", "1024",
+            "--max-new-tokens", "2048",
+            "--output-root", str(output_root),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [(row[0], row[1]) for row in captured] == [
+        (1024, True),
+        (2048, True),
+    ]
+    assert [Path(row[2]) for row in captured] == [
+        output_root / "len1024",
+        output_root / "len2048",
+    ]
+    assert len({row[3] for row in captured}) == 1
+
+
 def test_matrix_still_aborts_on_a_non_oom_failure(tmp_path, monkeypatch):
     """Only an OOM-shaped failure is swallowed per-job — anything else is
     a real bug likely to affect every job, so it must still abort loudly."""
