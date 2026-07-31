@@ -19,10 +19,17 @@
 #
 # DiffusionGemma is excluded from the P1/P2/P4/P8 fixed-block framework
 # because it is a large-model reference rather than a same-scale comparison.
-# Its one `official` variant uses the checkpoint's shipped Entropy Bound
-# sampler and Google's recommended maximum of 48 denoising steps per canvas.
+# The `official` variant uses the checkpoint's shipped Entropy Bound sampler
+# and Google's recommended maximum of 48 denoising steps per canvas.
 # The checkpoint generation config supplies temperature 0.8 -> 0.4, entropy
 # bound 0.1, confidence 0.005, and stability threshold 1.
+#
+# Seven one-factor-at-a-time research variants keep the official 48-step cap:
+# - SC2/SC05/SC0 scale the gated-MLP self-conditioning branch.
+# - EB2/EB05 set entropy_bound to 0.2/0.05 around the official 0.1.
+# - Lg2/Lg05 scale previous-step self-conditioning logits before softmax.
+# Together with `official`, these are eight unique operating points. The
+# official point is intentionally not duplicated inside each ablation family.
 # The adapter does not override `disable_compile`; cache/compile behavior is
 # left to the upstream generation config. The official `tokens_per_forward`
 # output is persisted, and post-EOS pads are excluded from valid length/trace.
@@ -34,3 +41,45 @@ configs:
     init_kwargs:
       model_name_or_path: google/diffusiongemma-26B-A4B-it
       steps: 48
+  SC2:
+    adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: 48
+      self_conditioning_scale: 2.0
+  SC05:
+    adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: 48
+      self_conditioning_scale: 0.5
+  SC0:
+    adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: 48
+      self_conditioning_scale: 0.0
+  EB2:
+    adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: 48
+      entropy_bound: 0.2
+  EB05:
+    adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: 48
+      entropy_bound: 0.05
+  Lg2:
+    adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: 48
+      self_conditioning_logit_scale: 2.0
+  Lg05:
+    adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter
+    init_kwargs:
+      model_name_or_path: google/diffusiongemma-26B-A4B-it
+      steps: 48
+      self_conditioning_logit_scale: 0.5

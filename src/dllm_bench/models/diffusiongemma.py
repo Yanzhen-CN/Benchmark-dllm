@@ -28,6 +28,7 @@ in a ``finally`` block so this never leaks past one `generate()` call.
 
 from __future__ import annotations
 
+import copy
 import math
 
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
@@ -49,7 +50,16 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         device: str | None = None,
         config_name: str = "official",
         steps: int | None = DEFAULT_MAX_DENOISING_STEPS,
+        entropy_bound: float | None = None,
+        self_conditioning_scale: float = 1.0,
+        self_conditioning_logit_scale: float = 1.0,
     ) -> None:
+        if entropy_bound is not None and entropy_bound <= 0:
+            raise ValueError("entropy_bound must be positive")
+        if self_conditioning_scale < 0:
+            raise ValueError("self_conditioning_scale must be non-negative")
+        if self_conditioning_logit_scale <= 0:
+            raise ValueError("self_conditioning_logit_scale must be positive")
         self.name = "diffusiongemma"
         self.config_name = config_name
         self.supports_trace = True
@@ -57,6 +67,9 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         self._model_name = model_name_or_path
         self._device = device
         self._default_steps = steps
+        self._entropy_bound = entropy_bound
+        self._self_conditioning_scale = float(self_conditioning_scale)
+        self._self_conditioning_logit_scale = float(self_conditioning_logit_scale)
         self._inference_dtype = "bfloat16"
         self._model = None
         self._processor = None
@@ -76,6 +89,7 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             return self._load_model_and_processor(device)
 
         self._processor, self._model = get_or_load(self._model_name, device, _load)
+        self._install_ablation_hooks()
 
     def _load_model_and_processor(self, device: str):
         from transformers import AutoProcessor, DiffusionGemmaForBlockDiffusion
@@ -88,12 +102,90 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         model.eval()
         return processor, model
 
+    def _install_ablation_hooks(self) -> None:
+        """Install shared no-op-by-default hooks before any decoder compile.
+
+        Models are cached across variants, so hooks are installed exactly once
+        on the shared decoder. Python scalar guards keep the official path free
+        of tensor multiplications while allowing a later variant to trigger a
+        recompile with its requested intervention.
+        """
+        decoder = self._model.model.decoder
+        if getattr(decoder, "_dllm_bench_dg_ablation_hooks", False):
+            return
+
+        decoder._dllm_bench_sc_scale = 1.0
+        decoder._dllm_bench_sc_logit_scale = 1.0
+
+        def scale_self_conditioning_logits(module, args, kwargs):
+            logits = kwargs.get("self_conditioning_logits")
+            scale = float(module._dllm_bench_sc_logit_scale)
+            if logits is None or scale == 1.0:
+                return None
+            scaled_kwargs = dict(kwargs)
+            scaled_kwargs["self_conditioning_logits"] = logits * scale
+            return args, scaled_kwargs
+
+        def scale_self_conditioning_branch(module, args, output):
+            scale = float(decoder._dllm_bench_sc_scale)
+            if scale == 1.0:
+                return output
+            return output * scale
+
+        decoder.register_forward_pre_hook(
+            scale_self_conditioning_logits,
+            with_kwargs=True,
+        )
+        decoder.self_conditioning.down_proj.register_forward_hook(
+            scale_self_conditioning_branch
+        )
+        decoder._dllm_bench_dg_ablation_hooks = True
+
+    def _set_ablation_scales(self) -> None:
+        decoder = self._model.model.decoder
+        decoder._dllm_bench_sc_scale = self._self_conditioning_scale
+        decoder._dllm_bench_sc_logit_scale = self._self_conditioning_logit_scale
+
+    def _sampler_config_override(self):
+        if self._entropy_bound is None:
+            return None
+        generation_config = getattr(self._model, "generation_config", None)
+        official_sampler_config = getattr(generation_config, "sampler_config", None)
+        if official_sampler_config is None:
+            from transformers.models.diffusion_gemma.generation_diffusion_gemma import (
+                EntropyBoundSamplerConfig,
+            )
+
+            return EntropyBoundSamplerConfig(entropy_bound=float(self._entropy_bound))
+        sampler_config = copy.deepcopy(official_sampler_config)
+        sampler_config.entropy_bound = float(self._entropy_bound)
+        return sampler_config
+
+    def _effective_entropy_bound(self) -> float | None:
+        if self._entropy_bound is not None:
+            return float(self._entropy_bound)
+        generation_config = getattr(self._model, "generation_config", None)
+        sampler_config = getattr(generation_config, "sampler_config", None)
+        value = getattr(sampler_config, "entropy_bound", None)
+        return None if value is None else float(value)
+
+    def _ablation_axis(self) -> str:
+        if self._entropy_bound is not None:
+            return "entropy_bound"
+        if self._self_conditioning_scale != 1.0:
+            return "self_conditioning_signal"
+        if self._self_conditioning_logit_scale != 1.0:
+            return "self_conditioning_logit_sharpness"
+        return "official"
+
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         self._ensure_loaded()
         import torch
 
         gen_length = request.max_new_tokens
         steps = request.config.get("steps", self._default_steps) or DEFAULT_MAX_DENOISING_STEPS
+        self._set_ablation_scales()
+        sampler_config_override = self._sampler_config_override()
 
         captured_steps: list[dict] = []
         forward_count = 0
@@ -142,12 +234,16 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             )
             prompt_len = encoded["input_ids"].shape[1]
             self._start_measurement()
+            generation_overrides = {}
+            if sampler_config_override is not None:
+                generation_overrides["sampler_config"] = sampler_config_override
             with torch.inference_mode():
                 output = self._model.generate(
                     **encoded,
                     max_new_tokens=gen_length,
                     max_denoising_steps=steps,
                     return_dict_in_generate=True,
+                    **generation_overrides,
                 )
             self._stop_measurement()
         finally:
@@ -188,6 +284,11 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             extra={
                 "input_tokens": int(prompt_len),
                 "official_tokens_per_forward": official_tokens_per_forward,
+                "max_denoising_steps": int(steps),
+                "entropy_bound": self._effective_entropy_bound(),
+                "self_conditioning_scale": self._self_conditioning_scale,
+                "self_conditioning_logit_scale": self._self_conditioning_logit_scale,
+                "dg_ablation_axis": self._ablation_axis(),
             },
         )
 
