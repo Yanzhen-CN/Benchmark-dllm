@@ -57,7 +57,7 @@ class QwenARAdapter(BaseModelAdapter):
 
         # Shared across every config that points at this same checkpoint —
         # Each Qwen checkpoint has one config today, but this keeps the pattern
-        # consistent with the diffusion adapters, which do have Best/Fast.
+        # consistent with the diffusion adapters, which have P1/P2/P4/P8.
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)
 
     def _load_model_and_tokenizer(self, device: str):

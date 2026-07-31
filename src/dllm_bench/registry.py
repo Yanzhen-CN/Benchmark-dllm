@@ -54,7 +54,7 @@ def _import_from_string(dotted_path: str) -> Any:
 
 
 def list_model_variants(config_path: str | Path) -> list[str]:
-    """The named configs (e.g. `best`/`fast`) a model config file declares."""
+    """The named configs (e.g. `p1`/`p2`) a model config file declares."""
     config = load_yaml(config_path)
     return list(config["configs"].keys())
 
@@ -82,7 +82,7 @@ def build_model_adapter(config_path: str | Path, variant: str | None = None) -> 
     """Builds the `ModelAdapter` for one named config inside a model's YAML.
 
     Every `configs/models/*.yaml` file is one model with one or more named
-    configs nested under `configs:` (e.g. `illada.yaml`'s `best`/`fast`).
+    configs nested under `configs:` (e.g. `illada.yaml`'s `p1`/`p2`).
     `variant` picks which one; it can be omitted only when the file declares
     exactly one (e.g. `qwen3_4b.yaml`'s single `ar-baseline`).
     """

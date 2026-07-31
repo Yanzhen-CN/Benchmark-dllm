@@ -112,7 +112,7 @@ class ModelAdapter(Protocol):
     """Contract every model backend must satisfy.
 
     ``name``/``config_name`` identify the model+config pair for reports (e.g.
-    "illada" / "best"). ``supports_trace`` and ``natively_measures_resources``
+    "illada" / "p1"). ``supports_trace`` and ``natively_measures_resources``
     let the orchestrator and report layer know which Part 3/4 analyses are
     even possible for this backend (see design doc section 5's per-model
     table and Appendix D.3 for the W1 caveats).

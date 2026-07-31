@@ -1,6 +1,6 @@
 """Verifies HF adapters route model loading through the shared cache.
 through `models.model_cache` — i.e. that constructing a second adapter for
-the same checkpoint (e.g. iLLaDA's `best` and `fast`) does not call
+the same checkpoint (e.g. iLLaDA's `p1` and `p2`) does not call
 `from_pretrained` a second time. Uses monkeypatched `transformers` entry
 points so this doesn't need real weights or a GPU.
 """
@@ -67,18 +67,18 @@ def _install_counting_fakes(monkeypatch, *auto_classes, tokenizer_class=None):
     return tokenizer_calls, model_calls
 
 
-def test_illada_best_and_fast_share_one_load(monkeypatch):
+def test_illada_p1_and_p2_share_one_load(monkeypatch):
     tokenizer_calls, model_calls = _install_counting_fakes(monkeypatch, transformers.AutoModel)
 
     best = IlladaAdapter(
         "shared-illada-checkpoint",
         DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
+        config_name="p1",
     )
     fast = IlladaAdapter(
         "shared-illada-checkpoint",
         DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=16),
-        config_name="fast",
+        config_name="p2",
     )
 
     best._ensure_loaded()
@@ -111,19 +111,19 @@ def test_illada_different_checkpoints_load_independently(monkeypatch):
     assert a._model is not b._model
 
 
-def test_illada_vargen_best_and_fast_share_one_load(monkeypatch):
+def test_illada_vargen_p1_and_p2_share_one_load(monkeypatch):
     tokenizer_calls, model_calls = _install_counting_fakes(
         monkeypatch, transformers.AutoModel
     )
     best = IlladaVarGenAdapter(
         "shared-vargen-checkpoint",
         DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
+        config_name="p1",
     )
     fast = IlladaVarGenAdapter(
         "shared-vargen-checkpoint",
         DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=16),
-        config_name="fast",
+        config_name="p2",
     )
 
     best._ensure_loaded()
@@ -141,7 +141,7 @@ def test_dreamreasoner_loads_in_checkpoint_native_bfloat16(monkeypatch):
     adapter = DreamReasonerAdapter(
         "dreamreasoner-checkpoint",
         DiffusionStepConfig(gen_length=64, block_length=32, steps_per_block=32),
-        config_name="best",
+        config_name="p1",
     )
 
     adapter._ensure_loaded()

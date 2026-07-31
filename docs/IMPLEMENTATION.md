@@ -17,6 +17,13 @@ tree, not under `docs/`.
   device, or execute a forward pass.
 - `run_model.py`: server-side generation only. It dispatches each model to its
   own script in `venv_scripts/` and writes immutable generation JSON.
+- `run_check.py`: read-only artifact audit under `.venvs/root`. It accepts the
+  same `-m/-d/--matrix/--output-root` selection style and checks selected sample
+  IDs/counts, per-sample generation ceilings and seeds, status, required
+  timing/energy/VRAM/compute fields, trace policy, OOM invalidation, scoring
+  completeness, and visualization presence against the current YAML matrix.
+  Capacity diagnostics are informational by default and become required only
+  when explicitly selected or when `--require-diagnostics` is passed.
 - `run_score.py`: local CPU scoring from transferred generation JSON. It does
   not load model weights.
 - `run_visualization.py`: local figures and reports derived from generation and
@@ -37,6 +44,14 @@ environments are created by the preparation/run entry point before use.
   fields, sample-bank size, and deterministic seed.
 - `configs/experiments/full_matrix.yaml`: selected models/variants/datasets,
   per-model sample-count overrides, and generation ceilings.
+
+iLLaDA, iLLaDA VarGen, and DreamReasoner use `p1`, `p2`, `p4`, and `p8`,
+where the suffix is the planned token commits per denoising step for a
+32-token block. The formal matrix defaults to `p1,p2`; explicit `-v` selection
+may request future P4/P8 frontier runs without changing those defaults.
+`migrate_parallelism_names.py` is the one-time, dry-run-by-default utility for
+renaming historical `best`/`fast` aliases to explicit `p1`/`p2` in existing
+outputs. It refuses existing targets and does not synthesize P4/P8 results.
 
 Current formal ceilings are:
 
@@ -243,7 +258,7 @@ python run_score.py -m illada dreamreasoner -d ruler hellobench
 report, so unselected or unfinished models are not pulled in merely because an
 older `summary.json` exists. The raw report writes only measured values:
 Quality–Tps, Quality–Seconds/Sample, Quality–Energy/Sample, Score per Unit
-Energy, Best-vs-Fast, and answer-region diagnostics. Eps is labelled Average
+Energy, P1-vs-P2, and answer-region diagnostics. Eps is labelled Average
 Power. Chart directories separate different sample-set hashes and reported GPU
 hardware, and every plotted label includes N.
 

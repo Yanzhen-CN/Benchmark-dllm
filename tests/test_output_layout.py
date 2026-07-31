@@ -8,7 +8,7 @@ from dllm_bench.runner.output_layout import (
 def test_qwen_ar_baseline_does_not_repeat_variant_in_run_id():
     assert run_id("qwen3_4b", "ar-baseline") == "qwen3_4b"
     assert run_id("qwen3_8b", "ar-baseline") == "qwen3_8b"
-    assert run_id("illada", "best") == "illada_best"
+    assert run_id("illada", "p1") == "illada_p1"
 
 
 def test_qwen_model_output_uses_unsuffixed_canonical_directory(tmp_path):
@@ -20,7 +20,7 @@ def test_qwen_model_output_uses_unsuffixed_canonical_directory(tmp_path):
 
 
 def test_dllm_architecture_and_sampling_axes_are_both_in_the_run_id():
-    assert run_id("illada", "best") == "illada_best"
+    assert run_id("illada", "p1") == "illada_p1"
 
 
 def test_dflash_generation_and_scoring_use_the_same_run_directory(tmp_path):

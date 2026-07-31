@@ -1,4 +1,4 @@
-"""model_cache.get_or_load: the mechanism that lets Best/Fast (same
+"""model_cache.get_or_load: the mechanism that lets P1/P2 (same
 checkpoint, different generation config) share one in-memory model instead
 of loading it twice — plus BaseModelAdapter.warm()'s hook into it."""
 

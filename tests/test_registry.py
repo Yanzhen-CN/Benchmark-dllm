@@ -3,7 +3,7 @@ configs/datasets/*.yaml must actually build, dataset_kwargs must reach the
 Dataset constructor, and env-var placeholders must expand.
 
 Every model config file is one model with one or more named `configs:`
-variants (e.g. `illada.yaml`'s `best`/`fast`) — see registry.py's
+variants (e.g. `illada.yaml`'s `p1`/`p2`/`p4`/`p8`) — see registry.py's
 `build_model_adapter(path, variant=...)`.
 """
 
@@ -107,45 +107,49 @@ def test_env_placeholder_left_as_is_when_unset(monkeypatch):
 
 
 def test_illada_variants_carry_distinct_steps_per_block():
-    best = build_model_adapter(
-        CONFIGS_DIR / "models" / "illada.yaml", variant="best"
-    )
-    fast = build_model_adapter(
-        CONFIGS_DIR / "models" / "illada.yaml", variant="fast"
-    )
-    assert best._step_config.steps_per_block == 32
-    assert fast._step_config.steps_per_block == 16
-    assert best.execution_path == "default"
-    assert best.sampling_profile is None
+    adapters = {
+        variant: build_model_adapter(
+            CONFIGS_DIR / "models" / "illada.yaml", variant=variant
+        )
+        for variant in ("p1", "p2", "p4", "p8")
+    }
+    assert {
+        variant: adapter._step_config.steps_per_block
+        for variant, adapter in adapters.items()
+    } == {"p1": 32, "p2": 16, "p4": 8, "p8": 4}
+    assert adapters["p1"].execution_path == "default"
+    assert adapters["p1"].sampling_profile is None
 
 
 def test_illada_vargen_changes_only_the_canvas_execution_path():
-    best = build_model_adapter(
-        CONFIGS_DIR / "models" / "illada_vargen.yaml", variant="best"
+    p1 = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada_vargen.yaml", variant="p1"
     )
-    fast = build_model_adapter(
-        CONFIGS_DIR / "models" / "illada_vargen.yaml", variant="fast"
+    p2 = build_model_adapter(
+        CONFIGS_DIR / "models" / "illada_vargen.yaml", variant="p2"
     )
 
-    assert best.name == "illada_vargen"
-    assert best.execution_path == "official-var-generate"
-    assert best._step_config.block_length == 32
-    assert best._step_config.steps_per_block == 32
-    assert fast._step_config.steps_per_block == 16
+    assert p1.name == "illada_vargen"
+    assert p1.execution_path == "official-var-generate"
+    assert p1._step_config.block_length == 32
+    assert p1._step_config.steps_per_block == 32
+    assert p2._step_config.steps_per_block == 16
 
 
 def test_dreamreasoner_variants_carry_distinct_steps_per_block():
-    best = build_model_adapter(
-        CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="best"
-    )
-    fast = build_model_adapter(
-        CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant="fast"
-    )
-    assert best._step_config.steps_per_block == 32
-    assert fast._step_config.steps_per_block == 16
-    assert best.execution_path == "default"
-    assert best.sampling_profile is None
-    assert "greedy_confidence_mode" not in best._step_config.extra
+    adapters = {
+        variant: build_model_adapter(
+            CONFIGS_DIR / "models" / "dreamreasoner.yaml", variant=variant
+        )
+        for variant in ("p1", "p2", "p4", "p8")
+    }
+    assert {
+        variant: adapter._step_config.steps_per_block
+        for variant, adapter in adapters.items()
+    } == {"p1": 32, "p2": 16, "p4": 8, "p8": 4}
+    assert adapters["p1"].execution_path == "default"
+    assert adapters["p1"].sampling_profile is None
+    assert "greedy_confidence_mode" not in adapters["p1"]._step_config.extra
 
 
 def test_w1_yaml_declares_all_three_configs():

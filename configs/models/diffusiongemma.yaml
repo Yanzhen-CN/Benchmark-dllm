@@ -17,7 +17,7 @@
 # path. `python prepare_model.py --model-config configs/models/diffusiongemma.yaml`
 # downloads that snapshot ahead of time without loading it into RAM/GPU.
 #
-# DiffusionGemma is excluded from the Best/Fast steps=1024/512 framework
+# DiffusionGemma is excluded from the P1/P2/P4/P8 fixed-block framework
 # because it is a large-model reference rather than a same-scale comparison.
 # Its one `official` variant uses the checkpoint's shipped Entropy Bound
 # sampler and Google's recommended maximum of 48 denoising steps per canvas.

@@ -1,6 +1,6 @@
 """Process-wide cache of loaded ``(tokenizer, model)`` pairs.
 
-Best/Fast variants share one checkpoint and differ only in generation-time
+P1/P2 variants share one checkpoint and differ only in generation-time
 configuration. The cache keeps exactly one normally loaded model per
 ``(checkpoint, device)`` for the lifetime of the process. It deliberately
 does not reload, migrate, or CPU-offload a model after CUDA OOM.

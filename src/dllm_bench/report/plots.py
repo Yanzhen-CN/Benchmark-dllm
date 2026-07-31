@@ -57,28 +57,28 @@ def plot_score_per_unit(
     plt.close(fig)
 
 
-def plot_best_vs_fast(rows: list[dict[str, Any]], metric_key: str, out_path: str) -> None:
+def plot_p1_vs_p2(rows: list[dict[str, Any]], metric_key: str, out_path: str) -> None:
     by_model: dict[str, dict[str, float]] = {}
     for row in rows:
         config = str(row["Config"]).lower()
-        if config not in ("best", "fast"):
+        if config not in ("p1", "p2"):
             continue
         value = row.get(metric_key)
         if value is None:
             continue
         by_model.setdefault(row["Model"], {})[config] = value
-    models = [model for model, configs in by_model.items() if {"best", "fast"} <= configs.keys()]
+    models = [model for model, configs in by_model.items() if {"p1", "p2"} <= configs.keys()]
     if not models:
         return
     fig, ax = plt.subplots(figsize=(6, 4.5))
     x = list(range(len(models)))
     width = 0.35
-    ax.bar([value - width / 2 for value in x], [by_model[m]["best"] for m in models], width=width, label="best")
-    ax.bar([value + width / 2 for value in x], [by_model[m]["fast"] for m in models], width=width, label="fast")
+    ax.bar([value - width / 2 for value in x], [by_model[m]["p1"] for m in models], width=width, label="P1")
+    ax.bar([value + width / 2 for value in x], [by_model[m]["p2"] for m in models], width=width, label="P2")
     ax.set_xticks(x)
     ax.set_xticklabels(models, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel(metric_key)
-    ax.set_title(f"Best vs Fast: {metric_key}")
+    ax.set_title(f"Planned parallelism P1 vs P2: {metric_key}")
     ax.legend()
     fig.tight_layout()
     fig.savefig(out_path)

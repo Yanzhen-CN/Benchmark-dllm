@@ -13,7 +13,7 @@ checkpoint path.
 
 With no arguments, this dispatches every model in the full matrix through its
 own isolated environment. By default direct ``--model-config`` mode prepares
-*every* variant declared in that model config (Best and Fast share one
+*every* variant declared in that model config (P1 and P2 share one
 checkpoint, so its repository snapshot is downloaded only once).
 Pass ``-m`` to select matrix models or ``--variant``/``--variants`` in direct
 mode to narrow variants.
@@ -22,7 +22,7 @@ mode to narrow variants.
     python prepare_model.py -m illada -m qwen3_4b
     python prepare_model.py -m illada_vargen
     python prepare_model.py --model-config configs/models/illada.yaml
-    python prepare_model.py --model-config configs/models/illada.yaml --variant best
+    python prepare_model.py --model-config configs/models/illada.yaml --variant p1
 """
 
 from __future__ import annotations

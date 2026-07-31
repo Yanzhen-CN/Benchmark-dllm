@@ -43,11 +43,11 @@ def test_pairwise_cli_writes_each_model_in_an_independent_directory(tmp_path):
     )
     _write_summary(
         output_root,
-        _summary("illada", "best", seconds=5, energy=80, q=0.6),
+        _summary("illada", "p1", seconds=5, energy=80, q=0.6),
     )
     _write_summary(
         output_root,
-        _summary("dreamreasoner", "fast", seconds=4, energy=70, q=0.55),
+        _summary("dreamreasoner", "p2", seconds=4, energy=70, q=0.55),
     )
 
     result = CliRunner().invoke(

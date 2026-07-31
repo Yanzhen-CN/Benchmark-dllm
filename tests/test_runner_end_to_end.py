@@ -206,7 +206,7 @@ def test_run_summary_round_trips_through_persistence_and_report(tmp_path):
 
 def test_two_runs_feed_the_pairwise_report(tmp_path):
     baseline_adapter = MockDiffusionAdapter(name="qwen3_4b", config_name="ar-baseline", response_fn=_correct_gsm8k_response, steps=2)
-    fast_adapter = MockDiffusionAdapter(name="illada", config_name="fast", response_fn=_correct_gsm8k_response, steps=8)
+    fast_adapter = MockDiffusionAdapter(name="illada", config_name="p2", response_fn=_correct_gsm8k_response, steps=8)
     dataset = GSM8KDataset()
     samples = build_demo_samples("gsm8k", n=3)
 
@@ -229,7 +229,7 @@ def test_two_runs_feed_the_pairwise_report(tmp_path):
     row, metadata = compute_pairwise_row(
         fast_dict, baseline_dict, beta=100, gamma=50
     )
-    assert metadata["direction"].startswith("illada/fast relative to")
+    assert metadata["direction"].startswith("illada/p2 relative to")
     assert row["r_speed"] is not None
 
 

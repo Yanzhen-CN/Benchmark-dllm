@@ -6,7 +6,7 @@ algorithm — ported directly from the real ``generation_utils.py`` shipped on
 This is a **different, independently trained model** from regular Dream-7B
 (`Dream-org/Dream-v0-Instruct-7B`, formerly ``models/dream.py`` — removed,
 since the design doc's model roster (section 5) no longer lists regular
-Dream at all, only DreamReasoner-Best/Fast): DreamReasoner-8B adapts
+Dream at all, only DreamReasoner-P1/P2): DreamReasoner-8B adapts
 Qwen3-8B-Base into a block diffusion model via block-size curriculum
 learning, per its own paper/README, and exposes ``block_diffusion_generate``
 (block-wise) rather than regular Dream's single-pass ``diffusion_generate``.
@@ -102,12 +102,12 @@ MASK_DISPLAY = "▢"
 
 
 class DreamReasonerAdapter(HFDiffusionAdapter):
-    """Appendix D.2. Best: block_length=32, steps_per_block=32 (1 token/step,
-    the library's own default step count for one block). Fast: block_length=32,
-    steps_per_block=16 (2 tokens/step) — mirrors iLLaDA's Best/Fast split
+    """Appendix D.2. P1: block_length=32, steps_per_block=32 (1 token/step,
+    the library's own default step count for one block). P2: block_length=32,
+    steps_per_block=16 (2 tokens/step) — mirrors iLLaDA's P1/P2 split
     exactly, since DreamReasoner's own README/model card gives no
     steps_per_block guidance beyond the library default this benchmark keeps
-    for Best."""
+    for P1."""
 
     def __init__(
         self,

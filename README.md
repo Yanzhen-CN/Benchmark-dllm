@@ -20,27 +20,19 @@ not just interface stubs:
 | Model | Status | Verified against |
 | --- | --- | --- |
 | iLLaDA | **Real, ported sampler** (`models/illada.py`) | Official `ML-GSAI/LLaDA` `generate.py` plus the iLLaDA checkpoint card — checkpoint id, `mask_id=5` override, block-wise low-confidence unmasking, FP64 gumbel-noise formula. Algorithm-level tests in `tests/test_illada_sampling.py` (fake-logits, no GPU) check the actual selection order, not just wiring. |
-| iLLaDA VarGen | **Real, official variable-canvas path** (`models/illada_vargen.py`) | Uses the same iLLaDA checkpoint and Best/Fast schedules, but follows official `var_generate`: append and denoise only the active block, then append the next. Future blocks are absent from both the model forward and that step's trace. Tests in `tests/test_illada_vargen_sampling.py` hard-check the growing forward lengths. |
+| iLLaDA VarGen | **Real, official variable-canvas path** (`models/illada_vargen.py`) | Uses the same iLLaDA checkpoint and P1/P2/P4/P8 schedules, but follows official `var_generate`: append and denoise only the active block, then append the next. Future blocks are absent from both the model forward and that step's trace. Tests in `tests/test_illada_vargen_sampling.py` hard-check the growing forward lengths. |
 | DiffusionGemma | **Real** (`models/diffusiongemma.py`) | Verified against the upstream `DiffusionGemmaForBlockDiffusion`/`EntropyBoundSampler` implementation. Trace capture wraps `accept_canvas` through `_prepare_sampler`. Tests live in `tests/test_diffusiongemma_sampling.py`. |
 | Gemma 4 26B-A4B AR | **Real** (`models/gemma4_ar.py`) | Official `AutoProcessor` + `AutoModelForMultimodalLM` path in native BF16. It matches DiffusionGemma's 25.2B-total/3.8B-active MoE scale and reuses the common AR generation/trace protocol. |
 | Gemma 4 + DFlash | **Real, deployment track** (`models/gemma_dflash.py`) | Official `google/gemma-4-26B-A4B-it` target plus `z-lab/gemma-4-26B-A4B-it-DFlash` draft through the official temporary vLLM Gemma4 build. It keeps the common result/score/resource interface and records vLLM acceptance counters, but is not a native AR baseline and exposes no per-token trace through the public serving API. |
-| DreamReasoner | **Real, ported sampler** (`models/dreamreasoner.py`) | GitHub's `DreamLM/DreamReasoner` repo (the design doc's own link) ships only a README + assets, no python — so verified instead by fetching the real `generation_utils.py`/`modeling_dream.py`/`config.json` from the `Dream-org/DreamReasoner-8B` HF repo directly. Confirmed from that source (not assumed): `block_diffusion_generate` returns only `sequences`/`nfe`, no per-step history at all (unlike regular Dream-7B's `output_history`), so this adapter ports the real `_denoise_current_block`/`_select_transfer_index` loop itself (like iLLaDA) rather than calling the model's own convenience method; default `block_length`=`config.block_size`=32; default per-block `denoising_steps`=`block_length` unless `remasking_strategy='low_confidence_static'`; the library's own default remasking strategy (`low_confidence_dynamic`) is already confidence-based, so — unlike regular Dream, where the library default was overridden — no override is applied; `mask_token_id`=`config.mask_token_id`=151669, shipped directly; the real default path uses a prefix KV cache (ported faithfully, since it directly affects real Time/Energy/Compute cost, not just trace fidelity); never revises (same structural reason as iLLaDA). This is a genuinely different, independently trained model from regular Dream-7B (`Dream-org/Dream-v0-Instruct-7B`) — not a config variant of it — and the design doc's own model roster (section 5) no longer includes regular Dream at all, so that adapter/config/tests were removed rather than kept alongside this one. Tests in `tests/test_dreamreasoner_sampling.py`. |
+| DreamReasoner | **Real, traced port** (`models/dreamreasoner.py`) | Verified against the checkpoint-owned `generation_utils.py`, `modeling_dream.py`, and `config.json`: 32-token blocks, confidence-based transfer, prefix KV cache, native mask token, and official thinking template. The port exposes per-forward trace without changing the sampling decisions. Tests live in `tests/test_dreamreasoner_sampling.py`. |
 
-The 2026-07-29 architecture audit also checked every formal checkpoint's
-published config and generation path. Qwen3-4B/8B now load explicitly in
-checkpoint-native BF16 and reconstruct their one-token AR trace after the
-timed `generate()` call; they no longer retain full-vocabulary `output_scores`
-inside the latency window. DreamReasoner explicitly uses the official
-thinking template and restores the official `torch.no_grad()` inference
-boundary. iLLaDA/DreamReasoner now honor exact tokenizer-level RULER input
-targets and retain denoising-forward counts even when HelloBench trace capture
-is disabled. DiffusionGemma no longer forces `disable_compile`; it records the
-upstream `tokens_per_forward` result and removes post-EOS pad positions from
-its final length and trace. Gemma 4 AR intentionally keeps its checkpoint's
-shipped sampling config. W1 remains reference-only until the private API and
-trace schema exist to validate.
+All local adapters use checkpoint-native precision and generation semantics.
+Trace snapshots and serialization are outside timed model-forward windows;
+RULER uses tokenizer-level input targets, HelloBench disables per-token trace,
+and W1 remains reference-only until its private API and trace schema can be
+validated.
 
-What's still open, and why:
+Declared scope limits:
 
 | Piece | Status | Why |
 | --- | --- | --- |
@@ -50,15 +42,15 @@ What's still open, and why:
 | Batch experiment runner | Implemented with isolated environments | `run_bench.py` reads the matrix and delegates each model to its own script/venv. |
 | Running the real models end-to-end | Generation and local scoring are separated | Server output is transferred under `output/model_output`; local scoring and visualization derive the remaining artifacts without loading model weights. |
 
-None of these block the framework from being extended — each is isolated
-behind the same `ModelAdapter`/`Dataset` interface, with a TODO at the exact
-point that needs a real checkpoint/API/judge/GPU to finish.
+Each limitation is isolated behind the common `ModelAdapter`/`Dataset`
+interface and is reported explicitly rather than silently approximated.
 
 ## Layout
 
 ```
 run_bench.py                   # compatibility: same-machine all-in-one pipeline
 run_model.py                   # server: generate model_output only
+run_check.py                   # read-only: validate outputs against the matrix
 run_score.py                   # local: score transferred model_output
 run_visualization.py           # local: visualize + build reports
 run_conversion.py              # local: optional isolated A-vs-base sensitivity charts
@@ -116,6 +108,11 @@ python run_model.py -m illada_vargen
 python run_model.py -m illada dreamreasoner -d ruler hellobench
 python run_model.py -m qwen3_8b -d sudoku  # all sudoku* matrix variants
 
+# Server or local: verify sample counts, request ceilings, statuses, metrics,
+# trace policy, OOM markers, and matrix consistency without loading a model.
+python run_check.py -m illada illada_vargen
+python run_check.py -m illada -d mbpp structeval_t -v p2
+
 # Local machine after copying output/model_output/
 python run_score.py
 python run_visualization.py
@@ -134,8 +131,11 @@ Useful controls:
 python run_model.py --list-models
 python run_model.py --dry-run -m illada
 python run_model.py -m illada --n-samples 20
-python run_model.py -m illada -v fast
+python run_model.py -m illada -v p2
 python run_model.py -m illada -d ruler hellobench ruler_context_probe
+python run_check.py -m illada --stage generate
+python run_check.py -m illada --stage all  # also require score + visualization
+python run_check.py -m illada --require-diagnostics
 python run_score.py --dry-run -m illada
 python run_score.py -m dreamreasoner -d ruler hellobench --no-resume  # force re-score; never regenerates model output
 ```
@@ -525,7 +525,7 @@ instead of one combined "run" — this is what lets you:
 
 The atomic unit of testing is the **model**, not model+variant. iLLaDA and
 DreamReasoner each have one official-algorithm traced implementation frozen to
-commit `6dfd132`. Within one group, weights load once and Best/Fast only change the
+commit `6dfd132`. Within one group, weights load once and P1/P2/P4/P8 only change the
 generation-time sampling config (`models/model_cache.py`). So leaving out
 `--variant`/`--variants` sweeps every variant declared in the file:
 
@@ -629,7 +629,7 @@ in token selection.
 
 `illada_vargen` is the parallel official `var_generate` execution-path
 ablation. It uses the same BF16 checkpoint, prompt formatting, `mask_id=5`,
-block length, Best/Fast transfer schedules, temperature and remasking rule as
+block length, P1/P2/P4/P8 schedules, temperature and remasking rule as
 `illada`; only canvas allocation changes. During a block's denoising forwards,
 later blocks have not been appended, so they cannot contribute future mask
 embeddings. Its trace grows one block at a time and records only positions that
@@ -649,7 +649,10 @@ sequences and NFE but no history; wrapping it separately would only remove
 trace without introducing a distinct generation strategy, so it is not a
 separate benchmark model.
 
-Each model group shares one loaded checkpoint between its Best/Fast variants.
+Each model group shares one loaded checkpoint between its P1/P2/P4/P8 variants.
+The formal matrix defaults to P1/P2 only. P4/P8 are reserved future research
+points and run only when explicitly requested, for example
+`python run_model.py -m illada -v p4 p8 -d gsm8k mbpp structeval_t`.
 
 Optional compute profiling keeps the model's configured attention backend. For SDPA,
 the profiler supplies a GQA-aware FLOP formula because PyTorch 2.6's built-in
@@ -659,11 +662,11 @@ replace SDPA with eager attention or alter formal generation.
 
 Output run IDs append a variant only when it distinguishes configurations:
 Qwen writes under `model_output/qwen3_4b/` and `model_output/qwen3_8b/`, while
-multi-configuration models use names such as `illada_best` and `illada_fast`.
+multi-configuration models use names such as `illada_p1` and `illada_p2`.
 Local readers still accept the legacy `qwen3_4b_ar-baseline` directory.
 
-Pass `--variant best` to a low-level model-config command to run one sampling
-profile.
+Pass `-v p1`, `-v p1 p2 p4 p8`, or the low-level `--variant p1` to select
+sampling profiles explicitly.
 `score`/`visualize` deterministically reconstruct the same
 sample list from `--demo`/`--no-demo`, `--n-samples`, and `--seed`; pass matching
 values to every stage. The official GSM8K loader uses stable source indices as
@@ -771,8 +774,8 @@ available only after a separate compute-profiling replay and is not collected
 in the formal first pass.
 
 Output lands under `output/` (override with `--output-root`), split by
-stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-best` and
-`iLLaDA-fast` never collide, and you can `rsync`/copy just `model_output/`
+stage, then by `<model>_<config>`, then by dataset — so `iLLaDA-p1` and
+`iLLaDA-p2` never collide, and you can `rsync`/copy just `model_output/`
 off a GPU box:
 
 ```
@@ -834,7 +837,7 @@ python prepare_model.py -m illada -m qwen3_8b
 # direct single-config mode inside the current compatible environment
 python prepare_model.py --model-config configs/models/illada.yaml
 # warms every variant declared in the file — for illada.yaml that's
-# `best`+`fast`, but since they share one checkpoint (models/model_cache.py)
+# default `p1`+`p2`, but since they share one checkpoint (models/model_cache.py)
 # this downloads the shared repository snapshot only once.
 ```
 
@@ -944,7 +947,7 @@ Two separate config trees, both under `configs/`, both loaded by
 `registry.py` — never edit test *code* to change a run, edit the YAML:
 
 - **`configs/models/*.yaml`** — one file per model, with one or more named
-  configs nested under `configs:` (e.g. `illada.yaml`'s `best`/`fast`,
+  configs nested under `configs:` (e.g. `illada.yaml`'s `p1`/`p2`/`p4`/`p8`,
   `w1.yaml`'s `standard`/`jump`/`gidd`). Each variant has `adapter` (dotted
   class path), `init_kwargs` (passed straight to the constructor),
   `step_config` (diffusion-only: `gen_length`/`steps`/`block_length`/

@@ -11,7 +11,7 @@ from typing import Any
 from ..runner.output_layout import run_id
 from .plots import (
     plot_answer_region_diagnostics,
-    plot_best_vs_fast,
+    plot_p1_vs_p2,
     plot_quality_vs_resource,
     plot_score_per_unit,
     plot_sudoku_revision_diagnostics,
@@ -157,11 +157,11 @@ def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -
             if answer_path.exists():
                 written.append(answer_path)
             for metric, filename in (
-                ("q", "best_vs_fast_quality.png"),
-                ("Tps", "best_vs_fast_tps.png"),
+                ("q", "p1_vs_p2_quality.png"),
+                ("Tps", "p1_vs_p2_tps.png"),
             ):
                 path = out_dir / filename
-                plot_best_vs_fast(group_rows, metric, str(path))
+                plot_p1_vs_p2(group_rows, metric, str(path))
                 if path.exists():
                     written.append(path)
 

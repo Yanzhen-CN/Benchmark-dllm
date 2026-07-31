@@ -540,7 +540,7 @@ def test_matrix_reuses_one_adapter_across_dataset_jobs(tmp_path, monkeypatch):
     assert len(built) == 1
 
 
-def test_matrix_variants_option_filters_sampling_profile(tmp_path, monkeypatch):
+def test_matrix_variants_option_can_select_model_variant_outside_matrix_defaults(tmp_path, monkeypatch):
     runner = CliRunner()
     model_config = CONFIGS_DIR / "models" / "mock.yaml"
     dataset_config = CONFIGS_DIR / "datasets" / "gsm8k.yaml"
@@ -549,7 +549,7 @@ def test_matrix_variants_option_filters_sampling_profile(tmp_path, monkeypatch):
         "seed: 42\n"
         "models:\n"
         f"  - name: mock\n    config: {model_config}\n"
-        "    variants: [default, fast]\n"
+        "    variants: [default]\n"
         "datasets:\n"
         f"  - config: {dataset_config}\n    max_new_tokens: 16\n"
     )

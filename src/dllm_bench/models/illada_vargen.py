@@ -3,7 +3,7 @@
 Unlike the fixed-canvas reference path, only the active block is appended to
 the already committed prefix. Future blocks do not yet exist and therefore
 cannot contribute mask embeddings to the current bidirectional forward pass.
-The token-transfer rule, BF16 checkpoint, mask id and Best/Fast step schedules
+The token-transfer rule, BF16 checkpoint, mask id and P1/P2 step schedules
 remain identical to the existing iLLaDA adapter.
 """
 

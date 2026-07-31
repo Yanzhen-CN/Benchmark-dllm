@@ -89,7 +89,7 @@ def test_prepare_model_downloads_shared_checkpoint_once_without_building_adapter
     assert calls[0][0] == "GSAI-ML/iLLaDA-8B-Instruct"
     assert calls[0][1] is None
     assert (
-        "[best,fast] cached: /cached/illada"
+        "[p1,p2,p4,p8] cached: /cached/illada"
         in capsys.readouterr().out
     )
 
@@ -157,7 +157,7 @@ def test_prepare_model_direct_mode_dispatches_when_started_outside_venv(tmp_path
         "import runpy, sys; "
         "sys.prefix = sys.base_prefix; "
         f"sys.argv = [{str(SCRIPT)!r}, '--model-config', "
-        f"{str(CONFIGS_DIR / 'models' / 'illada.yaml')!r}, '--variant', 'fast', '--dry-run']; "
+        f"{str(CONFIGS_DIR / 'models' / 'illada.yaml')!r}, '--variant', 'p2', '--dry-run']; "
         f"runpy.run_path({str(SCRIPT)!r}, run_name='__main__')"
     )
     result = subprocess.run(

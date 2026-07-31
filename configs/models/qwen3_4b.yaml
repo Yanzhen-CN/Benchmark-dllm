@@ -1,6 +1,6 @@
 # Appendix D.5 — AR baseline. Standard HF checkpoint + generate() + greedy
 # decoding. max_new_tokens is set per-experiment (aligned to that task's
-# dLLM output budget), not hardcoded here. Only one config (no Best/Fast
+# dLLM output budget), not hardcoded here. Only one config (no P1/P2/P4/P8
 # split for the AR baseline), but kept under the same `configs:` schema as
 # every other model for a uniform loader.
 # The adapter loads checkpoint-native BF16 weights and reconstructs the AR

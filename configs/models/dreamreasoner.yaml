@@ -1,5 +1,5 @@
 # Appendix D.2 — one model, one file, both configs nested under `configs:`.
-# Best and Fast are tested together in one process by default (see cli.py /
+# P1 and P2 are tested together in one process by default (see cli.py /
 # README "atomic unit = model") — they share this same checkpoint, so it
 # only gets loaded once (models/model_cache.py).
 #
@@ -25,19 +25,19 @@
 #
 # block_length=32 confirmed from the checkpoint's own config.json
 # (`block_size: 32`) and the GitHub README's quick-start example.
-# steps_per_block Best=32/Fast=16 mirrors iLLaDA's own Best/Fast split
+# steps_per_block P1=32/P2=16 mirrors iLLaDA's own P1/P2 split
 # exactly (same block_length=32) — Appendix D.2 explicitly falls back to
 # this same step budget shape since DreamReasoner's README/model card gives
 # no steps_per_block guidance beyond the library's own per-block default
-# (`denoising_steps = block_length` = 32 whenever unset, i.e. Best keeps that
-# default explicit, and Fast halves it) — same relationship as
-# illada.yaml's Best/Fast (32/16).
+# (`denoising_steps = block_length` = 32 whenever unset, i.e. P1 keeps that
+# default explicit, and P2 halves it) — same relationship as
+# illada.yaml's P1/P2 (32/16).
 # The checkpoint declares transformers 5.7.0 and its remote DreamConfig calls
 # PretrainedConfig.validate_rope(), which the former 4.46.2 venv lacks.
 model: dreamreasoner
 max_context_tokens: 32768
 configs:
-  best:
+  p1:
     adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
     init_kwargs:
       model_name_or_path: Dream-org/DreamReasoner-8B
@@ -48,7 +48,7 @@ configs:
       steps_per_block: 32
       extra:
         temperature: 0.0
-  fast:
+  p2:
     adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
     init_kwargs:
       model_name_or_path: Dream-org/DreamReasoner-8B
@@ -57,5 +57,27 @@ configs:
       gen_length: null
       block_length: 32
       steps_per_block: 16
+      extra:
+        temperature: 0.0
+  p4:
+    adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
+    init_kwargs:
+      model_name_or_path: Dream-org/DreamReasoner-8B
+      enable_thinking: true
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 8
+      extra:
+        temperature: 0.0
+  p8:
+    adapter: dllm_bench.models.dreamreasoner.DreamReasonerAdapter
+    init_kwargs:
+      model_name_or_path: Dream-org/DreamReasoner-8B
+      enable_thinking: true
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 4
       extra:
         temperature: 0.0

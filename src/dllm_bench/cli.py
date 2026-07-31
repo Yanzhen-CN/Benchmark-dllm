@@ -6,7 +6,7 @@ DreamReasoner), lets a half-finished dataset resume without redoing already-done
 samples, and lets generation happen on one machine (a GPU box) while
 scoring/visualization happen on another (see README "三阶段 pipeline").
 
-The atomic unit of testing is the **model**, not model+variant: Best/Fast (or
+The atomic unit of testing is the **model**, not model+variant: P1/P2 (or
 standard/jump/gidd) get tested *together*, in one process, so the expensive
 part (loading weights onto the GPU) happens once and every variant just
 changes the generation-time config (see `models/model_cache.py`). So by
@@ -16,9 +16,9 @@ default, every command below sweeps **every variant** declared in
     dllm-bench generate --model-config configs/models/illada.yaml \\
                          --dataset-config configs/datasets/gsm8k.yaml \\
                          --demo --n-samples 5 --max-new-tokens 32
-    # runs both `best` and `fast`, loading the checkpoint only once
+    # runs both `p1` and `p2`, loading the checkpoint only once
 
-Pass `--variant best` for just one, or `--variants best,fast` to name a
+Pass `--variant p1` for just one, or `--variants p1,p2` to name a
 subset explicitly (the default already covers this specific example, but
 matters when a file declares more variants than you want this run).
 
@@ -114,7 +114,7 @@ def main() -> None:
 
 def _common_options(f):
     f = click.option("--model-config", required=True, type=click.Path(exists=True), help="Path to configs/models/*.yaml")(f)
-    f = click.option("--variant", default=None, help="Run just this one named config (e.g. best)")(f)
+    f = click.option("--variant", default=None, help="Run just this one named config (e.g. p1)")(f)
     f = click.option("--variants", default=None, help="Comma-separated named configs to run together (default: every variant in --model-config)")(f)
     f = click.option("--dataset-config", required=True, type=click.Path(exists=True), help="Path to configs/datasets/*.yaml")(f)
     f = click.option("--demo/--no-demo", default=True, show_default=True, help="Use demos; --no-demo loads official data where supported")(f)
@@ -935,12 +935,17 @@ def matrix_command(
             requested_variants = tuple(
                 value.strip() for value in variant_names.split(",") if value.strip()
             )
-            unknown_variants = set(requested_variants).difference(job.variants)
+            # The experiment matrix declares the default operating points, not
+            # the full allow-list. Explicit research points such as P4/P8 live
+            # in the model YAML and are selectable with ``-v`` without making
+            # every ordinary matrix run execute them automatically.
+            available_variants = tuple(list_model_variants(str(job.model_config)))
+            unknown_variants = set(requested_variants).difference(available_variants)
             if unknown_variants:
                 raise click.UsageError(
                     f"unknown variant(s) for {job.model_name}: "
                     f"{', '.join(sorted(unknown_variants))}; available: "
-                    f"{', '.join(job.variants)}"
+                    f"{', '.join(available_variants)}"
                 )
             selected_variants = requested_variants
         variants = ",".join(selected_variants)

@@ -14,7 +14,7 @@ strategies) that each ports its own loop in its own module
 (``illada.py``/``dreamreasoner.py``) subclassing :class:`HFDiffusionAdapter`
 here and implementing :meth:`_run_denoising`. This base class only owns
 what's genuinely shared: loading (via the process-wide weight cache, so
-Best/Fast share one loaded copy), resource-measurement integration, and
+P1/P2 share one loaded copy), resource-measurement integration, and
 merging per-request config overrides into a :class:`DiffusionStepConfig`.
 """
 
@@ -33,7 +33,7 @@ from .model_cache import get_or_load
 
 @dataclass
 class DiffusionStepConfig:
-    """Appendix D Best/Fast knobs. ``gen_length``/``steps``/``block_length``/
+    """Appendix D planned-parallelism knobs. ``gen_length``/``steps``/``block_length``/
     ``steps_per_block`` are the fields shared conceptually across block/step
     diffusion models; ``extra`` carries whatever additional knobs one
     specific model's real sampler needs (e.g. DreamReasoner's
@@ -86,7 +86,7 @@ class HFDiffusionAdapter(BaseModelAdapter):
         def _load():
             return self._load_model_and_tokenizer(device)
 
-        # Best/Fast point at the *same* checkpoint with a different
+        # P1/P2 point at the *same* checkpoint with a different
         # step_config — sharing this load is the whole point of nesting both
         # under one configs/models/*.yaml file (see README).
         self._tokenizer, self._model = get_or_load(self._model_name, device, _load)

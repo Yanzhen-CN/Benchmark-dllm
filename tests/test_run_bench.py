@@ -65,10 +65,25 @@ def test_variant_flag_is_forwarded_to_the_selected_model(monkeypatch):
     monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
 
     assert run_bench.main([
-        "-m", "illada", "-v", "fast", "--stage", "generate"
+        "-m", "illada", "-v", "p2", "--stage", "generate"
     ]) == 0
     assert captured["models"] == ["illada"]
-    assert captured["env_updates"]["MATRIX_VARIANTS"] == "fast"
+    assert captured["env_updates"]["MATRIX_VARIANTS"] == "p2"
+
+
+def test_variant_flag_accepts_all_parallelism_points(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(run_bench, "dispatch_model_scripts", fake_dispatch)
+
+    assert run_bench.main([
+        "-m", "illada", "-v", "p1", "p2", "p4", "p8",
+        "--stage", "generate",
+    ]) == 0
+    assert captured["env_updates"]["MATRIX_VARIANTS"] == "p1,p2,p4,p8"
 
 
 def test_hellobench_length_and_total_count_are_forwarded(monkeypatch):
@@ -105,8 +120,8 @@ def test_temporary_output_length_override_is_forwarded(monkeypatch):
 def test_variant_and_variants_are_mutually_exclusive():
     with pytest.raises(SystemExit):
         run_bench.main([
-            "--dry-run", "-m", "illada", "--variant", "fast",
-            "--variants", "best,fast",
+            "--dry-run", "-m", "illada", "--variant", "p2",
+            "--variants", "p1,p2",
         ])
 
 

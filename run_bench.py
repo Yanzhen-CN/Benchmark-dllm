@@ -137,11 +137,17 @@ def build_parser() -> argparse.ArgumentParser:
     variants = parser.add_mutually_exclusive_group()
     variants.add_argument(
         "-v", "--variant",
-        help="Run one sampling variant for every selected model, e.g. fast",
+        action="extend",
+        nargs="+",
+        default=[],
+        help=(
+            "Sampling variant(s) for every selected model; space-separate or "
+            "repeat, e.g. -v p1 p2 p4 p8"
+        ),
     )
     variants.add_argument(
         "--variants",
-        help="Comma-separated sampling variants, e.g. best,fast",
+        help="Comma-separated sampling variants, e.g. p1,p2",
     )
     parser.add_argument("--output-root", default="output")
     compute = parser.add_mutually_exclusive_group()
@@ -209,7 +215,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         env_updates["MAX_NEW_TOKENS"] = str(args.max_new_tokens)
     if args.hellobench_length:
         env_updates["HELLOBENCH_LENGTHS"] = ",".join(args.hellobench_length)
-    selected_variants = args.variant or args.variants
+    selected_variants = (
+        ",".join(
+            dict.fromkeys(
+                part.strip()
+                for value in args.variant
+                for part in value.split(",")
+                if part.strip()
+            )
+        )
+        if args.variant
+        else args.variants
+    )
     if selected_variants:
         env_updates["MATRIX_VARIANTS"] = selected_variants
     dispatch_model_scripts(

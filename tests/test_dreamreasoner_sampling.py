@@ -327,7 +327,7 @@ def test_dreamreasoner_raises_a_clear_error_when_mask_token_id_is_unknowable():
 def test_dreamreasoner_default_denoising_steps_falls_back_to_block_length():
     """Real library default (confirmed from source): `denoising_steps =
     block_length` whenever unset and `remasking_strategy` isn't
-    `low_confidence_static` — this benchmark's Best config just keeps that
+    `low_confidence_static` — this benchmark's P1 config just keeps that
     default explicit (see configs/models/dreamreasoner.yaml)."""
     prompt_len = 4
     gen_length = 4

@@ -17,7 +17,7 @@ a uniform per-block step count, and gumbel-noise sampling. The reference
 implementation also has research-ablation knobs this benchmark doesn't
 expose (`token_selection_confidence_threshold`, custom per-block step
 schedules, `decode_order='left_to_right'`) — those aren't part of the
-Best/Fast configs this benchmark actually runs (Appendix D.1), so they're
+P1/P2 configs this benchmark actually runs (Appendix D.1), so they're
 deliberately not ported; add them to `step_config.extra` + this file's
 `_run_denoising` if a future config needs them.
 """
@@ -35,8 +35,7 @@ MASK_DISPLAY = "▢"
 
 
 class IlladaAdapter(HFDiffusionAdapter):
-    """Appendix D.1. Best: block_length=32, steps_per_block=32 (1 token/step).
-    Fast: block_length=32, steps_per_block=16 (2 tokens/step)."""
+    """Appendix D.1. P1: 32 steps/block; P2: 16 steps/block."""
 
     def __init__(
         self,
@@ -145,7 +144,7 @@ class IlladaAdapter(HFDiffusionAdapter):
 
 def _add_gumbel_noise(logits, temperature: float):
     """Exact formula from the reference implementation — not a standard
-    Gumbel-softmax. At temperature=0 (this benchmark's Best/Fast default)
+    Gumbel-softmax. At temperature=0 (this benchmark's P1/P2 default)
     it's a no-op: plain argmax over raw logits, fully deterministic."""
     if temperature == 0:
         return logits

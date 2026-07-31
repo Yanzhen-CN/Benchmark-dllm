@@ -24,7 +24,7 @@ models:
       sudoku9:
         n_samples: 10
   - config: configs/models/illada.yaml    # illada-8B
-    variants: [best, fast]
+    variants: [p1, p2]
     dataset_overrides:
       sudoku4:
         n_samples: 1
@@ -34,7 +34,7 @@ models:
         hellobench_lengths: [2k]
         n_samples: 1
   - config: configs/models/illada_vargen.yaml # official incremental block canvas
-    variants: [best, fast]
+    variants: [p1, p2]
     dataset_overrides:
       sudoku4:
         n_samples: 1
@@ -44,7 +44,7 @@ models:
         hellobench_lengths: [2k]
         n_samples: 1
   - config: configs/models/dreamreasoner.yaml # dream reasoner-8B
-    variants: [best, fast]
+    variants: [p1, p2]
     dataset_overrides:
       sudoku4:
         n_samples: 1

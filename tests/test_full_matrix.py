@@ -42,7 +42,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         job for job in jobs
         if job.model_name == "dreamreasoner" and job.dataset_config.stem == "gsm8k"
     )
-    expected = ("best", "fast")
+    expected = ("p1", "p2")
     assert illada_job.variants == expected
     vargen_job = next(
         job for job in jobs
@@ -50,6 +50,13 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     )
     assert vargen_job.variants == expected
     assert dream_job.variants == expected
+    for model_config in (
+        "illada.yaml", "illada_vargen.yaml", "dreamreasoner.yaml"
+    ):
+        config_text = (ROOT / "configs" / "models" / model_config).read_text(
+            encoding="utf-8"
+        )
+        assert all(f"  {variant}:" in config_text for variant in ("p1", "p2", "p4", "p8"))
     for dataset_name in ("gsm8k", "mbpp", "structeval_t"):
         assert all(
             job.max_new_tokens == 512

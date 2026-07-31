@@ -26,8 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pattern",
         action="append",
-        default=[".pytest*", ".tmp*"],
-        help="Glob pattern to match files/directories. Can be repeated.",
+        default=None,
+        help=(
+            "Glob pattern to match files/directories. Can be repeated; "
+            "default: .pytest* and .tmp*."
+        ),
     )
     parser.add_argument(
         "--recursive",
@@ -245,7 +248,8 @@ def main() -> int:
         print(f"Root path is not a directory: {root}", file=sys.stderr)
         return 1
 
-    targets = collect_targets(root, args.pattern, args.recursive)
+    patterns = args.pattern or [".pytest*", ".tmp*"]
+    targets = collect_targets(root, patterns, args.recursive)
     if not targets:
         print("No matching paths found.")
         return 0

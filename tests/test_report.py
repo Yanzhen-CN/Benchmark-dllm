@@ -6,7 +6,7 @@ from dllm_bench.interfaces import GenerationRequest
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.report.plots import (
     plot_answer_region_diagnostics,
-    plot_best_vs_fast,
+    plot_p1_vs_p2,
     plot_quality_vs_resource,
     plot_score_per_unit,
     plot_speculative_acceptance,
@@ -106,18 +106,18 @@ def test_render_raw_results_table_handles_no_rows():
 
 def test_compute_pairwise_row_uses_seconds_per_sample_not_tps():
     baseline = _summary("qwen3_8b", "ar-baseline", 0.5, tps=100.0)
-    fast_model = _summary("illada", "fast", 0.5, tps=1.0)
+    fast_model = _summary("illada", "p2", 0.5, tps=1.0)
     baseline["time_per_sample"] = 10.0
     fast_model["time_per_sample"] = 2.0
     row, metadata = compute_pairwise_row(fast_model, baseline, beta=100, gamma=50)
     assert row["r_speed"] == pytest.approx(5.0)
     assert row["Q_speed"] > 0.5
-    assert metadata["direction"] == "illada/fast relative to qwen3_8b/ar-baseline"
+    assert metadata["direction"] == "illada/p2 relative to qwen3_8b/ar-baseline"
 
 
 def test_compute_pairwise_row_missing_energy_leaves_energy_fields_none():
     baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
-    model = _summary("illada", "best", 0.6, tps=8.0)
+    model = _summary("illada", "p1", 0.6, tps=8.0)
     row, _ = compute_pairwise_row(model, baseline, beta=50, gamma=75)
     assert row["r_energy"] is None
     assert row["Q_energy"] is None
@@ -126,7 +126,7 @@ def test_compute_pairwise_row_missing_energy_leaves_energy_fields_none():
 
 def test_pairwise_requires_matching_sample_set():
     baseline = _summary("qwen3_8b", "ar-baseline", 0.5)
-    model = _summary("illada", "fast", 0.6)
+    model = _summary("illada", "p2", 0.6)
     model["scoring_metadata"]["sample_set_hash"] = "different"
     with pytest.raises(PairwiseCompatibilityError, match="sample set hash differs"):
         compute_pairwise_row(model, baseline, beta=50, gamma=50)
@@ -143,7 +143,7 @@ def test_self_reported_timing_is_not_compared_with_measured_baseline():
 
 def test_render_and_write_pairwise_outputs_smoke(tmp_path):
     baseline = _summary("qwen3_4b", "ar-baseline", 0.5, tps=10.0)
-    model = _summary("illada", "best", 0.6, tps=8.0)
+    model = _summary("illada", "p1", 0.6, tps=8.0)
     baseline["energy_per_sample"] = 20.0
     model["energy_per_sample"] = 10.0
     row, metadata = compute_pairwise_row(model, baseline, beta=60, gamma=30)
@@ -175,18 +175,18 @@ def test_plot_score_per_unit_skips_when_no_data(tmp_path):
     assert not out.exists()
 
 
-def test_plot_best_vs_fast_writes_file_when_both_configs_present(tmp_path):
+def test_plot_p1_vs_p2_writes_file_when_both_configs_present(tmp_path):
     rows = [
-        raw_results_row(_summary("illada", "best", 0.7, tps=5.0)),
-        raw_results_row(_summary("illada", "fast", 0.6, tps=10.0)),
+        raw_results_row(_summary("illada", "p1", 0.7, tps=5.0)),
+        raw_results_row(_summary("illada", "p2", 0.6, tps=10.0)),
     ]
-    out = tmp_path / "best_vs_fast.png"
-    plot_best_vs_fast(rows, "q", str(out))
+    out = tmp_path / "p1_vs_p2.png"
+    plot_p1_vs_p2(rows, "q", str(out))
     assert out.exists()
 
 
 def test_plot_answer_region_diagnostics_writes_file(tmp_path):
-    row = raw_results_row(_summary("illada", "best", 0.6))
+    row = raw_results_row(_summary("illada", "p1", 0.6))
     out = tmp_path / "answer_region.png"
     plot_answer_region_diagnostics([row], str(out))
     assert out.exists()
