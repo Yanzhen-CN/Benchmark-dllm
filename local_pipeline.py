@@ -44,7 +44,15 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
         resume.add_argument("--no-resume", dest="resume", action="store_false")
         parser.set_defaults(resume=True)
     if stage == "visualize":
-        parser.add_argument("--n-representative", type=int, default=3)
+        parser.add_argument(
+            "--n-representative",
+            type=int,
+            default=0,
+            help=(
+                "Automatically render this many single-sample traces "
+                "(default: 0; prefer --sample-ids for curated examples)"
+            ),
+        )
         parser.add_argument(
             "--sample-ids",
             default=None,

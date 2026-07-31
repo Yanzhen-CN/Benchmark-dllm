@@ -1,2 +1,0 @@
-Model | Mean TPF (token/forward) | Tps (token/s)
-illada / p2 | 2 | 3.49203

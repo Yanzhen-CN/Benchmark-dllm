@@ -1,2 +1,0 @@
-Model | Mean TPF (token/forward) | Tps (token/s)
-diffusiongemma / official | 5.83588 | 36.8731

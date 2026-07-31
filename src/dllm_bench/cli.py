@@ -626,6 +626,8 @@ def visualize(
     invalid_rows: list[str] = []
     incomplete_rows: list[str] = []
     for v in variant_list:
+        variant_config = load_yaml(model_config)["configs"][v]
+        block_length = variant_config.get("step_config", {}).get("block_length")
         model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
         score_out = resolve_score_output_dir(output_root, configured_model, v, dataset.name)
         viz_out = visualization_output_dir(output_root, configured_model, v, dataset.name)
@@ -668,6 +670,7 @@ def visualize(
                 final_score=score_result.primary_score if score_result else None,
                 dataset_name=dataset.name,
                 sample=sample,
+                block_length=block_length,
             )
             rendered += 1
 
@@ -885,7 +888,13 @@ def pairwise_report(
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
 @click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
 @click.option("--resume/--no-resume", default=True, show_default=True)
-@click.option("--n-representative", default=3, show_default=True, type=int)
+@click.option(
+    "--n-representative",
+    default=0,
+    show_default=True,
+    type=int,
+    help="Automatically render N sample traces; use --sample-ids for curated examples.",
+)
 @click.option(
     "--sample-ids",
     default=None,

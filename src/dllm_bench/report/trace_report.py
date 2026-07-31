@@ -3,8 +3,10 @@ every dataset renders through (one drawing method across all datasets).
 Design doc 4.1 is explicit that this display includes only
 things that are *inherently single-sample visualizations*:
 
-- Token Position x Forward heatmap (static; `token_grid_viz.plot_token_position_forward_heatmap`)
-- Accepted Ratio x Certainty curve (`plot_certainty_curve`, this module)
+- DGtest-style Token Position x Forward all-update trace; later accepted /
+  revision events progress from blue-green to orange-red
+- token entropy heatmap with high entropy red/orange and low entropy
+  blue/green, when available
 - final task result
 
 Effective Tokens per Forward (4.2.1) and Structure/Constraint-vs-Content
@@ -14,12 +16,9 @@ once per sample as a building block, then aggregated across the whole
 dataset, never shown redundantly for one sample here. Their dataset-level
 aggregate versions live in `report/dataset_trace_report.py`.
 
-The optional animated token-canvas GIF is the moving form of the same generic
-position/forward data and is useful for a few curated diffusion examples.  It
-must not be confused with the separate Sudoku-only 9x9 board animation.
-Redundant final-frame, first-commit scatter, and per-sample speed plots are not
-emitted; their information is already clearer in the heatmap and dataset-level
-Task 4 summaries.
+The generic GIF, final-frame, certainty curve, and speed plots are not emitted.
+The separate Sudoku-only board animation remains available for curated Sudoku
+examples.
 
 :func:`render_sample_report` is what ``dllm-bench visualize`` calls once per
 sample. Sudoku gets one more artifact on top — an animated 9x9 grid walking
@@ -32,35 +31,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 from ..datasets.base import Sample
 from ..interfaces import TraceStep
-from ..metrics.certainty import build_observed_certainty_curve
-from .token_grid_viz import (
-    plot_token_position_forward_heatmap,
-    render_token_grid_gif,
-)
-
-
-def plot_certainty_curve(trace: list[TraceStep], final_valid_length: int, out_path: str) -> None:
-    curve = build_observed_certainty_curve(trace, final_valid_length)
-    if len(curve) < 2:
-        return
-    ratios = [c[0] for c in curve]
-    certainties = [c[1] for c in curve]
-
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.plot(ratios, certainties, marker="o")
-    ax.set_xlabel("Accepted Ratio")
-    ax.set_ylabel("Certainty")
-    ax.set_title("Remaining-token Certainty")
-    fig.tight_layout()
-    fig.savefig(out_path)
-    plt.close(fig)
+from .trace_distribution_viz import plot_all_updates, plot_token_entropy_heatmap
 
 
 def _maybe_render_sudoku_gif(
@@ -90,6 +63,7 @@ def render_sample_report(
     final_score: float | None = None,
     dataset_name: str | None = None,
     sample: Sample | None = None,
+    block_length: int | None = None,
 ) -> dict[str, str]:
     out_dir_path = Path(out_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
@@ -98,18 +72,28 @@ def render_sample_report(
     title = f"{dataset_name or ''} - {sample_id}".strip(" -")
 
     if trace:
-        heatmap_path = out_dir_path / f"{sample_id}_heatmap.png"
-        plot_token_position_forward_heatmap(trace, heatmap_path, title=title)
-        written["heatmap"] = str(heatmap_path)
+        updates_path = out_dir_path / f"{sample_id}_all_updates.png"
+        plot_all_updates(
+            trace,
+            updates_path,
+            title=title,
+            block_length=block_length,
+        )
+        if updates_path.exists():
+            written["all_updates"] = str(updates_path)
 
-        gif_path = out_dir_path / f"{sample_id}_trace.gif"
-        render_token_grid_gif(trace, gif_path, title=title)
-        written["token_grid_gif"] = str(gif_path)
+        entropy_path = out_dir_path / f"{sample_id}_entropy.png"
+        plot_token_entropy_heatmap(
+            trace,
+            entropy_path,
+            title=title,
+            block_length=block_length,
+        )
+        if entropy_path.exists():
+            written["entropy"] = str(entropy_path)
 
-    certainty_path = out_dir_path / f"{sample_id}_certainty.png"
-    plot_certainty_curve(trace, final_valid_length, str(certainty_path))
-    if certainty_path.exists():
-        written["certainty"] = str(certainty_path)
+    for suffix in ("heatmap.png", "certainty.png", "update_layers.png", "trace.gif"):
+        (out_dir_path / f"{sample_id}_{suffix}").unlink(missing_ok=True)
 
     if dataset_name is not None:
         sudoku_gif = _maybe_render_sudoku_gif(dataset_name, sample, trace, out_dir_path, sample_id)

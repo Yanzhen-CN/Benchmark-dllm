@@ -162,7 +162,15 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--resume", dest="resume", action="store_true")
     resume.add_argument("--no-resume", dest="resume", action="store_false")
     parser.set_defaults(resume=True)
-    parser.add_argument("--n-representative", type=int, default=3)
+    parser.add_argument(
+        "--n-representative",
+        type=int,
+        default=0,
+        help=(
+            "Automatically render this many single-sample traces "
+            "(default: 0; prefer --sample-ids for curated examples)"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print model script commands without running them")
     parser.add_argument("--list-models", action="store_true")
     return parser

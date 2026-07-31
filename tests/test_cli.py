@@ -94,15 +94,16 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert "rendered 2 sample(s)" in visualize_result.output
 
     viz_out = output_root / "visualization_output" / "mock_default" / "gsm8k"
-    assert len(list(viz_out.glob("*_trace.gif"))) == 2
+    assert len(list(viz_out.glob("*_all_updates.png"))) == 2
+    assert not list(viz_out.glob("*_trace.gif"))
     trace_summary = json.loads(
         (viz_out / "dataset_trace_summary.json").read_text(encoding="utf-8")
     )
     assert trace_summary["trace_samples"] == 3
     assert trace_summary["model"] == "mock"
     assert trace_summary["config"] == "default"
-    assert (viz_out / "dataset_finalization_map.png").exists()
-    assert (viz_out / "dataset_commit_order_tau.png").exists()
+    assert not (viz_out / "dataset_finalization_map.png").exists()
+    assert not (viz_out / "dataset_commit_order_tau.png").exists()
     assert (viz_out / "dataset_tpf_tps.txt").exists()
 
     report_result = _run(runner, [
@@ -110,20 +111,15 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     ])
     assert "gsm8k" in report_result.output
     assert "mock" in report_result.output
-    assert (output_root / "report" / "gsm8k" / "quality_tps.png").exists()
-    assert (output_root / "report" / "gsm8k" / "quality_seconds_per_sample.png").exists()
+    assert not (output_root / "report" / "gsm8k" / "quality_tps.png").exists()
+    assert not (output_root / "report" / "gsm8k" / "quality_seconds_per_sample.png").exists()
     assert not (output_root / "report" / "gsm8k" / "quality_energy_per_sample.png").exists()
     assert (output_root / "report" / "raw_results.csv").exists()
-    assert (output_root / "report" / "gsm8k" / "task4_tpf_vs_tps.png").exists()
-    assert (
+    assert (output_root / "report" / "gsm8k" / "trace_metrics.csv").exists()
+    assert not (output_root / "report" / "gsm8k" / "task4_tpf_vs_tps.png").exists()
+    assert not (
         output_root / "report" / "gsm8k" / "task4_parallelism_signature.png"
     ).exists()
-    assert (
-        output_root / "report" / "gsm8k" / "task4_draft_volatility.png"
-    ).exists()
-    assert (output_root / "report" / "gsm8k" / "task4_update_geometry.png").exists()
-    assert (output_root / "report" / "gsm8k" / "task4_forward_yield.png").exists()
-    assert (output_root / "report" / "gsm8k" / "task4_commit_tau_windows.png").exists()
 
 
 def test_generate_uses_sample_progress_bar_on_interactive_terminal(

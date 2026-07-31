@@ -9,26 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from ..runner.output_layout import run_id
-from .plots import (
-    plot_answer_region_diagnostics,
-    plot_p1_vs_p2,
-    plot_quality_vs_resource,
-    plot_score_per_unit,
-    plot_sudoku_revision_diagnostics,
-    plot_task4_curve_overlay,
-    plot_task4_confidence_dynamics,
-    plot_task4_draft_volatility,
-    plot_task4_finalization_share,
-    plot_task4_forward_yield,
-    plot_task4_parallelism_signature,
-    plot_task4_update_geometry,
-    plot_task4_visible_draft_correction,
-    plot_task4_style_coverage,
-    plot_task4_structure_first,
-    plot_task4_tau_windows,
-    plot_tpf_vs_tps,
-    plot_speculative_acceptance,
-)
 from .tables import RAW_COLUMNS, raw_results_row, render_raw_results_table
 
 
@@ -72,6 +52,100 @@ def _attach_trace_summary(
         .get("revised_position_share", {})
         .get("mean")
     )
+
+
+def _remove_stale_report_plots(out_dir: Path) -> None:
+    for filename in (
+        "quality_tps.png",
+        "quality_seconds_per_sample.png",
+        "quality_energy_per_sample.png",
+        "score_per_unit_energy.png",
+        "p1_vs_p2_quality.png",
+        "p1_vs_p2_tps.png",
+        "task4_tpf_profile.png",
+        "task4_certainty.png",
+        "task4_tpf_vs_tps.png",
+        "task4_parallelism_signature.png",
+        "task4_draft_volatility.png",
+        "task4_update_geometry.png",
+        "task4_visible_draft_correction.png",
+        "task4_confidence_dynamics.png",
+        "task4_forward_yield.png",
+        "dflash_speculative_acceptance.png",
+        "task4_commit_tau_windows.png",
+        "task4_finalization_share.png",
+        "task4_style_coverage.png",
+        "task4_structure_first.png",
+        "task4_sudoku_revision.png",
+        "parallelism_ablation.png",
+        "parallelism_generation_dynamics.png",
+        "parallelism_structure_first.png",
+        "parallelism_quality_latency.png",
+        "answer_region_diagnostics.png",
+    ):
+        (out_dir / filename).unlink(missing_ok=True)
+
+
+def _nested_mean(trace_summary: dict[str, Any], *path: str) -> Any:
+    value: Any = trace_summary
+    for key in path:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    if isinstance(value, dict):
+        return value.get("mean")
+    return value
+
+
+def _write_trace_metrics(rows: list[dict[str, Any]], path: Path) -> bool:
+    fields = [
+        "Model",
+        "Config",
+        "N",
+        "Mean TPF",
+        "Peak TPF",
+        "Commit Tau (32)",
+        "Mean Finalization Run",
+        "Busiest 10% Finalization Share",
+        "P90 Final-Stable Progress",
+        "Revised Position Share",
+    ]
+    metrics = []
+    for row in rows:
+        trace = row.get("Trace Summary") or {}
+        if not trace:
+            continue
+        metrics.append(
+            {
+                "Model": row.get("Model"),
+                "Config": row.get("Config"),
+                "N": row.get("N"),
+                "Mean TPF": row.get("Mean TPF"),
+                "Peak TPF": row.get("Peak TPF"),
+                "Commit Tau (32)": _nested_mean(
+                    trace, "commit_order_tau", "32"
+                ),
+                "Mean Finalization Run": _nested_mean(
+                    trace, "update_geometry", "mean_finalization_run_length"
+                ),
+                "Busiest 10% Finalization Share": _nested_mean(
+                    trace,
+                    "parallelism_signature",
+                    "busiest_10pct_finalization_share",
+                ),
+                "P90 Final-Stable Progress": _nested_mean(
+                    trace, "final_stable_progress", "p90"
+                ),
+                "Revised Position Share": row.get("Revised Position Share"),
+            }
+        )
+    if not metrics:
+        return False
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(metrics)
+    return True
 
 
 def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -> list[Path]:
@@ -139,132 +213,10 @@ def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -
             )
             written.append(metadata_path)
 
-            for key, filename in (
-                ("Tps", "quality_tps.png"),
-                ("Seconds/Sample", "quality_seconds_per_sample.png"),
-                ("Energy/Sample", "quality_energy_per_sample.png"),
-            ):
-                path = out_dir / filename
-                plot_quality_vs_resource(group_rows, key, str(path))
-                if path.exists():
-                    written.append(path)
-            energy_path = out_dir / "score_per_unit_energy.png"
-            plot_score_per_unit(group_rows, "Score per Unit Energy", str(energy_path))
-            if energy_path.exists():
-                written.append(energy_path)
-            answer_path = out_dir / "answer_region_diagnostics.png"
-            plot_answer_region_diagnostics(group_rows, str(answer_path))
-            if answer_path.exists():
-                written.append(answer_path)
-            for metric, filename in (
-                ("q", "p1_vs_p2_quality.png"),
-                ("Tps", "p1_vs_p2_tps.png"),
-            ):
-                path = out_dir / filename
-                plot_p1_vs_p2(group_rows, metric, str(path))
-                if path.exists():
-                    written.append(path)
-
-            task4_specs = (
-                (
-                    "task4_tpf_profile.png",
-                    lambda path: plot_task4_curve_overlay(
-                        group_rows,
-                        "tpf",
-                        str(path),
-                        xlabel="Normalized Forward Progress",
-                        ylabel="Mean TPF (token/forward)",
-                    ),
-                ),
-                (
-                    "task4_certainty.png",
-                    lambda path: plot_task4_curve_overlay(
-                        group_rows,
-                        "certainty",
-                        str(path),
-                        xlabel="Accepted Ratio",
-                        ylabel="Remaining-token Certainty",
-                    ),
-                ),
-                ("task4_tpf_vs_tps.png", lambda path: plot_tpf_vs_tps(group_rows, str(path))),
-                (
-                    "task4_parallelism_signature.png",
-                    lambda path: plot_task4_parallelism_signature(
-                        group_rows, str(path)
-                    ),
-                ),
-                (
-                    "task4_draft_volatility.png",
-                    lambda path: plot_task4_draft_volatility(group_rows, str(path)),
-                ),
-                (
-                    "task4_update_geometry.png",
-                    lambda path: plot_task4_update_geometry(group_rows, str(path)),
-                ),
-                (
-                    "task4_visible_draft_correction.png",
-                    lambda path: plot_task4_visible_draft_correction(
-                        group_rows, str(path)
-                    ),
-                ),
-                (
-                    "task4_confidence_dynamics.png",
-                    lambda path: plot_task4_confidence_dynamics(
-                        group_rows, str(path)
-                    ),
-                ),
-                (
-                    "task4_forward_yield.png",
-                    lambda path: plot_task4_forward_yield(group_rows, str(path)),
-                ),
-                (
-                    "dflash_speculative_acceptance.png",
-                    lambda path: plot_speculative_acceptance(group_rows, str(path)),
-                ),
-                (
-                    "task4_commit_tau_windows.png",
-                    lambda path: plot_task4_tau_windows(group_rows, str(path)),
-                ),
-                (
-                    "task4_finalization_share.png",
-                    lambda path: plot_task4_finalization_share(group_rows, str(path)),
-                ),
-                (
-                    "task4_style_coverage.png",
-                    lambda path: plot_task4_style_coverage(group_rows, str(path)),
-                ),
-                (
-                    "task4_structure_first.png",
-                    lambda path: plot_task4_structure_first(group_rows, str(path)),
-                ),
-            )
-            for filename, plotter in task4_specs:
-                path = out_dir / filename
-                plotter(path)
-                if path.exists():
-                    written.append(path)
-            if dataset_name in {"sudoku9", "sudoku9_thinking"}:
-                path = out_dir / "task4_sudoku_revision.png"
-                plot_sudoku_revision_diagnostics(group_rows, str(path))
-                if path.exists():
-                    written.append(path)
-
-            tpf_rows = [
-                {
-                    "Model": row["Model"],
-                    "Config": row["Config"],
-                    "N": row.get("N"),
-                    "Mean TPF": row.get("Mean TPF"),
-                    "Tps": row.get("Tps"),
-                }
-                for row in group_rows
-                if row.get("Mean TPF") is not None
-            ]
-            if tpf_rows:
-                path = out_dir / "task4_tpf_vs_tps.csv"
-                with path.open("w", newline="", encoding="utf-8") as handle:
-                    writer = csv.DictWriter(handle, fieldnames=list(tpf_rows[0]))
-                    writer.writeheader()
-                    writer.writerows(tpf_rows)
-                written.append(path)
+            _remove_stale_report_plots(out_dir)
+            trace_metrics_path = out_dir / "trace_metrics.csv"
+            trace_metrics_path.unlink(missing_ok=True)
+            if _write_trace_metrics(group_rows, trace_metrics_path):
+                written.append(trace_metrics_path)
+            (out_dir / "task4_tpf_vs_tps.csv").unlink(missing_ok=True)
     return written

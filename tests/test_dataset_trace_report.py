@@ -170,12 +170,8 @@ def test_sudoku_revision_is_easy_hard_and_mapping_coverage_gated(tmp_path: Path)
 
     written = render_dataset_trace_report("sudoku9", records, tmp_path)
     assert Path(written["summary"]).exists()
-    assert Path(written["finalization_map"]).exists()
     assert Path(written["tpf_tps"]).exists()
-    assert Path(written["parallelism_signature"]).exists()
-    assert Path(written["final_stable_progress"]).exists()
-    assert Path(written["draft_volatility"]).exists()
-    assert Path(written["update_geometry"]).exists()
+    assert set(written) == {"summary", "tpf_tps"}
 
     comparison_path = tmp_path / "sudoku_comparison.png"
     plot_sudoku_revision_diagnostics(

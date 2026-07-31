@@ -209,16 +209,15 @@ def test_render_sample_report_writes_expected_files(tmp_path):
         final_output_text=result.output_text,
         final_score=1.0,
     )
-    # Design-doc single-sample evidence plus one animated form of the same
-    # token canvas. Parallelism/speed/first-commit are dataset-level only.
+    # Curated sample evidence keeps one DGtest-style all-update trace.
     for key in (
-        "heatmap",
-        "token_grid_gif",
-        "certainty",
+        "all_updates",
+        "entropy",
         "result",
     ):
         assert key in written
         assert Path(written[key]).exists()
+    assert "token_grid_gif" not in written
     assert "parallelism" not in written
     assert "strategy" not in written
     assert "token_grid_final" not in written

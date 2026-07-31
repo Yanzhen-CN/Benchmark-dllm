@@ -1007,75 +1007,23 @@ def render_dataset_trace_report(
     summary_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    written = {"summary": str(summary_path)}
-    curve_specs = {
-        "tpf": ("Normalized Forward Progress", "Tokens per Forward"),
-        "certainty": ("Accepted Ratio", "Remaining-token Certainty"),
-        "top1": ("Accepted Ratio", "Remaining-token Mean Top-1 Confidence"),
-    }
-    for name, (xlabel, ylabel) in curve_specs.items():
-        path = out / f"dataset_{name}.png"
-        _plot_curve(curves.get(name, []), path, xlabel=xlabel, ylabel=ylabel)
-        if path.exists():
-            written[name] = str(path)
-
-    style_path = out / "dataset_structure_content_progress.png"
-    _plot_two_curves(
-        curves.get("style_structure", []),
-        curves.get("style_content", []),
-        style_path,
-        first_label="Structure Progress",
-        second_label="Content Progress",
-        xlabel="Answer-local Normalized Progress",
-        ylabel="Normalized cumulative formation",
-    )
-    if style_path.exists():
-        written["style"] = str(style_path)
-
-    finalization_map_path = out / "dataset_finalization_map.png"
-    _plot_finalization_map(records, finalization_map_path)
-    if finalization_map_path.exists():
-        written["finalization_map"] = str(finalization_map_path)
-
-    for key, plotter, filename in (
-        ("commit_order_tau", _plot_tau, "dataset_commit_order_tau.png"),
-        ("finalization_share", _plot_finalization_share, "dataset_finalization_share.png"),
-        (
-            "parallelism_signature",
-            _plot_parallelism_signature,
-            "dataset_parallelism_signature.png",
-        ),
-        (
-            "final_stable_progress",
-            _plot_finalization_quantiles,
-            "dataset_final_stable_progress.png",
-        ),
-        (
-            "draft_volatility",
-            _plot_draft_volatility,
-            "dataset_draft_volatility.png",
-        ),
-        (
-            "update_geometry",
-            _plot_update_geometry,
-            "dataset_update_geometry.png",
-        ),
-        (
-            "visible_draft_correction",
-            _plot_visible_draft_correction,
-            "dataset_visible_draft_correction.png",
-        ),
-        (
-            "confidence_dynamics",
-            _plot_confidence_dynamics,
-            "dataset_confidence_dynamics.png",
-        ),
+    for filename in (
+        "dataset_tpf.png",
+        "dataset_certainty.png",
+        "dataset_top1.png",
+        "dataset_structure_content_progress.png",
+        "dataset_finalization_map.png",
+        "dataset_commit_order_tau.png",
+        "dataset_finalization_share.png",
+        "dataset_parallelism_signature.png",
+        "dataset_final_stable_progress.png",
+        "dataset_draft_volatility.png",
+        "dataset_update_geometry.png",
+        "dataset_visible_draft_correction.png",
+        "dataset_confidence_dynamics.png",
     ):
-        path = out / filename
-        if summary.get(key):
-            plotter(summary, path)
-        if path.exists():
-            written[key] = str(path)
+        (out / filename).unlink(missing_ok=True)
+    written = {"summary": str(summary_path)}
 
     tpf_tps_path = out / "dataset_tpf_tps.txt"
     tpf_tps = summary.get("tpf_tps")

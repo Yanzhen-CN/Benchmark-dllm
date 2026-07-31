@@ -1,2 +1,0 @@
-Model | Mean TPF (token/forward) | Tps (token/s)
-gemma / ar-baseline | 1 | 10.8953

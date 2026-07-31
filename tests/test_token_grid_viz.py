@@ -18,7 +18,12 @@ from dllm_bench.report.token_grid_viz import (
     render_token_grid_gif,
     token_grid_geometry,
 )
-from dllm_bench.report.trace_distribution_viz import plot_commit_speed, plot_position_vs_first_commit
+from dllm_bench.report.trace_distribution_viz import (
+    plot_commit_speed,
+    plot_all_updates,
+    plot_position_vs_first_commit,
+    plot_token_entropy_heatmap,
+)
 
 
 def test_gradient_color_never_touched_is_mask_fill():
@@ -84,6 +89,42 @@ def test_compute_running_accept_counts_reflects_revision():
     running = compute_running_accept_counts(trace)
     assert running[-1][0] == 2
     assert running[-1][1] == 1
+
+
+def test_plot_all_updates_writes_rank_colored_figure(tmp_path):
+    trace = [
+        TraceStep(
+            forward_index=0,
+            token_ids=[1, -1],
+            position_states=[PositionState.ACCEPTED, PositionState.MASKED],
+            committed_positions=[0],
+            decoded_text="a [MASK]",
+        ),
+        TraceStep(
+            forward_index=1,
+            token_ids=[2, 3],
+            position_states=[PositionState.ACCEPTED, PositionState.ACCEPTED],
+            committed_positions=[0, 1],
+            decoded_text="b c",
+        ),
+    ]
+    out_path = tmp_path / "all_updates.png"
+    plot_all_updates(trace, out_path, title="test", block_length=1)
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
+
+
+def test_plot_token_entropy_heatmap_writes_separate_figure(tmp_path):
+    trace = _make_trace(n_positions=8, steps=4)
+    for step in trace:
+        step.entropy_by_position = {
+            position: 0.1 + position / 10
+            for position in range(len(step.position_states))
+        }
+    out_path = tmp_path / "entropy.png"
+    plot_token_entropy_heatmap(trace, out_path, title="test", block_length=4)
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0
 
 
 def test_render_token_grid_final_png_writes_file(tmp_path):

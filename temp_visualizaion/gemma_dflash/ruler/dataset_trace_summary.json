@@ -1,9 +1,0 @@
-{
-  "dataset": "ruler",
-  "model": "gemma_dflash",
-  "config": "dflash",
-  "selected_samples": 30,
-  "trace_samples": 0,
-  "trace_coverage_rate": 0.0,
-  "curves": {}
-}
