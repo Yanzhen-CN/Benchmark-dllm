@@ -8,8 +8,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..runner.output_layout import run_id
+from ...runner.output_layout import run_id
 from .tables import RAW_COLUMNS, raw_results_row, render_raw_results_table
+from .paper_assets import render_paper_assets
 
 
 def _slug(value: str) -> str:
@@ -219,4 +220,5 @@ def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -
             if _write_trace_metrics(group_rows, trace_metrics_path):
                 written.append(trace_metrics_path)
             (out_dir / "task4_tpf_vs_tps.csv").unlink(missing_ok=True)
+    written.extend(render_paper_assets(summaries, report_root))
     return written

@@ -19,9 +19,10 @@ import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap, LogNorm, Normalize
+from matplotlib.colors import BoundaryNorm, ListedColormap, LogNorm, Normalize
+from matplotlib.ticker import MaxNLocator
 
-from ..interfaces import TraceStep
+from ...interfaces import TraceStep
 from .token_grid_viz import (
     compute_running_accept_counts,
     count_ticks,
@@ -67,20 +68,26 @@ def _draw_block_boundaries(
         )
 
 
-def _revision_count_cmap() -> LinearSegmentedColormap:
-    """Low update count is blue-green; repeated revisions progress to red."""
-    return LinearSegmentedColormap.from_list(
-        "dllm_bench_revision_count",
-        [
-            (45 / 255, 165 / 255, 170 / 255),
-            (86 / 255, 190 / 255, 120 / 255),
-            (232 / 255, 205 / 255, 75 / 255),
-            (240 / 255, 128 / 255, 55 / 255),
-            (205 / 255, 45 / 255, 45 / 255),
-            (110 / 255, 18 / 255, 35 / 255),
-        ],
-        N=256,
+FIRST_ACCEPTANCE_COLOR = "#2563eb"
+
+
+def _acceptance_rank_cmap(
+    max_rank: int,
+) -> tuple[ListedColormap, BoundaryNorm]:
+    """Blue for first acceptance; yellow-to-red for later accepted events."""
+    if max_rank < 1:
+        raise ValueError("max_rank must be at least one")
+    warm = plt.get_cmap("YlOrRd")
+    later_colors = [
+        warm(value)
+        for value in np.linspace(0.18, 0.92, max_rank - 1)
+    ]
+    cmap = ListedColormap(
+        [FIRST_ACCEPTANCE_COLOR, *later_colors],
+        name="dllm_bench_acceptance_rank",
     )
+    boundaries = np.arange(0.5, max_rank + 1.5, 1.0)
+    return cmap, BoundaryNorm(boundaries, cmap.N)
 
 
 def plot_position_vs_first_commit(
@@ -122,7 +129,7 @@ def plot_position_vs_first_commit(
 
     if max_count > 1:
         cbar = fig.colorbar(mappable, ax=ax, fraction=0.04, pad=0.02)
-        cbar.set_label("Cumulative revisions (log scale)")
+        cbar.set_label("Cumulative accepted-event count (log scale)")
         ticks = count_ticks(max_count)
         cbar.set_ticks(ticks)
         cbar.set_ticklabels([str(t) for t in ticks])
@@ -140,7 +147,7 @@ def plot_all_updates(
     title: str = "",
     block_length: int | None = None,
 ) -> None:
-    """DGtest-style position vs every accepted/revision step."""
+    """DGtest-style position versus every observable accepted event."""
     if not trace:
         return
     counts: dict[int, int] = {}
@@ -158,14 +165,12 @@ def plot_all_updates(
         return
 
     max_rank = max(ranks)
-    cmap = _revision_count_cmap()
-    norm = LogNorm(vmin=1, vmax=max_rank) if max_rank > 1 else Normalize(vmin=0, vmax=1)
-    colors = ranks if max_rank > 1 else [0.0] * len(ranks)
+    cmap, norm = _acceptance_rank_cmap(max_rank)
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
     mappable = ax.scatter(
         positions,
         steps,
-        c=colors,
+        c=ranks,
         cmap=cmap,
         norm=norm,
         s=[16 + 3 * min(rank - 1, 8) for rank in ranks],
@@ -177,14 +182,27 @@ def plot_all_updates(
     ax.set_ylim(-1, max(step.forward_index for step in trace) + 1)
     ax.set_xlabel("Global token position")
     if max_rank > 1:
-        ax.set_ylabel("Accepted / revision step")
-        plot_description = "token position vs every accepted/revision step"
+        ax.set_ylabel("Accepted / re-accepted step")
+        plot_description = "token position vs every accepted event"
     else:
         # Commitment-only adapters expose each final token once. Calling these
         # events "revisions" would overstate what the trace can observe.
         ax.set_ylabel("First accepted step")
         plot_description = "token position vs first accepted step"
-    ax.set_title(f"{title + ': ' if title else ''}{plot_description}")
+    ax.set_title(
+        f"{title + ': ' if title else ''}{plot_description}",
+        pad=30,
+    )
+    ax.text(
+        1.0,
+        1.015,
+        "blue = first acceptance | yellow \u2192 red = later accepted events",
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=8,
+        color="#4b5563",
+    )
     ax.grid(True, alpha=0.22)
     _draw_block_boundaries(
         ax,
@@ -193,7 +211,7 @@ def plot_all_updates(
     )
     if max_rank > 1:
         colorbar = fig.colorbar(mappable, ax=ax, fraction=0.04, pad=0.02)
-        colorbar.set_label("Cumulative acceptance / revision count (log scale)")
+        colorbar.set_label("Cumulative acceptance count")
         ticks = count_ticks(max_rank)
         colorbar.set_ticks(ticks)
         colorbar.set_ticklabels([str(tick) for tick in ticks])
@@ -210,7 +228,13 @@ def plot_token_entropy_heatmap(
     title: str = "",
     block_length: int | None = None,
 ) -> None:
-    """Token entropy on a deliberately separate yellow-to-red color scale."""
+    """DGtest-style token-level entropy convergence heatmap.
+
+    Entropy uses DGtest's viridis scale (low=purple, high=yellow), while the
+    accepted/revision plot deliberately keeps its separate blue-green-to-red
+    count scale. Missing observations stay light grey instead of being
+    misrepresented as zero entropy.
+    """
     if not trace:
         return
     n_positions = max(len(step.position_states) for step in trace)
@@ -224,9 +248,8 @@ def plot_token_entropy_heatmap(
     if finite.size == 0:
         return
 
-    # Spectral_r maps high entropy to red/orange and low entropy to blue/green,
-    # matching the visual direction of an entropy-decay process.
-    cmap = plt.get_cmap("Spectral_r").with_extremes(bad="#eeeeee")
+    observed_steps = len(trace)
+    cmap = plt.get_cmap("viridis").with_extremes(bad="#eeeeee")
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
     image = ax.imshow(
         values,
@@ -236,17 +259,37 @@ def plot_token_entropy_heatmap(
         cmap=cmap,
         vmin=0.0,
         vmax=float(np.max(finite)),
+        extent=(-0.5, n_positions - 0.5, 0.5, observed_steps + 0.5),
     )
     ax.set_xlabel("Global token position")
-    ax.set_ylabel("Forward step")
-    ax.set_title(f"{title + ': ' if title else ''}token entropy")
+    ax.set_ylabel("Denoising / forward step")
+    ax.set_ylim(0.5, observed_steps + 0.5)
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_title(
+        f"{title + ': ' if title else ''}token-level entropy convergence"
+    )
+    ax.text(
+        n_positions - 1,
+        observed_steps,
+        f"stop {observed_steps}",
+        ha="right",
+        va="top",
+        fontsize=8,
+        color="black",
+        bbox={
+            "facecolor": "white",
+            "edgecolor": "none",
+            "alpha": 0.72,
+            "pad": 1.5,
+        },
+    )
     _draw_block_boundaries(
         ax,
         n_positions=n_positions,
         block_length=block_length,
     )
     colorbar = fig.colorbar(image, ax=ax, fraction=0.04, pad=0.02)
-    colorbar.set_label("Token entropy")
+    colorbar.set_label("Normalized token entropy")
     fig.tight_layout()
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

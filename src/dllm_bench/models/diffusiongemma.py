@@ -393,8 +393,6 @@ def _build_trace_from_captured_steps(
         final_tokens_per_canvas[canvas_index] = step_data["accepted_canvas"][0].tolist()
 
     trace: list[TraceStep] = []
-    previous_masks: dict[int, list[bool]] = {}
-    previous_tokens: dict[int, list[int]] = {}
     for step_data, canvas_index in zip(captured_steps, canvas_indices):
         offset = canvas_index * canvas_length
         accepted_canvas = step_data["accepted_canvas"][0].tolist()
@@ -410,19 +408,16 @@ def _build_trace_from_captured_steps(
         position_states = [PositionState.ACCEPTED] * offset + [
             PositionState.ACCEPTED if accepted else PositionState.VISIBLE for accepted in accepted_mask
         ]
-        prior_mask = previous_masks.get(canvas_index, [False] * len(accepted_mask))
-        prior_tokens = previous_tokens.get(canvas_index, accepted_canvas)
+        # DiffusionGemma's accepted_token_mask is recomputed for every forward.
+        # Its complement is re-noised before the next forward, so the trace must
+        # record the sampler's actual per-step acceptance set rather than a diff
+        # against the preceding canvas. Token revisions are derived downstream
+        # by comparing repeated accepted events at the same position.
         committed_positions = [
             offset + index
             for index, accepted in enumerate(accepted_mask)
             if accepted
-            and (
-                not prior_mask[index]
-                or accepted_canvas[index] != prior_tokens[index]
-            )
         ]
-        previous_masks[canvas_index] = list(accepted_mask)
-        previous_tokens[canvas_index] = list(accepted_canvas)
 
         token_texts = [tokenizer.decode([t]) for t in token_ids]
         entropy_by_position = {
@@ -430,7 +425,6 @@ def _build_trace_from_captured_steps(
             for i, accepted in enumerate(accepted_mask)
             if not accepted
         }
-
         trace.append(
             TraceStep(
                 forward_index=len(trace),

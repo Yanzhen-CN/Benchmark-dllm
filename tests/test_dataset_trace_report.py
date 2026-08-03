@@ -14,11 +14,11 @@ from dllm_bench.interfaces import (
     TimingResult,
     TraceStep,
 )
-from dllm_bench.report.dataset_trace_report import (
+from dllm_bench.visual.public.dataset_trace_report import (
     build_dataset_trace_summary,
     render_dataset_trace_report,
 )
-from dllm_bench.report.plots import plot_sudoku_revision_diagnostics
+from dllm_bench.visual.public.plots import plot_sudoku_revision_diagnostics
 
 
 def _result(trace: list[TraceStep], length: int) -> GenerationResult:
@@ -171,7 +171,7 @@ def test_sudoku_revision_is_easy_hard_and_mapping_coverage_gated(tmp_path: Path)
     written = render_dataset_trace_report("sudoku9", records, tmp_path)
     assert Path(written["summary"]).exists()
     assert Path(written["tpf_tps"]).exists()
-    assert set(written) == {"summary", "tpf_tps"}
+    assert set(written) == {"summary", "tpf_tps", "auxiliary_performance"}
 
     comparison_path = tmp_path / "sudoku_comparison.png"
     plot_sudoku_revision_diagnostics(

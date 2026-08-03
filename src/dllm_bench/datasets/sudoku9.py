@@ -3,8 +3,8 @@
 The paper uses Park's one-million-game dataset, rows 0..99,999 for training
 and rows 100,000..100,999 for testing. This benchmark preserves the official
 81-digit puzzle/solution representation and complete-sequence accuracy.
-The prompt asks checkpoints to copy the puzzle and replace only its
-zeros, returning the completed grid directly without a reasoning process.
+The prompt fixes every given clue and asks checkpoints to fill only blank
+cells, returning the completed grid directly without a reasoning process.
 The scorer tolerates missing markers, incidental wrappers, or row formatting,
 extracts the final complete grid, and compares it with the reference sequence;
 direct-output/marker compliance is a separate diagnostic.
@@ -45,7 +45,7 @@ Grid = list[list[int]]
 _BLANK_TOKENS = {".", "0", "_"}
 
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
-SUDOKU_PROTOCOL_REVISION = "direct-copy-fill-raw-answer-v8"
+SUDOKU_PROTOCOL_REVISION = "fixed-clues-valid-grid-direct-v9"
 SUDOKU_REASONING_PROTOCOL_REVISION = "grid-prompt-marked-answer-v3"
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
@@ -617,12 +617,14 @@ def _build_prompt(
             f"{SUDOKU_ANSWER_END}"
         )
     return (
-        f"Solve this 9x9 Sudoku puzzle: {puzzle_digits}, where '0' represents "
-        "an empty cell and the characters are ordered row by row, from left "
-        "to right and top to bottom.\n"
-        "Directly output the COMPLETE 81-character string answer. Copy the "
-        "puzzle to the output and replace every 0 with the correct digit.\n"
-        "Your output must be exactly 81 digits using only 1-9 and nothing else."
+        f"Solve this 9x9 Sudoku puzzle: {puzzle_digits}. The puzzle is written "
+        "row by row, and 0 represents an empty cell.\n"
+        "Every non-zero digit is a fixed clue. Do not change, move, or omit any "
+        "fixed clue. Fill only the positions containing 0.\n"
+        "The completed grid must contain each digit from 1 to 9 exactly once in "
+        "every row, every column, and every 3x3 subgrid.\n"
+        "Directly output the COMPLETE 81-character string answer in row-major "
+        "order, using only digits 1-9 and nothing else."
     )
 
 
@@ -801,7 +803,7 @@ def _load_official_test_samples(
                             "prompt_protocol": (
                                 "nine_row_grid_reasoning_then_81_digits"
                                 if reasoning
-                                else "nine_row_grid_direct_raw_copy_fill_81_digits"
+                                else "fixed_clues_valid_grid_direct_81_digits"
                             ),
                             "enable_reasoning": reasoning,
                             "official_output_format": "81_solution_digits",

@@ -3,10 +3,11 @@ import copy
 import pytest
 
 from dllm_bench.interfaces import PositionState, TraceStep
-from dllm_bench.report.sudoku_trace_viz import (
+from dllm_bench.visual.public.sudoku_trace_viz import (
     CellState,
     SudokuCell,
     derive_sudoku_frames,
+    derive_sudoku_layout_frames,
     render_sudoku_gif,
     simulate_sudoku_frames,
 )
@@ -151,6 +152,41 @@ def test_derive_sudoku_frames_masked_position_is_hidden():
     assert frames[-1][0].state == CellState.HIDDEN
 
 
+def test_layout_keeps_last_forward_state_and_appends_final_output():
+    puzzle = _puzzle_with_blanks([(0, 0)])
+    digits = [str(_SOLUTION[row][col]) for row in range(9) for col in range(9)]
+    trace = [
+        TraceStep(
+            forward_index=0,
+            token_ids=list(range(81)),
+            position_states=[PositionState.ACCEPTED] * 81,
+            committed_positions=list(range(81)),
+            decoded_text="".join(digits),
+            token_texts=digits,
+        ),
+        TraceStep(
+            forward_index=1,
+            token_ids=list(range(81)),
+            position_states=[PositionState.VISIBLE]
+            + [PositionState.ACCEPTED] * 80,
+            committed_positions=list(range(1, 81)),
+            decoded_text="".join(digits),
+            token_texts=digits,
+        ),
+    ]
+
+    frames, steps = derive_sudoku_layout_frames(
+        trace,
+        puzzle,
+        _SOLUTION,
+        final_valid_length=81,
+    )
+
+    assert steps == [0, 1, "final output"]
+    assert frames[-2].board[0].state == CellState.HIDDEN
+    assert frames[-1].board[0].state == CellState.FILL_CORRECT
+
+
 def test_render_sudoku_gif_writes_file_and_legend_fits_canvas(tmp_path):
     puzzle = _puzzle_with_blanks([(0, 0), (4, 4)])
     frames = simulate_sudoku_frames(puzzle, _SOLUTION, seed=5)
@@ -164,12 +200,12 @@ def test_render_sudoku_gif_writes_file_and_legend_fits_canvas(tmp_path):
         assert getattr(img, "n_frames", 1) == len(frames)
         # the legend text must fit within the rendered canvas width (this
         # guards the earlier "legend text got cut off" bug).
-        from dllm_bench.report.sudoku_trace_viz import _load_font
+        from dllm_bench.visual.public.sudoku_trace_viz import _load_font
 
         meta_font = _load_font(13)
         legend_text = (
-            "gray=undecided | black=given (correct) | yellow=given (mismatch) | "
-            "green=filled correct | red=filled wrong"
+            "black=original clue | gray <n>=unaligned/noise | "
+            "green=correct | red=wrong"
         )
         legend_width = ImageDraw.Draw(img).textbbox((0, 0), legend_text, font=meta_font)[2]
         assert legend_width <= img.size[0]

@@ -1,10 +1,12 @@
 from pathlib import Path
 
 import pytest
+from matplotlib.axes import Axes
+from matplotlib.colors import to_hex
 
 from dllm_bench.interfaces import GenerationRequest, PositionState, TraceStep
 from dllm_bench.models.mock import MockDiffusionAdapter
-from dllm_bench.report.token_grid_viz import (
+from dllm_bench.visual.public.token_grid_viz import (
     FIRST_ACCEPT_FILL,
     MASK_FILL,
     PANEL_BG,
@@ -18,7 +20,9 @@ from dllm_bench.report.token_grid_viz import (
     render_token_grid_gif,
     token_grid_geometry,
 )
-from dllm_bench.report.trace_distribution_viz import (
+from dllm_bench.visual.public.trace_distribution_viz import (
+    FIRST_ACCEPTANCE_COLOR,
+    _acceptance_rank_cmap,
     plot_commit_speed,
     plot_all_updates,
     plot_position_vs_first_commit,
@@ -114,7 +118,20 @@ def test_plot_all_updates_writes_rank_colored_figure(tmp_path):
     assert out_path.stat().st_size > 0
 
 
-def test_plot_token_entropy_heatmap_writes_separate_figure(tmp_path):
+def test_all_updates_uses_blue_then_warm_reaccept_colors():
+    cmap, norm = _acceptance_rank_cmap(4)
+    first = cmap(norm(1))
+    second = cmap(norm(2))
+    fourth = cmap(norm(4))
+
+    assert to_hex(first) == FIRST_ACCEPTANCE_COLOR
+    assert to_hex(second) != FIRST_ACCEPTANCE_COLOR
+    assert second[0] > second[2]  # first re-accept is in the warm family
+    assert fourth[1] < second[1]  # later accepted events progress toward red
+    assert fourth[2] < second[2]
+
+
+def test_plot_token_entropy_heatmap_uses_dgtest_style(tmp_path, monkeypatch):
     trace = _make_trace(n_positions=8, steps=4)
     for step in trace:
         step.entropy_by_position = {
@@ -122,9 +139,31 @@ def test_plot_token_entropy_heatmap_writes_separate_figure(tmp_path):
             for position in range(len(step.position_states))
         }
     out_path = tmp_path / "entropy.png"
+    captured = {}
+    original_imshow = Axes.imshow
+
+    def capture_imshow(self, *args, **kwargs):
+        captured.update(kwargs)
+        return original_imshow(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "imshow", capture_imshow)
     plot_token_entropy_heatmap(trace, out_path, title="test", block_length=4)
     assert out_path.exists()
     assert out_path.stat().st_size > 0
+    assert captured["origin"] == "lower"
+    assert captured["interpolation"] == "nearest"
+    assert captured["cmap"].name.startswith("viridis")
+    assert captured["vmin"] == 0.0
+    n_positions = max(len(step.position_states) for step in trace)
+    assert captured["vmax"] == pytest.approx(
+        max(value for step in trace for value in step.entropy_by_position.values())
+    )
+    assert captured["extent"] == (
+        -0.5,
+        n_positions - 0.5,
+        0.5,
+        len(trace) + 0.5,
+    )
 
 
 def test_render_token_grid_final_png_writes_file(tmp_path):

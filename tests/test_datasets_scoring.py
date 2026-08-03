@@ -490,9 +490,9 @@ def test_sudoku4_loader_validates_official_shape_and_prompt(tmp_path):
     assert len(samples) == 500
     assert samples[0].meta["blank_count"] == 8
     assert samples[0].meta["difficulty_stratified"] is False
-    assert "Copy the puzzle to the output" in samples[0].prompt
-    assert "ordered row by row, from left to right and top to bottom" in samples[0].prompt
-    assert "must be exactly 16 digits using only 1-4 and nothing else" in samples[0].prompt
+    assert "Every non-zero digit is a fixed clue" in samples[0].prompt
+    assert "COMPLETE 16-character string answer in row-major order" in samples[0].prompt
+    assert "using only digits 1-4 and nothing else" in samples[0].prompt
     assert "<reasoning>" not in samples[0].prompt
     assert "<answer>" not in samples[0].prompt
     assert "3102200002100320" in samples[0].prompt
@@ -805,9 +805,17 @@ def test_load_official_sudoku_split_wraps_raw_puzzle_in_minimal_instruction(tmp_
         _build_prompt(hard),
     ]
     assert all("Solve this 9x9 Sudoku puzzle" in sample.prompt for sample in samples)
-    assert all("Copy the puzzle to the output" in sample.prompt for sample in samples)
-    assert all("ordered row by row, from left to right and top to bottom" in sample.prompt for sample in samples)
-    assert all("must be exactly 81 digits using only 1-9 and nothing else" in sample.prompt for sample in samples)
+    assert all(
+        "Every non-zero digit is a fixed clue" in sample.prompt for sample in samples
+    )
+    assert all(
+        "COMPLETE 81-character string answer in row-major order" in sample.prompt
+        for sample in samples
+    )
+    assert all(
+        "using only digits 1-9 and nothing else" in sample.prompt
+        for sample in samples
+    )
     assert all("You may reason" not in sample.prompt for sample in samples)
     assert all(SUDOKU_ANSWER_BEGIN not in sample.prompt for sample in samples)
     assert all(SUDOKU_ANSWER_END not in sample.prompt for sample in samples)

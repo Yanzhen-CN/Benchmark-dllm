@@ -4,7 +4,7 @@ import pytest
 
 from dllm_bench.interfaces import GenerationRequest
 from dllm_bench.models.mock import MockDiffusionAdapter
-from dllm_bench.report.plots import (
+from dllm_bench.visual.public.plots import (
     plot_answer_region_diagnostics,
     plot_p1_vs_p2,
     plot_quality_vs_resource,
@@ -12,14 +12,14 @@ from dllm_bench.report.plots import (
     plot_speculative_acceptance,
     plot_task4_forward_yield,
 )
-from dllm_bench.report.pairwise import (
+from dllm_bench.visual.public.pairwise import (
     PairwiseCompatibilityError,
     compute_pairwise_row,
     render_pairwise_table,
     write_pairwise_outputs,
 )
-from dllm_bench.report.tables import raw_results_row, render_raw_results_table
-from dllm_bench.report.trace_report import render_sample_report
+from dllm_bench.visual.public.tables import raw_results_row, render_raw_results_table
+from dllm_bench.visual.public.trace_report import render_sample_report
 
 
 def _summary(model, config, q, tps=1.0, eps=None):
@@ -212,11 +212,11 @@ def test_render_sample_report_writes_expected_files(tmp_path):
     # Curated sample evidence keeps one DGtest-style all-update trace.
     for key in (
         "all_updates",
-        "entropy",
         "result",
     ):
         assert key in written
         assert Path(written[key]).exists()
+    assert "entropy" not in written
     assert "token_grid_gif" not in written
     assert "parallelism" not in written
     assert "strategy" not in written

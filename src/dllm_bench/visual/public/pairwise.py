@@ -18,7 +18,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from ..metrics.quality_resource import resource_equivalent_quality, scenario_score
+from ...metrics.quality_resource import resource_equivalent_quality, scenario_score
+from .style import place_legend
 
 
 class PairwiseCompatibilityError(ValueError):
@@ -212,7 +213,7 @@ def plot_pairwise(row: dict[str, Any], metadata: dict[str, Any], out_path: str |
         f"{metadata['direction']}\nbeta={metadata['beta']}, gamma={metadata['gamma']}"
     )
     ax.axhline(row["q"], color="black", linewidth=1, linestyle="--", label="measured q")
-    ax.legend()
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)

@@ -19,9 +19,9 @@ from dllm_bench.interfaces import (
     TimingResult,
 )
 from dllm_bench.models.mock import MockDiffusionAdapter
-from dllm_bench.report.pairwise import compute_pairwise_row
-from dllm_bench.report.tables import raw_results_row, render_raw_results_table
-from dllm_bench.report.trace_report import render_sample_report
+from dllm_bench.visual.public.pairwise import compute_pairwise_row
+from dllm_bench.visual.public.tables import raw_results_row, render_raw_results_table
+from dllm_bench.visual.public.trace_report import render_sample_report
 from dllm_bench.runner.demo_samples import build_demo_samples
 from dllm_bench.runner.orchestrator import SampleRecord, run_experiment, summarize_records
 from dllm_bench.runner.persistence import load_run_summary_dict, save_run_summary
@@ -255,4 +255,5 @@ def test_render_sample_report_from_a_real_run_record(tmp_path):
         dataset_name=dataset.name,
         sample=record.sample,
     )
-    assert set(written) >= {"heatmap", "token_grid_gif", "certainty", "result"}
+    assert set(written) >= {"all_updates", "result"}
+    assert "entropy" not in written

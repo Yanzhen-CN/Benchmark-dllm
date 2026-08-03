@@ -12,6 +12,8 @@ import csv
 import os
 import random
 import re
+from functools import lru_cache
+from itertools import permutations, product
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -33,7 +35,7 @@ from ..interfaces import GenerationResult
 
 
 SUDOKU4_SOURCE_REVISION = "6f5abf5ca8a58c6e08bbf06d412ad260dca6dbd3"
-SUDOKU4_PROTOCOL_REVISION = "direct-copy-fill-raw-4x4-v6"
+SUDOKU4_PROTOCOL_REVISION = "fixed-clues-valid-grid-direct-4x4-v7"
 SUDOKU4_REASONING_PROTOCOL_REVISION = "d1-zero-shot-4x4-v1"
 SUDOKU4_SOURCE_SHA256 = "ef86c7c28ebef88484d85fda59b3909a7b621241aa1abf36343437dbc4a3ffb6"
 SUDOKU4_SOURCE_URL = (
@@ -41,9 +43,10 @@ SUDOKU4_SOURCE_URL = (
     f"{SUDOKU4_SOURCE_REVISION}/dataset/4x4_test_sudoku.csv"
 )
 
-SUDOKU4_SYSTEM_PROMPT = """Solve this 4x4 Sudoku puzzle: {puzzle}, where '0' represents an empty cell and the characters are ordered row by row, from left to right and top to bottom.
-Directly output the COMPLETE 16-character string answer. Copy the puzzle to the output and replace every 0 with the correct digit.
-Your output must be exactly 16 digits using only 1-4 and nothing else."""
+SUDOKU4_SYSTEM_PROMPT = """Solve this 4x4 Sudoku puzzle: {puzzle}. The puzzle is written row by row, and 0 represents an empty cell.
+Every non-zero digit is a fixed clue. Do not change, move, or omit any fixed clue. Fill only the positions containing 0.
+The completed grid must contain each digit from 1 to 4 exactly once in every row, every column, and every 2x2 subgrid.
+Directly output the COMPLETE 16-character string answer in row-major order, using only digits 1-4 and nothing else."""
 
 SUDOKU4_REASONING_PROMPT = """Please solve the following 4x4 Sudoku puzzle. The puzzle is provided as a 16-character string reading left-to-right, top-to-bottom, where '0' represents empty cells.
 
@@ -64,7 +67,6 @@ Your step-by-step solving process
 </answer>"""
 
 _ANSWER_RE = re.compile(r"<answer>(.*?)(?:</answer>|\Z)", re.DOTALL | re.IGNORECASE)
-_D1_ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 _COMPACT_RE = re.compile(r"(?<![0-9])([1-4]{16})(?![0-9])")
 
 
@@ -72,6 +74,45 @@ _COMPACT_RE = re.compile(r"(?<![0-9])([1-4]{16})(?![0-9])")
 class Sudoku4Reference:
     puzzle: str
     solution: str
+
+
+@lru_cache(maxsize=1)
+def _all_valid_sudoku4_solutions() -> tuple[str, ...]:
+    """Enumerate the complete 288-grid 4x4 Sudoku solution space."""
+    required = set("1234")
+    valid_rows = tuple("".join(row) for row in permutations("1234"))
+    solutions: list[str] = []
+    for rows in product(valid_rows, repeat=4):
+        if any({rows[row][column] for row in range(4)} != required for column in range(4)):
+            continue
+        if any(
+            {
+                rows[row][column]
+                for row in range(box_row, box_row + 2)
+                for column in range(box_column, box_column + 2)
+            }
+            != required
+            for box_row in (0, 2)
+            for box_column in (0, 2)
+        ):
+            continue
+        solutions.append("".join(rows))
+    return tuple(solutions)
+
+
+@lru_cache(maxsize=None)
+def valid_sudoku4_solutions(puzzle: str) -> tuple[str, ...]:
+    """Return every valid solution that preserves this puzzle's givens."""
+    if not re.fullmatch(r"[0-4]{16}", puzzle):
+        raise ValueError(f"invalid 4x4 Sudoku puzzle: {puzzle!r}")
+    solutions = tuple(
+        solution
+        for solution in _all_valid_sudoku4_solutions()
+        if all(clue == "0" or solution[index] == clue for index, clue in enumerate(puzzle))
+    )
+    if not solutions:
+        raise ValueError(f"4x4 Sudoku puzzle has no valid solution: {puzzle}")
+    return solutions
 
 
 def _reasoning_enabled(configured: bool | None = None) -> bool:
@@ -105,12 +146,6 @@ def extract_sudoku4_answer(text: str) -> tuple[str | None, bool, bool]:
         return (compact[-1] if compact else None), True, complete
     compact = _COMPACT_RE.findall(text)
     return (compact[-1] if compact else None), False, False
-
-
-def _extract_d1_answer(text: str) -> str | None:
-    """Mirror d1's case-sensitive, closed-tag answer parser."""
-    matches = _D1_ANSWER_RE.findall(text)
-    return re.sub(r"\s", "", matches[-1].strip()) if matches else None
 
 
 def locate_sudoku4_answer(text: str, *, enable_reasoning: bool) -> AnswerRegion:
@@ -262,7 +297,8 @@ class Sudoku4Dataset(Dataset):
         return {
             "upstream": "dllm-reasoning/d1:eval/sudoku.py::validate_sudoku",
             "upstream_revision": SUDOKU4_SOURCE_REVISION,
-            "metric": "blank_cell_accuracy",
+            "metric": "max_blank_cell_accuracy_over_all_valid_solutions",
+            "upstream_metric": "single_reference_blank_cell_accuracy",
             "answer_extraction": "final-submission-adapter-v1",
             "direct_track_adapter": not self._enable_reasoning,
         }
@@ -278,10 +314,17 @@ class Sudoku4Dataset(Dataset):
         )
         marker_present = "<answer>" in output_text.lower()
         marker_complete = "</answer>" in output_text.lower()
-        cell_accuracy = sudoku4_blank_cell_accuracy(
+        reference_cell_accuracy = sudoku4_blank_cell_accuracy(
             d1_prediction, reference.puzzle, reference.solution
         )
-        puzzle_success = is_valid_sudoku4(prediction, reference.puzzle)
+        accepted_solutions = valid_sudoku4_solutions(reference.puzzle)
+        cell_accuracy = max(
+            sudoku4_blank_cell_accuracy(
+                d1_prediction, reference.puzzle, accepted_solution
+            )
+            for accepted_solution in accepted_solutions
+        )
+        puzzle_success = prediction in accepted_solutions
         exact = prediction == reference.solution
         source_payload = (
             output_text[region.start_char : region.end_char].strip()
@@ -305,6 +348,9 @@ class Sudoku4Dataset(Dataset):
         )
         aux = {
             "d1_blank_cell_accuracy": cell_accuracy,
+            "d1_reference_blank_cell_accuracy": reference_cell_accuracy,
+            "valid_solution_count": float(len(accepted_solutions)),
+            "accepted_solution_match": float(puzzle_success),
             "puzzle_success_rate": float(puzzle_success),
             "reference_exact_match": float(exact),
             "given_preservation_rate": clue_rate,
@@ -318,7 +364,8 @@ class Sudoku4Dataset(Dataset):
             "answer_marker_complete_rate": float(marker_complete),
         }
         result = ScoreResult(
-            # d1's published evaluator averages correctness over original blanks.
+            # Preserve d1's partial-credit behavior while accepting every valid
+            # completion of a non-unique puzzle, not only its stored reference.
             primary_score=cell_accuracy,
             aux=aux,
             valid=d1_prediction is not None,
@@ -406,7 +453,7 @@ def _load_d1_samples(
                         "prompt_protocol": (
                             "d1 official zero-shot reasoning"
                             if reasoning
-                            else "direct raw copy-and-fill"
+                            else "direct fixed-clues valid-grid"
                         ),
                         "enable_reasoning": reasoning,
                         "blank_count": 8,

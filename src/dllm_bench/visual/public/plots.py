@@ -9,6 +9,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from .style import place_legend
+
 
 def _label(row: dict[str, Any]) -> str:
     n = row.get("N")
@@ -26,14 +28,14 @@ def plot_quality_vs_resource(
         if x is None or y is None:
             continue
         plotted = True
-        ax.scatter(x, y, s=60)
-        ax.annotate(_label(row), (x, y), fontsize=8, xytext=(4, 4), textcoords="offset points")
+        ax.scatter(x, y, s=60, label=_label(row))
     if not plotted:
         plt.close(fig)
         return
     ax.set_xlabel(resource_key)
     ax.set_ylabel("q (measured primary score)")
     ax.set_title(title or f"Quality vs {resource_key}")
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -79,7 +81,7 @@ def plot_p1_vs_p2(rows: list[dict[str, Any]], metric_key: str, out_path: str) ->
     ax.set_xticklabels(models, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel(metric_key)
     ax.set_title(f"Planned parallelism P1 vs P2: {metric_key}")
-    ax.legend()
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -108,7 +110,7 @@ def plot_answer_region_diagnostics(
     ax.set_ylim(0, 1)
     ax.set_ylabel("Ratio")
     ax.set_title(title or "Answer region diagnostics")
-    ax.legend()
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -124,17 +126,11 @@ def plot_tpf_vs_tps(rows: list[dict[str, Any]], out_path: str) -> None:
         return
     fig, ax = plt.subplots(figsize=(6, 4.5))
     for row in usable:
-        ax.scatter(row["Mean TPF"], row["Tps"], s=60)
-        ax.annotate(
-            _label(row),
-            (row["Mean TPF"], row["Tps"]),
-            fontsize=8,
-            xytext=(4, 4),
-            textcoords="offset points",
-        )
+        ax.scatter(row["Mean TPF"], row["Tps"], s=60, label=_label(row))
     ax.set_xlabel("Mean TPF (token/forward)")
     ax.set_ylabel("Tps (token/s)")
     ax.set_title("Algorithmic parallelism vs measured throughput")
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -176,7 +172,7 @@ def plot_task4_curve_overlay(
         return
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.legend(fontsize=8)
+    place_legend(ax)
     fig.savefig(out_path)
     plt.close(fig)
 
@@ -212,7 +208,7 @@ def plot_task4_tau_windows(rows: list[dict[str, Any]], out_path: str) -> None:
     ax.set_xlabel("Window Size (tokens)")
     ax.set_ylabel("Per-sample Mean Kendall tau-b")
     ax.set_title("Commit order by local window")
-    ax.legend(fontsize=8)
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -242,7 +238,7 @@ def plot_task4_finalization_share(rows: list[dict[str, Any]], out_path: str) -> 
     ax.set_ylim(0, 1)
     ax.set_ylabel("Final valid token share")
     ax.set_title("Early / middle / late finalization")
-    ax.legend()
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -463,7 +459,7 @@ def plot_task4_visible_draft_correction(
         axes[1].set_ylim(0, 1)
         axes[1].set_ylabel("Rate / normalized area")
         axes[1].set_title("First-visible final match and wrong-draft exposure")
-        axes[1].legend(fontsize=8)
+        place_legend(axes[1])
         width = 0.24
         for offset, (key, label, color) in enumerate(
             (
@@ -482,7 +478,7 @@ def plot_task4_visible_draft_correction(
         axes[2].set_ylim(0, 1)
         axes[2].set_ylabel("Revision-event share")
         axes[2].set_title("Direction of visible-draft revisions")
-        axes[2].legend(fontsize=8)
+        place_legend(axes[2])
         bottom = [0.0] * len(indices)
         for key, label, color in (
             ("revision_early_share", "early", "#4C78A8"),
@@ -495,7 +491,7 @@ def plot_task4_visible_draft_correction(
         axes[3].set_ylim(0, 1)
         axes[3].set_ylabel("Revision-event share")
         axes[3].set_title("When visible-draft revisions happen")
-        axes[3].legend(fontsize=8)
+        place_legend(axes[3])
     else:
         for ax in axes[1:]:
             ax.text(
@@ -617,7 +613,7 @@ def plot_task4_style_coverage(rows: list[dict[str, Any]], out_path: str) -> None
     ax.set_ylim(0, 1)
     ax.set_ylabel("Coverage ratio")
     ax.set_title("Answer-local structure analysis coverage")
-    ax.legend()
+    place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -719,7 +715,7 @@ def plot_sudoku_revision_diagnostics(rows: list[dict[str, Any]], out_path: str) 
                 width,
                 label=stage,
             )
-        axes[1].legend()
+        place_legend(axes[1])
         axes[1].set_ylabel("Mean visible-token revisions / sample")
     else:
         axes[1].text(

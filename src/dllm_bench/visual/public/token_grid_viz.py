@@ -11,7 +11,7 @@ own trace visualizer) for continuity with that prior art:
 - brown text on white: visible-but-uncommitted ("noisy") token
 - light-green fill + green text: just accepted this frame (first time)
 - black text on white: stable (accepted once, unchanged since)
-- green -> teal -> blue -> purple -> near-black gradient: revised / re-accepted
+- green -> teal -> blue -> purple -> near-black gradient: re-accepted
   multiple times, colored by cumulative accept count (log scale)
 - red outline: position committed *this* frame
 
@@ -19,7 +19,7 @@ Unlike the original DiffusionGemma visualizer (which reads multi-canvas CSVs off
 several sampler configs side by side in one figure), this operates on a
 single in-memory trace for one sample/run — the orchestration across
 model/config/dataset combinations happens one level up, in
-``report/trace_report.py``.
+``visual/public/trace_report.py``.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from ..interfaces import PositionState, TraceStep
+from ...interfaces import PositionState, TraceStep
 
 # --- palette (matches Gemma/DGtest/visual.py) ------------------------------
 
@@ -70,13 +70,13 @@ def _lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[i
 
 
 def gradient_color_for_count(count: int, max_count: int) -> tuple[int, int, int]:
-    """Log-scaled *revision* gradient: `count` is a position's cumulative
+    """Log-scaled re-acceptance gradient: `count` is a position's cumulative
     accept count, and this only means anything once a position has been
-    accepted more than once (i.e. revised/re-masked-and-re-accepted).
+    accepted more than once (for example, re-masked and re-accepted).
 
     `count <= 0` (never touched) -> neutral mask fill. `count == 1` (accepted
     exactly once, never revised) -> neutral panel background — deliberately
-    NOT the gradient's first stop, so a trace with zero revisions (e.g. the
+    NOT the gradient's first stop, so a trace with zero re-acceptances (e.g. the
     mock adapter, or any sampler that never re-masks) renders as neutral
     throughout rather than collapsing to the gradient's single endpoint
     (which is what a naive `count / max_count` normalization would do when
@@ -95,14 +95,14 @@ def gradient_color_for_count(count: int, max_count: int) -> tuple[int, int, int]
 
 
 def matplotlib_gradient_cmap():
-    """The same green->teal->blue->purple->near-black revision gradient as
+    """The same green->teal->blue->purple->near-black re-acceptance gradient as
     :func:`gradient_color_for_count`, as a matplotlib colormap — used by
-    ``report/trace_distribution_viz.py`` so the static charts and the GIF/PNG
+    ``visual/public/trace_distribution_viz.py`` so the static charts and the GIF/PNG
     read as one visual system."""
     from matplotlib.colors import LinearSegmentedColormap
 
     return LinearSegmentedColormap.from_list(
-        "dllm_bench_revision", [tuple(c / 255.0 for c in stop) for stop in _GRADIENT_STOPS], N=256
+        "dllm_bench_reaccept", [tuple(c / 255.0 for c in stop) for stop in _GRADIENT_STOPS], N=256
     )
 
 
@@ -166,7 +166,7 @@ def meaningful_committed_positions(
 
     Some persisted DiffusionGemma traces stored the whole accepted mask in
     ``committed_positions``. An already-accepted, unchanged token is not a new
-    commit and must not inflate revision colors or commit-speed plots.
+    accepted event and must not inflate re-accept colors or accept-speed plots.
     """
     step = trace[step_index]
     if step_index == 0:
@@ -191,7 +191,7 @@ def meaningful_committed_positions(
 def compute_running_accept_counts(trace: list[TraceStep]) -> list[dict[int, int]]:
     """Per-step cumulative accept count per position (position i's count
     increments every time it appears in that step's `committed_positions`,
-    whether that's its first acceptance or a later revision)."""
+    whether that's its first acceptance or a later re-acceptance)."""
     counts: dict[int, int] = {}
     running: list[dict[int, int]] = []
     for step_index, step in enumerate(trace):
@@ -326,7 +326,7 @@ def render_frame(
     draw.rectangle((strip_x0, strip_y0, strip_x1, strip_y1), outline=STRIP_BORDER, width=1)
     draw.text(
         (strip_x0, strip_y1 + 4),
-        "gray=masked | brown=visible | green=first accept | black=stable | teal/blue/purple=revised | red=committed now",
+        "gray=masked | brown=visible | green=first accept | black=stable | teal/blue/purple=re-accepted | red=accepted now",
         fill=MUTED,
         font=meta_font,
     )

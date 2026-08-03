@@ -97,3 +97,18 @@ def resolve_score_output_dir(output_root: str | Path, model_name: str, config_na
 
 def visualization_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
     return _stage_dir(output_root, VISUALIZATION_OUTPUT, model_name, config_name, dataset_name)
+
+
+def model_comparison_visualization_output_dir(
+    output_root: str | Path,
+    model_name: str,
+    dataset_name: str,
+) -> Path:
+    """Return the canonical location for model-specific cross-variant plots."""
+    return (
+        Path(output_root)
+        / VISUALIZATION_OUTPUT
+        / model_name
+        / "model_comparison"
+        / dataset_name
+    )

@@ -55,16 +55,19 @@ from .registry import (
     load_yaml,
     model_name,
 )
-from .report.tables import raw_results_row, render_raw_results_table
-from .report.raw_report import write_raw_report
-from .report.pairwise import (
+from .visual.public.tables import raw_results_row, render_raw_results_table
+from .visual.public.raw_report import write_raw_report
+from .visual.public.pairwise import (
     PairwiseCompatibilityError,
     compute_pairwise_row,
     summary_label,
     write_pairwise_outputs,
 )
-from .report.dataset_trace_report import render_dataset_trace_report
-from .report.trace_report import render_sample_report
+from .visual import (
+    render_dataset_visualization,
+    render_model_comparison_visualization,
+    render_sample_visualization,
+)
 from .runner.demo_samples import build_demo_samples
 from .runner.generate_stage import (
     OOMInvalidTestError,
@@ -79,6 +82,7 @@ from .runner.output_layout import (
     resolve_score_output_dir,
     score_output_dir,
     visualization_output_dir,
+    model_comparison_visualization_output_dir,
 )
 from .runner.persistence import (
     load_generation_result,
@@ -591,6 +595,11 @@ def score(
 @_common_options
 @click.option("--n-representative", default=None, type=int, help="Only visualize the first N samples (default: all)")
 @click.option("--sample-ids", default=None, help="Comma-separated sample ids to visualize (overrides --n-representative)")
+@click.option(
+    "--figures",
+    default=None,
+    help="Comma-separated model comparison figures: all,trace,state,convergence,yield,forward",
+)
 def visualize(
     model_config: str,
     variant: str | None,
@@ -604,6 +613,7 @@ def visualize(
     output_root: str,
     n_representative: int | None,
     sample_ids: str | None,
+    figures: str | None,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
@@ -623,11 +633,16 @@ def visualize(
     else:
         representative_ids = {sample.sample_id for sample in all_samples}
 
+    model_settings = load_yaml(model_config)
     invalid_rows: list[str] = []
     incomplete_rows: list[str] = []
+    comparison_records = {}
     for v in variant_list:
-        variant_config = load_yaml(model_config)["configs"][v]
-        block_length = variant_config.get("step_config", {}).get("block_length")
+        variant_config = model_settings["configs"][v]
+        block_length = (
+            variant_config.get("step_config", {}).get("block_length")
+            or model_settings.get("trace_block_length")
+        )
         model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
         score_out = resolve_score_output_dir(output_root, configured_model, v, dataset.name)
         viz_out = visualization_output_dir(output_root, configured_model, v, dataset.name)
@@ -661,7 +676,8 @@ def visualize(
             score_path = score_out / f"{sample.sample_id}.json"
             score_result = load_score_result(score_path) if score_path.exists() else None
 
-            render_sample_report(
+            render_sample_visualization(
+                model_name=configured_model,
                 sample_id=sample.sample_id,
                 trace=generation.trace,
                 final_valid_length=generation.final_valid_length,
@@ -675,16 +691,38 @@ def visualize(
             rendered += 1
 
         if trace_records:
-            render_dataset_trace_report(
-                dataset.name,
-                trace_records,
-                viz_out,
-                seed=resolved_seed,
+            comparison_records[v] = trace_records
+            render_dataset_visualization(
                 model_name=configured_model,
+                dataset_name=dataset.name,
+                records=trace_records,
+                out_dir=viz_out,
+                seed=resolved_seed,
                 config_name=v,
+                block_length=block_length,
             )
 
         click.echo(f"[{v}] rendered {rendered} sample(s) -> {viz_out}")
+
+    if comparison_records:
+        comparison_out = model_comparison_visualization_output_dir(
+            output_root,
+            configured_model,
+            dataset.name,
+        )
+        render_model_comparison_visualization(
+            model_name=configured_model,
+            dataset_name=dataset.name,
+            records_by_variant=comparison_records,
+            out_dir=comparison_out,
+            seed=resolved_seed,
+            block_length=model_settings.get("trace_block_length"),
+            figures=(
+                {value.strip() for value in figures.split(",") if value.strip()}
+                if figures
+                else None
+            ),
+        )
 
     if invalid_rows:
         raise InvalidTestError("; ".join(invalid_rows))
@@ -904,6 +942,11 @@ def pairwise_report(
     default=None,
     help="Comma-separated curated IDs for per-sample visuals; aggregate Task 4 still uses all traces",
 )
+@click.option(
+    "--figures",
+    default=None,
+    help="Comma-separated model comparison figures passed to the selected model visualizer",
+)
 @click.pass_context
 def matrix_command(
     ctx: click.Context,
@@ -922,6 +965,7 @@ def matrix_command(
     resume: bool,
     n_representative: int,
     sample_ids: str | None,
+    figures: str | None,
 ) -> None:
     """Run every model-variant x dataset row declared in an experiment YAML."""
     if len(model_names) != 1:
@@ -1022,6 +1066,7 @@ def matrix_command(
                     **common,
                     n_representative=n_representative,
                     sample_ids=sample_ids,
+                    figures=figures,
                 )
         except (IncompleteTestError, FileNotFoundError) as exc:
             incomplete_jobs += 1

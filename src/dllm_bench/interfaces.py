@@ -2,8 +2,8 @@
 
 Every adapter — HF autoregressive, HF-style diffusion, W1 API, or the test
 mock — implements :class:`ModelAdapter` and returns a :class:`GenerationResult`.
-The orchestrator (``runner/orchestrator.py``), the metrics modules
-(``metrics/*.py``) and the report layer (``report/*.py``) only ever depend on
+The runner modules (``runner/*.py``), the metrics modules
+(``metrics/*.py``) and the visualization layer (``visual/public/*.py``) only ever depend on
 these types, never on a concrete backend. This is what lets the design
 document's "only swap the model, not the pipeline" requirement hold in code.
 """
@@ -62,7 +62,7 @@ class TraceStep:
     what its API actually returns (see Appendix D.3, unresolved as of writing).
     ``token_texts`` is the human-readable string per position (parallel to
     ``token_ids``), for backends that can cheaply provide it — the trace
-    visualizer (``report/token_grid_viz.py``) shows it in each grid cell,
+    visualizer (``visual/public/token_grid_viz.py``) shows it in each grid cell,
     falling back to ``str(token_id)`` when a backend doesn't populate it.
     """
 
@@ -113,7 +113,7 @@ class ModelAdapter(Protocol):
 
     ``name``/``config_name`` identify the model+config pair for reports (e.g.
     "illada" / "p1"). ``supports_trace`` and ``natively_measures_resources``
-    let the orchestrator and report layer know which Part 3/4 analyses are
+    let the runner and visualization layers know which Part 3/4 analyses are
     even possible for this backend (see design doc section 5's per-model
     table and Appendix D.3 for the W1 caveats).
     """

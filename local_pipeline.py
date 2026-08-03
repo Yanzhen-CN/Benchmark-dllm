@@ -65,6 +65,17 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
         parser.set_defaults(resume=True)
     if stage == "visualize":
         parser.add_argument(
+            "--figure",
+            action="extend",
+            nargs="+",
+            default=[],
+            choices=("all", "trace", "state", "convergence", "yield", "forward"),
+            help=(
+                "Visualization subset. Public choices work for every model; "
+                "'forward' is currently DiffusionGemma-specific."
+            ),
+        )
+        parser.add_argument(
             "--n-representative",
             type=int,
             default=0,
@@ -105,6 +116,7 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             if part.strip()
         )
     )
+    selected_figures = ",".join(dict.fromkeys(getattr(args, "figure", [])))
 
     print(f"Matrix: {matrix_path}")
     print(f"Local stage: {stage}")
@@ -129,6 +141,8 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             command.extend(["--n-representative", str(args.n_representative)])
             if args.sample_ids:
                 command.extend(["--sample-ids", args.sample_ids])
+            if selected_figures:
+                command.extend(["--figures", selected_figures])
         if stage == "score":
             command.append("--resume" if args.resume else "--no-resume")
         if args.n_samples is not None:

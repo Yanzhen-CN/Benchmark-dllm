@@ -1,6 +1,6 @@
 # Main compact Sudoku track for 4B/8B general checkpoints. The source and
 # primary blank-cell metric follow d1; the shared benchmark prompt uses a
-# direct raw copy-and-fill answer protocol with no reasoning text. Whole-puzzle
+# direct fixed-clue answer protocol with no reasoning text. Whole-puzzle
 # validity is also reported so partial credit cannot look like a solved board.
 dataset: sudoku4
 dataset_class: dllm_bench.datasets.sudoku4.Sudoku4Dataset

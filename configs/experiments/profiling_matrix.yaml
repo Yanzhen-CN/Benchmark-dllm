@@ -1,0 +1,31 @@
+# Minimal profiling matrix: 3 model operating points x 3 representative tasks.
+# Use a separate output root (for example output/profiling) and opt in to
+# --measure-compute. With the pinned dataset revisions and seed 42, n_samples=1
+# selects the expected IDs below. Confirm each generated _meta.json before use.
+
+base_dir: ../..
+
+models:
+  - config: configs/models/diffusiongemma.yaml
+    variants: [official]
+  - config: configs/models/illada.yaml
+    variants: [p2]
+  - config: configs/models/dreamreasoner.yaml
+    variants: [p2]
+
+datasets:
+  # Expected seed-42 sample: mbpp-sanitized-0455
+  - config: configs/datasets/mbpp.yaml
+    n_samples: 1
+    max_new_tokens: 512
+  # Expected seed-42 sample: gsm8k-test-0588
+  - config: configs/datasets/gsm8k.yaml
+    n_samples: 1
+    max_new_tokens: 512
+  # Expected seed-42 sample: structeval-t-170217
+  - config: configs/datasets/structeval_t.yaml
+    n_samples: 1
+    max_new_tokens: 512
+
+seed: 42
+trace_scope: all_samples

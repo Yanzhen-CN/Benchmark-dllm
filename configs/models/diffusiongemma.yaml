@@ -35,6 +35,7 @@
 # output is persisted, and post-EOS pads are excluded from valid length/trace.
 model: diffusiongemma
 max_context_tokens: 262144
+trace_block_length: 256
 configs:
   official:
     adapter: dllm_bench.models.diffusiongemma.DiffusionGemmaAdapter

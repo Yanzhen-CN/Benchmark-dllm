@@ -7,19 +7,20 @@ import json
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 
-from ..datasets.base import Sample
-from ..interfaces import GenerationResult, PositionState
-from ..metrics.certainty import build_observed_certainty_curve
-from ..metrics.commit_order import aggregate_commit_order, commit_order_tau_windows
-from ..metrics.stats_utils import BinnedPoint, aggregate_curve_by_bins, summarize
-from ..metrics.strategy_score import normalized_progress_series, strategy_score
-from ..metrics.trace_parallelism import (
+from ...datasets.base import Sample
+from ...interfaces import GenerationResult, PositionState
+from ...metrics.certainty import build_observed_certainty_curve
+from .trace_metrics import (
+    build_auxiliary_performance_summary,
+    visible_revision_profile,
+    write_auxiliary_performance_csv,
+)
+from ...metrics.commit_order import aggregate_commit_order, commit_order_tau_windows
+from ...metrics.stats_utils import BinnedPoint, aggregate_curve_by_bins, summarize
+from ...metrics.strategy_score import normalized_progress_series, strategy_score
+from ...metrics.trace_parallelism import (
     compute_final_stable_steps,
     effective_tokens_per_forward,
     finalization_share,
@@ -41,285 +42,6 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def _plot_curve(
-    points: list[BinnedPoint], path: Path, *, xlabel: str, ylabel: str
-) -> None:
-    if not points:
-        return
-    x = [point.bin_center for point in points]
-    y = [point.stats.mean for point in points]
-    low = [point.stats.ci_low for point in points]
-    high = [point.stats.ci_high for point in points]
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.plot(x, y, marker="o")
-    ax.fill_between(x, low, high, alpha=0.2)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_two_curves(
-    first: list[BinnedPoint],
-    second: list[BinnedPoint],
-    path: Path,
-    *,
-    first_label: str,
-    second_label: str,
-    xlabel: str,
-    ylabel: str,
-) -> None:
-    if not first or not second:
-        return
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    for points, label in ((first, first_label), (second, second_label)):
-        x = [point.bin_center for point in points]
-        y = [point.stats.mean for point in points]
-        low = [point.stats.ci_low for point in points]
-        high = [point.stats.ci_high for point in points]
-        ax.plot(x, y, marker="o", label=label)
-        ax.fill_between(x, low, high, alpha=0.16)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.set_ylim(0, 1)
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_tau(summary: dict[str, Any], path: Path) -> None:
-    tau = summary.get("commit_order_tau", {})
-    if not tau:
-        return
-    windows = sorted((int(window) for window in tau))
-    medians = [tau[str(window)]["median"] for window in windows]
-    lows = [tau[str(window)]["ci_low"] for window in windows]
-    highs = [tau[str(window)]["ci_high"] for window in windows]
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.errorbar(
-        windows,
-        medians,
-        yerr=[
-            [max(0.0, median - low) for median, low in zip(medians, lows)],
-            [max(0.0, high - median) for median, high in zip(medians, highs)],
-        ],
-        marker="o",
-        capsize=4,
-    )
-    ax.axhline(0, color="black", linewidth=0.8)
-    ax.set_ylim(-1, 1)
-    ax.set_xlabel("Window Size (tokens)")
-    ax.set_ylabel("Kendall tau-b")
-    ax.set_title("Commit order by local window")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_finalization_share(summary: dict[str, Any], path: Path) -> None:
-    shares = summary.get("finalization_share", {})
-    labels = [label for label in ("early", "middle", "late") if label in shares]
-    if not labels:
-        return
-    medians = [shares[label]["median"] for label in labels]
-    lows = [shares[label]["ci_low"] for label in labels]
-    highs = [shares[label]["ci_high"] for label in labels]
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.bar(
-        labels,
-        medians,
-        yerr=[
-            [max(0.0, median - low) for median, low in zip(medians, lows)],
-            [max(0.0, high - median) for median, high in zip(medians, highs)],
-        ],
-        capsize=4,
-    )
-    ax.set_ylim(0, 1)
-    ax.set_ylabel("Final valid token share")
-    ax.set_title("When tokens become finally stable")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_draft_volatility(summary: dict[str, Any], path: Path) -> None:
-    burden = summary.get("draft_volatility", {})
-    keys = [
-        key
-        for key in ("revised_position_share", "mean_revisions_per_position")
-        if key in burden
-    ]
-    if not keys:
-        return
-    labels = ["Revised position share", "Mean revisions / position"][: len(keys)]
-    means = [burden[key]["mean"] for key in keys]
-    lows = [burden[key]["ci_low"] for key in keys]
-    highs = [burden[key]["ci_high"] for key in keys]
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.bar(
-        labels,
-        means,
-        yerr=[
-            [max(0.0, mean - low) for mean, low in zip(means, lows)],
-            [max(0.0, high - mean) for mean, high in zip(means, highs)],
-        ],
-        capsize=4,
-    )
-    ax.set_ylabel("Dataset-level mean (bootstrap 95% CI)")
-    ax.set_title("Draft-token volatility before final stabilization")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_parallelism_signature(summary: dict[str, Any], path: Path) -> None:
-    signature = summary.get("parallelism_signature", {})
-    if not signature:
-        return
-    fig, axes = plt.subplots(1, 2, figsize=(9, 4.2))
-    burst = signature["peak_to_mean_tpf"]["mean"]
-    axes[0].bar(["Peak / Mean TPF"], [burst], color="#E15759")
-    axes[0].axhline(1.0, color="black", linewidth=0.8, linestyle="--")
-    axes[0].set_ylabel("Ratio")
-    axes[0].set_title("Finalization burstiness")
-
-    labels = ["Active forwards", "Busiest 10%\nfinalization share"]
-    values = [
-        signature["active_forward_ratio"]["mean"],
-        signature["busiest_10pct_finalization_share"]["mean"],
-    ]
-    axes[1].bar(labels, values, color=["#4C78A8", "#F28E2B"])
-    axes[1].set_ylim(0, 1)
-    axes[1].set_ylabel("Share")
-    axes[1].set_title("How concentrated is final token production?")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_finalization_quantiles(summary: dict[str, Any], path: Path) -> None:
-    quantiles = summary.get("final_stable_progress", {})
-    if not quantiles:
-        return
-    labels = ["P50", "P90", "P99"]
-    values = [quantiles[label.lower()]["mean"] for label in labels]
-    fig, ax = plt.subplots(figsize=(6, 4.2))
-    ax.bar(labels, values, color=["#59A14F", "#F28E2B", "#E15759"])
-    ax.set_ylim(0, 1)
-    ax.set_ylabel("Normalized Forward Progress")
-    ax.set_title("When final tokens become stable")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_update_geometry(summary: dict[str, Any], path: Path) -> None:
-    geometry = summary.get("update_geometry", {})
-    if not geometry:
-        return
-    labels = ["Run length", "Runs / active forward", "Span density"]
-    keys = [
-        "mean_finalization_run_length",
-        "mean_finalization_run_count",
-        "mean_finalization_span_density",
-    ]
-    values = [geometry[key]["mean"] for key in keys]
-    fig, ax = plt.subplots(figsize=(7, 4.2))
-    ax.bar(labels, values, color=["#4C78A8", "#F28E2B", "#59A14F"])
-    ax.set_ylabel("Dataset-level mean")
-    ax.set_title("Final-stable update geometry")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_visible_draft_correction(summary: dict[str, Any], path: Path) -> None:
-    correction = summary.get("visible_draft_correction", {})
-    if correction.get("observation_status") != "observable":
-        return
-    labels = ["First-visible\nfinal match", "Wrong-draft\nexposure AUC", "Relapse\npositions"]
-    keys = [
-        "first_visible_final_match_rate",
-        "wrong_draft_exposure_auc",
-        "relapse_position_share",
-    ]
-    values = [correction[key]["mean"] for key in keys]
-    fig, ax = plt.subplots(figsize=(7, 4.2))
-    ax.bar(labels, values, color=["#59A14F", "#E15759", "#B07AA1"])
-    ax.set_ylim(0, 1)
-    ax.set_ylabel("Share / normalized area")
-    ax.set_title("Visible-draft correction dynamics")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_confidence_dynamics(summary: dict[str, Any], path: Path) -> None:
-    dynamics = summary.get("confidence_dynamics", {})
-    if not dynamics.get("backslide_step_rate"):
-        return
-    labels = ["Backslide\nstep rate", "Backslide magnitude\n/ transition", "Total variation\n/ transition"]
-    keys = [
-        "backslide_step_rate",
-        "mean_backslide_magnitude_per_transition",
-        "mean_total_variation_per_transition",
-    ]
-    values = [dynamics[key]["mean"] for key in keys]
-    fig, ax = plt.subplots(figsize=(7, 4.2))
-    ax.bar(labels, values, color=["#E15759", "#F28E2B", "#4C78A8"])
-    ax.set_ylabel("Dataset-level mean")
-    ax.set_title("Observed certainty correction / backslide")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
-
-def _plot_finalization_map(
-    records: list[tuple[Sample, GenerationResult]], path: Path, bins: int = 32
-) -> None:
-    """Equal-sample density of final position versus final-stable forward."""
-    sample_histograms = []
-    for _, result in records:
-        if not result.trace:
-            continue
-        length = result.final_valid_length or len(result.trace[-1].token_ids)
-        if length <= 0:
-            continue
-        sequences = [step.token_ids[:length] for step in result.trace]
-        stable = compute_final_stable_steps(sequences)
-        if not stable:
-            continue
-        x = np.asarray(
-            [index / (len(stable) - 1) if len(stable) > 1 else 0.0 for index in range(len(stable))]
-        )
-        y = np.asarray(
-            [normalized_forward_progress(step, len(sequences)) for step in stable]
-        )
-        histogram, _, _ = np.histogram2d(
-            x, y, bins=bins, range=((0, 1), (0, 1))
-        )
-        sample_histograms.append(histogram / histogram.sum())
-    if not sample_histograms:
-        return
-    density = np.mean(sample_histograms, axis=0).T
-    fig, ax = plt.subplots(figsize=(6, 5))
-    image = ax.imshow(
-        density,
-        origin="lower",
-        extent=(0, 1, 0, 1),
-        aspect="auto",
-        cmap="magma",
-    )
-    ax.set_xlabel("Normalized Final Token Position")
-    ax.set_ylabel("Normalized Final-Stable Forward")
-    ax.set_title("Dataset-level token finalization map")
-    fig.colorbar(image, ax=ax, label="Equal-sample token mass")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
-
 
 def _envelope(values: list[float]) -> list[float]:
     normalized = normalized_progress_series(values)
@@ -335,21 +57,21 @@ def _style_observation(
     dataset_name: str, sample: Sample, result: GenerationResult
 ) -> dict[str, Any] | None:
     if dataset_name == "mbpp":
-        from ..datasets.answer_region import (
+        from ...datasets.answer_region import (
             answer_local_checkpoint_texts,
             locate_mbpp_answer,
         )
-        from ..datasets.mbpp import mbpp_text_checkpoint_scores
-        from ..datasets.structeval_t import checkpoint_indices
+        from ...datasets.mbpp import mbpp_text_checkpoint_scores
+        from ...datasets.structeval_t import checkpoint_indices
 
         region = locate_mbpp_answer(result.output_text)
         scorer = lambda texts: mbpp_text_checkpoint_scores(texts)
     elif dataset_name == "structeval_t":
-        from ..datasets.answer_region import (
+        from ...datasets.answer_region import (
             answer_local_checkpoint_texts,
             locate_structeval_answer,
         )
-        from ..datasets.structeval_t import (
+        from ...datasets.structeval_t import (
             checkpoint_indices,
             struct_eval_t_text_checkpoint_scores,
         )
@@ -383,26 +105,15 @@ def _style_observation(
     return observation
 
 
-def _revision_metrics(result: GenerationResult, length: int) -> tuple[float, float]:
-    revisions: list[int] = []
-    for position in range(length):
-        previous = None
-        changes = 0
-        for step in result.trace:
-            if position >= len(step.token_ids) or position >= len(step.position_states):
-                continue
-            if step.position_states[position] == PositionState.MASKED:
-                continue
-            token = step.token_ids[position]
-            if previous is not None and token != previous:
-                changes += 1
-            previous = token
-        revisions.append(changes)
-    if not revisions:
-        return 0.0, 0.0
+def _revision_metrics(
+    result: GenerationResult, length: int
+) -> tuple[float | None, float | None]:
+    profile = visible_revision_profile(result, length)
+    if profile is None:
+        return None, None
     return (
-        sum(value > 0 for value in revisions) / len(revisions),
-        sum(revisions) / len(revisions),
+        profile["revised_position_share"],
+        profile["revisions_per_final_position"],
     )
 
 
@@ -570,8 +281,8 @@ def _sudoku9_revision_summary(
     rather than emitting visually plausible but meaningless zero bars.
     """
 
-    from ..datasets.sudoku9 import SudokuReference, classify_difficulty
-    from ..metrics.sudoku_revision import (
+    from ...datasets.sudoku9 import SudokuReference, classify_difficulty
+    from ...metrics.sudoku_revision import (
         correction_outcomes,
         revision_counts_by_stage,
         trace_parseable_step_count,
@@ -699,6 +410,14 @@ def build_dataset_trace_summary(
     curves: dict[str, list[BinnedPoint]] = {}
     if not usable:
         return summary, curves
+
+    auxiliary_performance, _ = build_auxiliary_performance_summary(
+        dataset_name=dataset_name,
+        records=records,
+        model_name=model_name,
+        config_name=config_name,
+    )
+    summary["auxiliary_performance"] = auxiliary_performance
 
     tpf_samples: list[list[tuple[float, float]]] = []
     certainty_samples: list[list[tuple[float, float]]] = []
@@ -833,8 +552,9 @@ def build_dataset_trace_summary(
                 )
 
         revised_share, revision_mean = _revision_metrics(result, length)
-        revised_shares.append(revised_share)
-        revision_means.append(revision_mean)
+        if revised_share is not None and revision_mean is not None:
+            revised_shares.append(revised_share)
+            revision_means.append(revision_mean)
         draft_metrics = _draft_correction_metrics(result, length)
         if draft_metrics is not None:
             draft_observable_samples += 1
@@ -953,21 +673,35 @@ def build_dataset_trace_summary(
         ),
     }
     summary["draft_volatility"] = {
-        "revised_position_share": _jsonable(summarize(revised_shares, seed=seed)),
-        "mean_revisions_per_position": _jsonable(summarize(revision_means, seed=seed)),
+        "semantics": (
+            "changed-token re-acceptance only; proposal refresh and re-noising "
+            "are excluded"
+        ),
+        "revised_position_share": (
+            _jsonable(summarize(revised_shares, seed=seed))
+            if revised_shares
+            else None
+        ),
+        "mean_revisions_per_position": (
+            _jsonable(summarize(revision_means, seed=seed))
+            if revision_means
+            else None
+        ),
     }
     summary["visible_draft_correction"] = {
+        "metric_status": "deprecated_draft_churn_diagnostic_not_revision",
         "observable_sample_rate": draft_observable_samples / len(usable),
         "observation_status": (
             "observable" if draft_observable_samples else "commitment_only_trace"
         ),
         **{
-            key: _jsonable(summarize(values, seed=seed))
+            key: _jsonable(summarize(values, seed=seed)) if values else None
             for key, values in draft_metric_values.items()
         },
         "comparison_note": (
-            "N/A for MASKED-to-ACCEPTED commitment-only traces; zero must not be "
-            "reported as a correction result."
+            "Adjacent visible-canvas changes include proposal refresh and re-noising. "
+            "Do not report this block as revision or correction; use draft_volatility "
+            "for changed-token re-acceptance."
         ),
     }
     if dataset_name in {"mbpp", "structeval_t"}:
@@ -1024,6 +758,16 @@ def render_dataset_trace_report(
     ):
         (out / filename).unlink(missing_ok=True)
     written = {"summary": str(summary_path)}
+
+    _, auxiliary_rows = build_auxiliary_performance_summary(
+        dataset_name=dataset_name,
+        records=records,
+        model_name=model_name,
+        config_name=config_name,
+    )
+    auxiliary_path = out / "dataset_auxiliary_performance.csv"
+    if write_auxiliary_performance_csv(auxiliary_rows, auxiliary_path):
+        written["auxiliary_performance"] = str(auxiliary_path)
 
     tpf_tps_path = out / "dataset_tpf_tps.txt"
     tpf_tps = summary.get("tpf_tps")
