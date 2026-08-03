@@ -198,10 +198,10 @@ python run_visualization.py \
 Model-specific comparison modules may also expose a direct CLI:
 
 ```bash
-python -m dllm_bench.visual.diffusiongemma \
+python -m dllm_bench.visual.models.diffusiongemma \
   -d structeval_t \
   -v official SC2 SC05 SC0 EB2 EB05 Lg2 Lg05 \
-  --figure entropy position forward
+  --figure trace state convergence yield forward
 ```
 
 ## Optional pairwise conversion
@@ -404,15 +404,20 @@ This explicit environment registration is intentional: dependency changes for on
 
 ### 4. Declare visualization capability
 
-Add `src/dllm_bench/visual/<name>.py`:
+Add `src/dllm_bench/visual/models/<name>.py`:
 
 ```python
-from .base import ModelVisualProfile
+from ..base import public_model_visual
 
-VISUAL_PROFILE = ModelVisualProfile()
+MODEL_VISUAL = public_model_visual("<name>")
+main = MODEL_VISUAL.main
 ```
 
-The default profile reuses all shared sample and dataset visualizations. Set `cross_variant=True` and implement a model-specific hook only when the backend exposes additional information such as entropy, acceptance counters, or a special verification process.
+This declaration reuses every compatible implementation under `visual/public/`.
+Only add a private renderer when the backend exposes model-specific information
+such as its own entropy definition, confidence signal, or sampler diagnostics.
+The public dispatcher discovers the module automatically; there is no central
+model list to edit.
 
 Never fabricate an unavailable trace field. Record its capability as `N/A`.
 

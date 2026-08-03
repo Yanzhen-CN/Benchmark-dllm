@@ -20,9 +20,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..datasets.base import Sample
-from ..interfaces import GenerationResult, TraceStep
-from .base import ModelVisualProfile
+from ...datasets.base import Sample
+from ...interfaces import GenerationResult, TraceStep
+from ..base import ModelVisual
 
 DEFAULT_BLOCK_LENGTH = 256
 VARIANT_ORDER = ("official", "SC2", "SC05", "SC0", "EB2", "EB05", "Lg2", "Lg05")
@@ -263,7 +263,7 @@ def render_model_comparison_visualization(
     figures: set[str] | None = None,
 ) -> dict[str, str]:
     """Compose the same public suite as every model plus DG-only figures."""
-    from .public.trace_comparison import render_trace_comparison
+    from ..public.trace_comparison import render_trace_comparison
 
     figures = figures or {"all"}
     allowed = {"all", "trace", "state", "convergence", "yield", "forward"}
@@ -300,17 +300,14 @@ def render_model_comparison_visualization(
     return written
 
 
-VISUAL_PROFILE = ModelVisualProfile(cross_variant=True)
+MODEL_VISUAL = ModelVisual(
+    model_name="diffusiongemma",
+    render_comparison=render_model_comparison_visualization,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
-    from .standalone import run_model_visual_cli
-
-    return run_model_visual_cli(
-        "diffusiongemma",
-        render_model_comparison_visualization,
-        argv,
-    )
+    return MODEL_VISUAL.main(argv)
 
 
 if __name__ == "__main__":

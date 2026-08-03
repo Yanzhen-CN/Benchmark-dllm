@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from dllm_bench.interfaces import PositionState, TraceStep
-from dllm_bench.visual.diffusiongemma import (
+from dllm_bench.visual.models.diffusiongemma import (
     _metrics,
     render_model_comparison_visualization,
 )
