@@ -157,6 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the experiment YAML output_root (default: use the matrix setting)",
     )
+    progress = parser.add_mutually_exclusive_group()
+    progress.add_argument("--progress", dest="progress", action="store_true", help="Force single-line progress through proxy terminals")
+    progress.add_argument("--no-progress", dest="progress", action="store_false", help="Write durable per-sample log lines instead")
+    parser.set_defaults(progress=None)
     compute = parser.add_mutually_exclusive_group()
     compute.add_argument("--measure-compute", dest="measure_compute", action="store_true")
     compute.add_argument("--no-measure-compute", dest="measure_compute", action="store_false")
@@ -207,6 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "REQUIRE_ALL_METRICS": "1" if args.require_all_metrics else "0",
         "RESUME": "1" if args.resume else "0",
     }
+    if args.progress is not None:
+        env_updates["DLLM_INTERACTIVE_PROGRESS"] = "1" if args.progress else "0"
     if args.output_root is not None:
         env_updates["OUTPUT_ROOT"] = args.output_root
     if args.dataset:

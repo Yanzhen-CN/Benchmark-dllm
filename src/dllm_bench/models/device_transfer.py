@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from threading import Event, Thread
@@ -29,7 +30,8 @@ class _TransferDisplay:
         terminal_columns: int | None = None,
     ) -> None:
         self._stream = stream or sys.stdout
-        self._interactive = bool(self._stream.isatty())
+        override = os.environ.get("DLLM_INTERACTIVE_PROGRESS")
+        self._interactive = override == "1" if override in {"0", "1"} else bool(self._stream.isatty())
         self._terminal_columns = terminal_columns
 
     def _fit_terminal(self, message: str) -> str:

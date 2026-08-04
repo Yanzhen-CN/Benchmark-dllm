@@ -25,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
         arguments.append("--no-measure-compute")
     if "--require-all-metrics" not in arguments and "--allow-missing-metrics" not in arguments:
         arguments.append("--require-all-metrics")
+    if "--progress" not in arguments and "--no-progress" not in arguments:
+        arguments.append("--progress")
     return run_bench.main([*arguments, "--stage", "generate"])
 
 
