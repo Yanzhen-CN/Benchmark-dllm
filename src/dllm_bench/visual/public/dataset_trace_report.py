@@ -401,6 +401,7 @@ def build_dataset_trace_summary(
     seed: int = 42,
     model_name: str | None = None,
     config_name: str | None = None,
+    block_length: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, list[BinnedPoint]]]:
     usable = [(sample, result) for sample, result in records if result.trace]
     summary: dict[str, Any] = {
@@ -502,11 +503,15 @@ def build_dataset_trace_summary(
         for stage, value in finalization_share(stable, len(sequences)).items():
             shares[stage].append(value)
         taus.append(commit_order_tau_windows(list(range(len(stable))), stable))
-        block_length = int(result.request.config.get("block_length", 0) or 0)
-        if block_length >= 2:
+        effective_block_length = int(
+            block_length or result.request.config.get("block_length", 0) or 0
+        )
+        if effective_block_length >= 2:
             sample_block_taus: list[float] = []
-            for block_index, start in enumerate(range(0, len(stable), block_length)):
-                end = min(start + block_length, len(stable))
+            for block_index, start in enumerate(
+                range(0, len(stable), effective_block_length)
+            ):
+                end = min(start + effective_block_length, len(stable))
                 if end - start < 2:
                     continue
                 local_tau = kendall_tau_b(
@@ -766,6 +771,7 @@ def render_dataset_trace_report(
     seed: int = 42,
     model_name: str | None = None,
     config_name: str | None = None,
+    block_length: int | None = None,
 ) -> dict[str, str]:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -775,6 +781,7 @@ def render_dataset_trace_report(
         seed=seed,
         model_name=model_name,
         config_name=config_name,
+        block_length=block_length,
     )
     summary_path = out / "dataset_trace_summary.json"
     summary["curves"] = _jsonable(curves)

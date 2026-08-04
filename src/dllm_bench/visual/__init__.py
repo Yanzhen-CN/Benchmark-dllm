@@ -79,6 +79,7 @@ def render_dataset_visualization(
                     seed=seed,
                     model_name=model_name,
                     config_name=config_name,
+                    block_length=block_length,
                 )
             )
         written.update(
