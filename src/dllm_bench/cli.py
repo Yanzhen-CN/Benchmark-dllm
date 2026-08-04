@@ -40,6 +40,7 @@ so pass matching source/count/seed values to every stage.
 from __future__ import annotations
 
 from pathlib import Path
+from time import perf_counter
 
 import click
 
@@ -408,12 +409,36 @@ def generate(
                 continue
             click.echo(f"[{v}] warmup complete")
 
+        compute_started: dict[str, float] = {}
+
         def log_progress(event, index, total, sample, generation):
             prefix = f"[{v}] {dataset.name} [{index}/{total}] {sample.sample_id}"
             if event == "start":
                 return
             if event == "compute":
+                compute_started[sample.sample_id] = perf_counter()
                 click.echo(f"{prefix}: profiling compute replay ...")
+                return
+            if event == "compute_progress":
+                detail = (
+                    generation.extra.get("_compute_replay_progress", {})
+                    if generation is not None
+                    else {}
+                )
+                completed = int(detail.get("completed_steps", 0))
+                expected = int(detail.get("expected_steps", 0))
+                started = compute_started.get(sample.sample_id)
+                elapsed = perf_counter() - started if started is not None else 0.0
+                percent = 100.0 * completed / expected if expected else 0.0
+                click.echo(
+                    f"{prefix}: compute replay {completed}/{expected} "
+                    f"({percent:.0f}%, {elapsed:.1f}s elapsed)"
+                )
+                return
+            if event == "compute_finish":
+                started = compute_started.pop(sample.sample_id, None)
+                elapsed = perf_counter() - started if started is not None else 0.0
+                click.echo(f"{prefix}: compute replay complete ({elapsed:.1f}s)")
                 return
             elapsed = (
                 generation.timing.wall_clock_seconds

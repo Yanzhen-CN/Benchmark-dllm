@@ -488,7 +488,42 @@ def run_generation(
             progress("compute", index, len(samples), sample, generation)
         profile_compute = getattr(adapter, "profile_compute", None)
         if callable(profile_compute):
-            compute_handle = profile_compute(generation.request)
+            expected_replay_steps = len(generation.forward_profiles)
+            report_interval = max(1, (expected_replay_steps + 9) // 10)
+            last_reported_step = 0
+
+            def report_compute_progress(completed_steps: int) -> None:
+                nonlocal last_reported_step
+                should_report = (
+                    completed_steps == 1
+                    or completed_steps == expected_replay_steps
+                    or completed_steps - last_reported_step >= report_interval
+                )
+                if progress is None or not should_report:
+                    return
+                last_reported_step = completed_steps
+                generation.extra["_compute_replay_progress"] = {
+                    "completed_steps": int(completed_steps),
+                    "expected_steps": int(expected_replay_steps),
+                }
+                try:
+                    progress(
+                        "compute_progress",
+                        index,
+                        len(samples),
+                        sample,
+                        generation,
+                    )
+                finally:
+                    generation.extra.pop("_compute_replay_progress", None)
+
+            generation.request.config[
+                "_compute_progress_callback"
+            ] = report_compute_progress
+            try:
+                compute_handle = profile_compute(generation.request)
+            finally:
+                generation.request.config.pop("_compute_progress_callback", None)
             generation.compute_flops = (
                 compute_handle.flops if compute_handle.available else None
             )
@@ -529,6 +564,8 @@ def run_generation(
             elif timed_stages:
                 generation.extra["stage_compute_status"] = "replay_mismatch"
             generation.extra["torch_profiler"] = compute_handle.torch_profile
+        if progress is not None:
+            progress("compute_finish", index, len(samples), sample, generation)
         if require_all_metrics:
             _validate_required_metrics(
                 adapter,

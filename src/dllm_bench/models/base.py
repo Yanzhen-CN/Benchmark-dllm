@@ -207,6 +207,9 @@ class BaseModelAdapter(ABC):
                     **metadata,
                 )
             )
+            compute_progress = request.config.get("_compute_progress_callback")
+            if callable(compute_progress):
+                compute_progress(len(self._forward_profiles))
 
         pre_handle = model.register_forward_pre_hook(before_forward, with_kwargs=True)
         post_handle = model.register_forward_hook(after_forward, with_kwargs=True)
