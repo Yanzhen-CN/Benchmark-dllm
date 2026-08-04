@@ -10,13 +10,14 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     jobs, seed = load_matrix_jobs(ROOT / "configs" / "experiments" / "full_matrix.yaml")
 
     assert seed == 42
-    assert len(jobs) == 10 * 10
+    assert len(jobs) == 11 * 10
     assert {job.model_name for job in jobs} == {
         "qwen3_4b",
         "qwen3_8b",
         "illada",
         "illada_vargen",
         "illada_entropy",
+        "llada2_1",
         "dreamreasoner",
         "w1",
         "diffusiongemma",

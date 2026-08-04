@@ -16,7 +16,7 @@ def test_setup_venv_dispatches_selected_model_script(capsys):
     assert "illada.py" not in output
 
 
-def test_setup_venv_supports_registered_model_outside_default_matrix(capsys):
+def test_setup_venv_supports_llada2_1(capsys):
     assert setup_venv.main(["--dry-run", "-m", "llada2_1"]) == 0
     output = capsys.readouterr().out
     assert "llada2_1.py setup" in output
@@ -31,6 +31,7 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "illada",
         "illada_vargen",
         "illada_entropy",
+        "llada2_1",
         "dreamreasoner",
         "w1",
         "diffusiongemma",
@@ -38,7 +39,6 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "gemma_dflash",
     ):
         assert f"{model}.py setup" in output
-    assert "llada2_1.py setup" not in output
 
 
 def test_setup_venv_supports_separate_dg_comparison_matrix(capsys):
