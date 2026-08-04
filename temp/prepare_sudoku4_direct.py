@@ -27,12 +27,13 @@ def main() -> int:
                 "sample_id": sample.sample_id,
                 "prompt": (
                     f"Solve this Sudoku: {puzzle}\n"
-                    "Directly return your answer with only 16 digits."
+                    "0 represents a blank cell. Directly return your answer "
+                    "with only 16 digits."
                 ),
                 "reference": dataclasses.asdict(sample.reference),
                 "meta": {
                     **sample.meta,
-                    "prompt_protocol": "temporary-minimal-direct-return-v7",
+                    "prompt_protocol": "temporary-minimal-direct-return-v8",
                 },
             }
             output.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")))
