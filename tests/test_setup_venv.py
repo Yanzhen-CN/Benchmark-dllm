@@ -24,6 +24,7 @@ def test_setup_venv_defaults_to_every_matrix_model(capsys):
         "qwen3_8b",
         "illada",
         "illada_vargen",
+        "illada_entropy",
         "dreamreasoner",
         "w1",
         "diffusiongemma",
@@ -47,6 +48,7 @@ def test_setup_venv_supports_separate_dg_comparison_matrix(capsys):
     [
         Path("configs/experiments/full_matrix.yaml"),
         Path("configs/experiments/dg_comparison.yaml"),
+        Path("configs/experiments/illada_entropy.yaml"),
     ],
 )
 def test_every_matrix_model_has_an_environment_profile(matrix):
@@ -100,6 +102,16 @@ def test_illada_vargen_has_a_separate_but_version_matched_environment():
     assert vargen.model_config == "configs/models/illada_vargen.yaml"
     assert vargen.torch_version == fixed.torch_version
     assert vargen.transformers_version == fixed.transformers_version
+
+
+def test_illada_entropy_has_a_separate_but_version_matched_environment():
+    fixed = _model_script.PROFILES["illada"]
+    entropy = _model_script.PROFILES["illada_entropy"]
+
+    assert entropy.venv_subdir == "illada_entropy"
+    assert entropy.model_config == "configs/models/illada_entropy.yaml"
+    assert entropy.torch_version == fixed.torch_version
+    assert entropy.transformers_version == fixed.transformers_version
 
 
 def test_gemma_reuses_legacy_environment_after_public_rename(tmp_path, monkeypatch):

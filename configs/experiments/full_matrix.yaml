@@ -1,4 +1,4 @@
-# Reference list of the section-5 model x dataset matrix (9 model configs x
+# Reference list of the section-5 model x dataset matrix (10 model configs x
 # 9 task datasets plus one isolated context-capacity diagnostic).
 # This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
@@ -45,6 +45,16 @@ models:
         n_samples: 1
   - config: configs/models/dreamreasoner.yaml # dream reasoner-8B
     variants: [p1, p2]
+    dataset_overrides:
+      sudoku4:
+        n_samples: 1
+      sudoku9:
+        n_samples: 1
+      hellobench:
+        hellobench_lengths: [2k]
+        n_samples: 1
+  - config: configs/models/illada_entropy.yaml # iLLaDA P2 budget + DG entropy acceptance
+    variants: [eb01]
     dataset_overrides:
       sudoku4:
         n_samples: 1

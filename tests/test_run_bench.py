@@ -11,6 +11,7 @@ def test_default_dry_run_selects_every_matrix_model(capsys):
     assert "illada, illada_vargen, dreamreasoner" in output
     assert "venv_scripts\\illada_vargen.py run" in output or "venv_scripts/illada_vargen.py run" in output
     assert "venv_scripts\\illada.py run" in output or "venv_scripts/illada.py run" in output
+    assert "venv_scripts\\illada_entropy.py run" in output or "venv_scripts/illada_entropy.py run" in output
     assert "venv_scripts\\diffusiongemma.py run" in output or "venv_scripts/diffusiongemma.py run" in output
     assert "venv_scripts\\gemma.py run" in output or "venv_scripts/gemma.py run" in output
     assert "venv_scripts\\qwen3_8b.py run" in output or "venv_scripts/qwen3_8b.py run" in output

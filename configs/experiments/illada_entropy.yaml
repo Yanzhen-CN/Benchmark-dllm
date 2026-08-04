@@ -1,0 +1,19 @@
+# Formal iLLaDA entropy-acceptance benchmark. This is an independent model
+# run, not a fixed-sample pair against native iLLaDA.
+base_dir: ../..
+
+models:
+  - config: configs/models/illada_entropy.yaml
+    variants: [eb01]
+
+datasets:
+  - config: configs/datasets/gsm8k.yaml
+    max_new_tokens: 512
+  - config: configs/datasets/mbpp.yaml
+    max_new_tokens: 512
+  - config: configs/datasets/structeval_t.yaml
+    max_new_tokens: 512
+
+seed: 42
+resource_measurement: reuse_formal_samples
+trace_scope: all_samples

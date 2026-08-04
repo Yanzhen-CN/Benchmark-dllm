@@ -1,0 +1,20 @@
+# iLLaDA checkpoint and P2 forward budget with only the acceptance rule
+# replaced by DiffusionGemma's cumulative entropy bound. This is a benchmark
+# hybrid, not an official iLLaDA or DiffusionGemma inference configuration.
+# Self-conditioning, random-token renoising, and DG temperature sampling are
+# intentionally excluded so entropy-based acceptance is the only changed axis.
+model: illada_entropy
+max_context_tokens: 8192
+configs:
+  eb01:
+    adapter: dllm_bench.models.illada_entropy.IlladaEntropyAdapter
+    init_kwargs:
+      model_name_or_path: GSAI-ML/iLLaDA-8B-Instruct
+    step_config:
+      gen_length: null
+      block_length: 32
+      steps_per_block: 16
+      extra:
+        entropy_bound: 0.1
+        execution_path: illada-entropy-hybrid
+        sampling_profile: dg-eb01-on-illada-mask
