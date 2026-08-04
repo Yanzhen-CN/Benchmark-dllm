@@ -49,7 +49,7 @@ GenerationProgress = Callable[
     [str, int, int, Sample, GenerationResult | None], None
 ]
 
-MEASUREMENT_PROTOCOL = "gpu-synced-v4-trace-excluded-compute-deferred"
+MEASUREMENT_PROTOCOL = "profile-first-clean-replay-v5"
 OOM_INFO_FILENAME = "oom_info.json"
 
 
@@ -277,6 +277,104 @@ def _validate_required_metrics(
         )
 
 
+def _estimated_profile_steps(request: GenerationRequest) -> int | None:
+    config = request.config
+    for key in ("steps", "max_steps", "diffusion_steps"):
+        value = config.get(key)
+        if value is not None and int(value) > 0:
+            return int(value)
+    block_length = int(config.get("block_length", 0) or 0)
+    steps_per_block = int(config.get("steps_per_block", 0) or 0)
+    if block_length > 0 and steps_per_block > 0:
+        blocks = (request.max_new_tokens + block_length - 1) // block_length
+        return blocks * steps_per_block
+    return None
+
+
+def _apply_compute_handle(generation: GenerationResult, compute_handle) -> None:
+    generation.compute_flops = (
+        compute_handle.flops if compute_handle.available else None
+    )
+    generation.compute_tflops = (
+        compute_handle.tflops if compute_handle.available else None
+    )
+    replay_flops = getattr(compute_handle, "forward_tflops", None) or []
+    replay_raw_flops = getattr(compute_handle, "forward_flops", None) or []
+    replay_phases = getattr(compute_handle, "forward_phases", None) or []
+    measured_phases = [profile.phase for profile in generation.forward_profiles]
+    if (
+        generation.forward_profiles
+        and len(replay_flops) == len(generation.forward_profiles)
+        and replay_phases == measured_phases
+    ):
+        for profile, step_tflops in zip(generation.forward_profiles, replay_flops):
+            profile.compute_tflops = step_tflops
+        if len(replay_raw_flops) == len(generation.forward_profiles):
+            for profile, step_flops in zip(
+                generation.forward_profiles, replay_raw_flops
+            ):
+                profile.compute_flops = step_flops
+        generation.extra["step_compute_status"] = "complete"
+    elif generation.forward_profiles:
+        generation.extra["step_compute_status"] = "profile_mismatch"
+        generation.extra["step_compute_profile_steps"] = len(replay_flops)
+
+    measured_stages = generation.extra.get("stage_profiles", [])
+    compute_stages = getattr(compute_handle, "stage_profiles", None) or []
+    if [item.get("stage") for item in measured_stages] == [
+        item.get("stage") for item in compute_stages
+    ]:
+        for measured, computed in zip(measured_stages, compute_stages):
+            measured["compute_flops"] = computed.get("compute_flops")
+            measured["compute_tflops"] = computed.get("compute_tflops")
+        generation.extra["stage_compute_status"] = "complete"
+    elif measured_stages:
+        generation.extra["stage_compute_status"] = "profile_mismatch"
+    generation.extra["torch_profiler"] = compute_handle.torch_profile
+
+
+def _clean_replay_request(request: GenerationRequest) -> GenerationRequest:
+    config = {
+        key: value
+        for key, value in request.config.items()
+        if not key.startswith("_compute_")
+    }
+    config["step_profiling"] = False
+    config["capture_trace"] = False
+    config["deep_torch_profile"] = False
+    return GenerationRequest(
+        prompt=request.prompt,
+        max_new_tokens=request.max_new_tokens,
+        config=config,
+        sample_id=request.sample_id,
+        seed=request.seed,
+    )
+
+
+def _merge_clean_replay(
+    generation: GenerationResult, clean: GenerationResult
+) -> bool:
+    checks = {
+        "status_match": clean.status is generation.status,
+        "output_match": clean.output_text == generation.output_text,
+        "final_length_match": clean.final_valid_length == generation.final_valid_length,
+        "step_count_match": clean.num_forward_passes == generation.num_forward_passes,
+    }
+    matched = all(checks.values())
+    generation.extra["clean_replay_validation"] = {
+        "status": "matched" if matched else "mismatch",
+        **checks,
+    }
+    if not matched:
+        return False
+    generation.timing = clean.timing
+    generation.energy_joules = clean.energy_joules
+    generation.peak_vram_gb = clean.peak_vram_gb
+    if generation.timing is not None:
+        generation.timing.source = "clean_replay"
+    return True
+
+
 def run_generation(
     adapter: ModelAdapter,
     dataset_name: str,
@@ -372,9 +470,7 @@ def run_generation(
     stopped_early = False
     first_oom_sample_id: str | None = None
     first_oom_ordinal: int | None = None
-    compute_queue: list[
-        tuple[int, Sample, Path, GenerationResult]
-    ] = []
+    compute_queue: list[tuple[int, Sample, Path, GenerationResult]] = []
     for index, sample in enumerate(samples, start=1):
         sample_path = out_dir / f"{sample.sample_id}.json"
         sample_max_new_tokens = (
@@ -440,20 +536,82 @@ def run_generation(
             sample_id=sample.sample_id,
             seed=seed,
         )
-        if progress is not None:
-            progress("start", index, len(samples), sample, None)
-        generation = adapter.generate(request)
+        generate_profiled = getattr(adapter, "generate_profiled", None)
+        profiled_in_first_pass = measure_compute and callable(generate_profiled)
+        if profiled_in_first_pass:
+            progress_carrier = GenerationResult(
+                request=request,
+                output_text="",
+                status=RunStatus.SUCCESS,
+            )
+            expected_steps = _estimated_profile_steps(request)
+            report_interval = max(1, ((expected_steps or 100) + 9) // 10)
+            last_reported_step = 0
+
+            def report_metric_progress(completed_steps: int) -> None:
+                nonlocal last_reported_step
+                should_report = (
+                    completed_steps == 1
+                    or completed_steps - last_reported_step >= report_interval
+                    or completed_steps == expected_steps
+                )
+                if progress is None or not should_report:
+                    return
+                last_reported_step = completed_steps
+                progress_carrier.extra["_metric_collection_progress"] = {
+                    "completed_steps": int(completed_steps),
+                    "expected_steps": expected_steps,
+                }
+                progress(
+                    "compute_progress",
+                    index,
+                    len(samples),
+                    sample,
+                    progress_carrier,
+                )
+
+            if progress is not None:
+                progress("compute", index, len(samples), sample, progress_carrier)
+            request.config["_compute_progress_callback"] = report_metric_progress
+            try:
+                generation, compute_handle = generate_profiled(request)
+            finally:
+                request.config.pop("_compute_progress_callback", None)
+            _apply_compute_handle(generation, compute_handle)
+            if progress is not None:
+                progress("compute_finish", index, len(samples), sample, generation)
+
+            if generation.status is RunStatus.SUCCESS:
+                if progress is not None:
+                    progress("replay", index, len(samples), sample, generation)
+                clean_generation = adapter.generate(_clean_replay_request(request))
+                _merge_clean_replay(generation, clean_generation)
+                if progress is not None:
+                    progress(
+                        "replay_finish", index, len(samples), sample, generation
+                    )
+        else:
+            if progress is not None:
+                progress("start", index, len(samples), sample, None)
+            generation = adapter.generate(request)
 
         if generation.status is RunStatus.OOM:
             stopped_early = True
             first_oom_sample_id = sample.sample_id
             first_oom_ordinal = index
 
+        if (
+            require_all_metrics
+            and profiled_in_first_pass
+            and generation.extra.get("clean_replay_validation", {}).get("status")
+            == "mismatch"
+        ):
+            save_generation_result(generation, sample_path)
         if require_all_metrics:
             _validate_required_metrics(
                 adapter,
                 generation,
-                require_compute=False,
+                require_compute=bool(profiled_in_first_pass),
                 require_trace=capture_trace,
             )
 
@@ -468,7 +626,11 @@ def run_generation(
             )
         else:
             save_generation_result(generation, sample_path)
-        if measure_compute and generation.status.value == "success":
+        if (
+            measure_compute
+            and not profiled_in_first_pass
+            and generation.status.value == "success"
+        ):
             compute_queue.append((index, sample, sample_path, generation))
         generated += 1
         if progress is not None:
@@ -524,46 +686,7 @@ def run_generation(
                 compute_handle = profile_compute(generation.request)
             finally:
                 generation.request.config.pop("_compute_progress_callback", None)
-            generation.compute_flops = (
-                compute_handle.flops if compute_handle.available else None
-            )
-            generation.compute_tflops = (
-                compute_handle.tflops if compute_handle.available else None
-            )
-            replay_flops = getattr(compute_handle, "forward_tflops", None) or []
-            replay_raw_flops = getattr(compute_handle, "forward_flops", None) or []
-            replay_phases = getattr(compute_handle, "forward_phases", None) or []
-            measured_phases = [profile.phase for profile in generation.forward_profiles]
-            if (
-                generation.forward_profiles
-                and len(replay_flops) == len(generation.forward_profiles)
-                and replay_phases == measured_phases
-            ):
-                for profile, step_tflops in zip(
-                    generation.forward_profiles, replay_flops
-                ):
-                    profile.compute_tflops = step_tflops
-                if len(replay_raw_flops) == len(generation.forward_profiles):
-                    for profile, step_flops in zip(
-                        generation.forward_profiles, replay_raw_flops
-                    ):
-                        profile.compute_flops = step_flops
-                generation.extra["step_compute_status"] = "complete"
-            elif generation.forward_profiles:
-                generation.extra["step_compute_status"] = "replay_mismatch"
-                generation.extra["step_compute_replay_steps"] = len(replay_flops)
-            timed_stages = generation.extra.get("stage_profiles", [])
-            replay_stages = getattr(compute_handle, "stage_profiles", None) or []
-            if [item.get("stage") for item in timed_stages] == [
-                item.get("stage") for item in replay_stages
-            ]:
-                for timed, replay in zip(timed_stages, replay_stages):
-                    timed["compute_flops"] = replay.get("compute_flops")
-                    timed["compute_tflops"] = replay.get("compute_tflops")
-                generation.extra["stage_compute_status"] = "complete"
-            elif timed_stages:
-                generation.extra["stage_compute_status"] = "replay_mismatch"
-            generation.extra["torch_profiler"] = compute_handle.torch_profile
+            _apply_compute_handle(generation, compute_handle)
         if progress is not None:
             progress("compute_finish", index, len(samples), sample, generation)
         if require_all_metrics:

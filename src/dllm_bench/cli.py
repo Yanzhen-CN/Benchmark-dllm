@@ -429,11 +429,11 @@ def generate(
                 return
             if event == "compute":
                 compute_started[sample.sample_id] = perf_counter()
-                click.echo(f"{prefix}: profiling compute replay ...")
+                click.echo(f"{prefix}: collecting profiling metrics ...")
                 return
             if event == "compute_progress":
                 detail = (
-                    generation.extra.get("_compute_replay_progress", {})
+                    generation.extra.get("_metric_collection_progress", {})
                     if generation is not None
                     else {}
                 )
@@ -441,16 +441,29 @@ def generate(
                 expected = int(detail.get("expected_steps", 0))
                 started = compute_started.get(sample.sample_id)
                 elapsed = perf_counter() - started if started is not None else 0.0
-                percent = 100.0 * completed / expected if expected else 0.0
-                click.echo(
-                    f"{prefix}: compute replay {completed}/{expected} "
-                    f"({percent:.0f}%, {elapsed:.1f}s elapsed)"
-                )
+                if expected:
+                    percent = min(100.0, 100.0 * completed / expected)
+                    detail_text = (
+                        f"{completed}/{expected} ({percent:.0f}%, "
+                        f"{elapsed:.1f}s elapsed)"
+                    )
+                else:
+                    detail_text = f"{completed} steps ({elapsed:.1f}s elapsed)"
+                click.echo(f"{prefix}: profiling metrics {detail_text}")
                 return
             if event == "compute_finish":
                 started = compute_started.pop(sample.sample_id, None)
                 elapsed = perf_counter() - started if started is not None else 0.0
-                click.echo(f"{prefix}: compute replay complete ({elapsed:.1f}s)")
+                click.echo(f"{prefix}: profiling metrics complete ({elapsed:.1f}s)")
+                return
+            if event == "replay":
+                compute_started[sample.sample_id] = perf_counter()
+                click.echo(f"{prefix}: clean timing replay ...")
+                return
+            if event == "replay_finish":
+                started = compute_started.pop(sample.sample_id, None)
+                elapsed = perf_counter() - started if started is not None else 0.0
+                click.echo(f"{prefix}: clean timing replay complete ({elapsed:.1f}s)")
                 return
             elapsed = (
                 generation.timing.wall_clock_seconds
@@ -506,7 +519,7 @@ def generate(
                                 active_phase = (
                                     "generating"
                                     if event == "start"
-                                    else "compute replay"
+                                    else "profiling metrics"
                                 )
                                 active_started = perf_counter()
                                 render_active_sample()
@@ -519,6 +532,28 @@ def generate(
                             with progress_lock:
                                 active_sample_id = None
                                 active_phase = None
+                            return
+                        if event == "replay":
+                            with progress_lock:
+                                active_sample_id = None
+                                active_phase = None
+                                sample_bar.update(
+                                    0,
+                                    current_item=(
+                                        f"{sample.sample_id} clean timing replay"
+                                    ),
+                                )
+                                sample_bar.render_progress()
+                            return
+                        if event == "replay_finish":
+                            with progress_lock:
+                                sample_bar.update(
+                                    0,
+                                    current_item=(
+                                        f"{sample.sample_id} clean replay complete"
+                                    ),
+                                )
+                                sample_bar.render_progress()
                             return
                         elapsed = (
                             generation.timing.wall_clock_seconds

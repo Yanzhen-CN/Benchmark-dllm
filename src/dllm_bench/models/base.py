@@ -307,42 +307,64 @@ class BaseModelAdapter(ABC):
             result.extra["profiled_model_steps"] = len(result.forward_profiles)
         return result
 
-    def profile_compute(self, request: GenerationRequest) -> ComputeHandle:
-        """Separate profiling replay for ComputePerSample (Appendix B): run the
-        same sample again under FLOP counting instead of inside the timed
-        window, since FLOP counting overhead would otherwise contaminate
-        Time per Sample."""
+    def generate_profiled(
+        self, request: GenerationRequest
+    ) -> tuple[GenerationResult, ComputeHandle]:
+        """Generate once with step instrumentation and FLOP counting enabled.
+
+        This is the first pass of the profiling protocol. Its output and step
+        profiles are authoritative, but its elapsed time is diagnostic only;
+        the runner performs a second, clean replay for timing and resources.
+        """
         _seed_everything(request.seed)
+        ensure_loaded = getattr(self, "_ensure_loaded", None)
+        if callable(ensure_loaded):
+            ensure_loaded()
         self._step_profiling_enabled = True
         previous = getattr(self, "_suppress_trace_instrumentation", False)
-        self._suppress_trace_instrumentation = True
+        if request.config.get("capture_trace") is False:
+            self._suppress_trace_instrumentation = True
         self._forward_profiles = []
         self._stage_profiles = []
+        self._active_measurement = None
+        started = perf_counter()
+        result: GenerationResult
+        handle = ComputeHandle(available=False)
         try:
             with measure_compute_tflops() as handle:
                 self._profiling_compute_handle = handle
 
-                def execute() -> None:
+                def execute() -> GenerationResult:
                     with self._capture_model_forwards(request, compute_handle=handle):
-                        self._generate_core(request)
+                        return self._generate_core(request)
 
                 if request.config.get("deep_torch_profile", False):
+                    captured: dict[str, GenerationResult] = {}
+
+                    def profiled_execute() -> None:
+                        captured["result"] = execute()
+
                     handle.torch_profile = run_torch_profile(
                         self._model,
-                        execute,
+                        profiled_execute,
                         request.config.get("profiling_artifact_dir"),
                     )
+                    result = captured["result"]
                 else:
-                    # The public profiling matrix needs one full deterministic
-                    # FLOP replay, not an all-operator Torch trace over every
-                    # generation step. Deep operator/module tracing remains a
-                    # separate explicit diagnostic because its event capture
-                    # and Chrome trace export can dominate runtime and memory.
-                    execute()
+                    result = execute()
                     handle.torch_profile = {"status": "not_requested"}
+        except Exception as exc:  # noqa: BLE001 - persisted per sample
+            status = RunStatus.OOM if _looks_like_oom(exc) else RunStatus.FAILED
+            result = GenerationResult(
+                request=request,
+                output_text="",
+                status=status,
+                error_message=str(exc),
+            )
         finally:
             self._profiling_compute_handle = None
             self._suppress_trace_instrumentation = previous
+            self._active_measurement = None
         handle.forward_tflops = [
             float(profile.compute_tflops)
             for profile in self._forward_profiles
@@ -355,6 +377,21 @@ class BaseModelAdapter(ABC):
         ]
         handle.forward_phases = [profile.phase for profile in self._forward_profiles]
         handle.stage_profiles = list(self._stage_profiles)
+        result.forward_profiles = list(self._forward_profiles)
+        if self._stage_profiles:
+            result.extra["stage_profiles"] = list(self._stage_profiles)
+        if result.forward_profiles:
+            result.extra["profiled_model_steps"] = len(result.forward_profiles)
+        result.extra["instrumented_wall_clock_seconds"] = perf_counter() - started
+        return result, handle
+
+    def profile_compute(self, request: GenerationRequest) -> ComputeHandle:
+        """Backward-compatible compute-only entry point.
+
+        New profiling runs use :meth:`generate_profiled` directly so the
+        instrumented pass is not preceded by another full generation.
+        """
+        _, handle = self.generate_profiled(request)
         return handle
 
     def warmup_generation(self, request: GenerationRequest) -> None:
