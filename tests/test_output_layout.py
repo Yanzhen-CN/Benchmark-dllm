@@ -34,6 +34,19 @@ def test_profiling_is_parallel_to_model_output(tmp_path):
     ) == path
 
 
+def test_model_output_and_profiling_have_identical_substructure(tmp_path):
+    generated = model_output_dir(
+        tmp_path, "illada", "p2", "structeval_t"
+    )
+    profiled = model_profiling_dir(
+        tmp_path, "illada", "p2", "structeval_t"
+    )
+
+    assert generated.relative_to(tmp_path / "model_output") == (
+        profiled.relative_to(tmp_path / "model_profiling")
+    )
+
+
 def test_dllm_architecture_and_sampling_axes_are_both_in_the_run_id():
     assert run_id("illada", "p1") == "illada_p1"
 

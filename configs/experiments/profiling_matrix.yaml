@@ -1,12 +1,13 @@
-# Minimal profiling matrix: 3 model operating points x 3 representative tasks.
-# Use the separate output/model_profiling root and opt in to
-# --measure-compute. That opt-in also captures GPU-synchronized top-level
-# forward timing and per-forward FLOPs; formal full_matrix runs are unaffected.
+# Profiling is a second model-output tree with the same artifacts and directory
+# structure as model_output. The only protocol differences are the reduced
+# 3 model operating points x 3 representative tasks matrix and the additional
+# profiling metrics enabled by --measure-compute. Formal full_matrix runs are
+# unaffected.
 # With the pinned dataset revisions and seed 42, n_samples=1
 # selects the expected IDs below. Confirm each generated _meta.json before use.
 
 base_dir: ../..
-# Concrete generation directory for profiling artifacts.
+# Concrete root of the parallel model-output tree.
 output_root: output/model_profiling
 output_stage: model_profiling
 

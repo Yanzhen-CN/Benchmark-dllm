@@ -180,15 +180,21 @@ When multiple lengths are selected, each length is isolated under `len<tokens>/`
 
 ## Profiling 3x3
 
-The profiling matrix runs one fixed MBPP, GSM8K, and StructEval-T sample for
-DiffusionGemma official, iLLaDA P2, and DreamReasoner P2. Keep all three
-datasets in one command so each model is loaded once. `--measure-compute`
-enables GPU-synchronized per-forward timing and a separate deterministic FLOP
-replay. Token trace capture is disabled by this matrix: profiling records only
-forward time, FLOPs, accepted-token count, input length, KV-cache length,
-attention span, and cache read/write phase. The dedicated matrix writes to the
-isolated `model_profiling` stage because this protocol intentionally adds step
-synchronization overhead.
+`model_profiling` is a second `model_output` tree, not a separate artifact
+format. Both trees use the identical
+`<model_config>/<dataset>/` structure and contain the same `_meta.json`,
+per-sample JSON, completion state, and OOM records. Profiling sample JSON only
+adds the profiling measurements collected by this protocol.
+
+The profiling matrix reduces the experiment to one fixed MBPP, GSM8K, and
+StructEval-T sample for DiffusionGemma official, iLLaDA P2, and DreamReasoner
+P2: 3 model operating points x 3 representative tasks. Keep all three datasets
+in one command so each model is loaded once. `--measure-compute` enables
+GPU-synchronized per-forward timing and a separate deterministic FLOP replay.
+Token trace capture is disabled by this matrix: profiling records forward time,
+FLOPs, accepted-token count, input length, KV-cache length, attention span, and
+cache read/write phase. Results go to `model_profiling` so the instrumented run
+does not overwrite the corresponding formal generation in `model_output`.
 
 ```bash
 python run_model.py --matrix configs/experiments/profiling_matrix.yaml \
@@ -210,11 +216,12 @@ assigned to a forward.
 
 The profiling matrix declares `profiling_output: true`. Raw `_meta.json` and
 per-sample JSON files are written under
-`output/model_profiling/<model_config>/<dataset>/`; PNG reports remain under the matching
-`output/visualization_output/<model_config>/<dataset>/`. Profiling fields
-distinguish collection modes inside JSON; collection modes do not create
-additional directory levels. Profiling runs are diagnostic and are not passed
-through `run_score.py`.
+`output/model_profiling/<model_config>/<dataset>/`, exactly parallel to
+`output/model_output/<model_config>/<dataset>/`. PNG reports remain under the
+matching `output/visualization_output/<model_config>/<dataset>/`. Profiling
+fields distinguish collection modes inside JSON; they do not change the output
+layout. Profiling runs are diagnostic and are not passed through
+`run_score.py`.
 
 ## Curated and dataset-level visualization
 

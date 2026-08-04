@@ -57,6 +57,7 @@ def legacy_run_id(model_name: str, config_name: str) -> str | None:
 
 
 def _stage_dir(output_root: str | Path, stage: str, model_name: str, config_name: str, dataset_name: str) -> Path:
+    """Use the same <model_config>/<dataset> layout for every artifact stage."""
     return Path(output_root) / stage / run_id(model_name, config_name) / dataset_name
 
 
