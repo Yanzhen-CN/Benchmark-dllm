@@ -56,9 +56,27 @@ def legacy_run_id(model_name: str, config_name: str) -> str | None:
     return legacy if legacy != canonical else None
 
 
+def _stage_root(output_root: str | Path, stage: str) -> Path:
+    """Resolve a stage root from an exact generation-output root.
+
+    ``output_root`` names the directory whose immediate children are model
+    run IDs. The standard roots still work naturally (``output/model_output``
+    and ``output/model_profiling``). A custom root such as
+    ``output/smoke/illada_entropy`` is used verbatim for generations; score
+    and visualization artifacts are written beside it under their stage name.
+    """
+    root = Path(output_root)
+    standard_input_stages = {MODEL_OUTPUT, MODEL_PROFILING}
+    if root.name in standard_input_stages:
+        return root if root.name == stage else root.parent / stage
+    if stage in standard_input_stages:
+        return root
+    return root.parent / stage
+
+
 def _stage_dir(output_root: str | Path, stage: str, model_name: str, config_name: str, dataset_name: str) -> Path:
     """Use the same <model_config>/<dataset> layout for every artifact stage."""
-    return Path(output_root) / stage / run_id(model_name, config_name) / dataset_name
+    return _stage_root(output_root, stage) / run_id(model_name, config_name) / dataset_name
 
 
 def model_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
@@ -81,7 +99,7 @@ def _resolve_existing_stage_dir(
         return canonical
     legacy = legacy_run_id(model_name, config_name)
     if legacy is not None:
-        legacy_path = Path(output_root) / stage / legacy / dataset_name
+        legacy_path = _stage_root(output_root, stage) / legacy / dataset_name
         if legacy_path.exists():
             return legacy_path
     return canonical
@@ -115,8 +133,7 @@ def model_comparison_visualization_output_dir(
 ) -> Path:
     """Return the canonical location for model-specific cross-variant plots."""
     return (
-        Path(output_root)
-        / VISUALIZATION_OUTPUT
+        _stage_root(output_root, VISUALIZATION_OUTPUT)
         / model_name
         / "model_comparison"
         / dataset_name

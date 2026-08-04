@@ -132,7 +132,13 @@ def _common_options(f):
         help="HelloBench output profile; repeat to include both",
     )(f)
     f = click.option("--seed", default=None, type=int, help="Defaults to the dataset config's `seed` (42)")(f)
-    f = click.option("--output-root", default="output", show_default=True, type=click.Path(), help="Root of model_output/score_output/visualization_output")(f)
+    f = click.option(
+        "--output-root",
+        default="output/model_output",
+        show_default=True,
+        type=click.Path(),
+        help="Exact generation-output root; model run directories are created directly below it",
+    )(f)
     return f
 
 
@@ -998,7 +1004,10 @@ def pairwise_report(
     "--output-root",
     default=None,
     type=click.Path(),
-    help="Override output_root from the experiment YAML",
+    help=(
+        "Exact generation-output root. Model run directories are created "
+        "directly below this path; defaults to the experiment YAML value."
+    ),
 )
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
 @click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
@@ -1084,10 +1093,7 @@ def matrix_command(
                 f"experiment output_root={str(configured_output_dir)!r} must end "
                 f"with output_stage={expected_output_stage!r}"
             )
-        # Existing stage-aware layout helpers append model_output,
-        # model_profiling, score_output, etc. Pass their common parent so the
-        # concrete YAML directory is produced exactly once.
-        output_root = str(configured_output_dir.parent)
+        output_root = str(configured_output_dir)
     else:
         output_root = str(output_root)
     if profiling_matrix and stage in {"generate", "all"} and not measure_compute:
@@ -1204,7 +1210,9 @@ def matrix_command(
             )
             continue
         valid_jobs += 1
-        valid_output_roots.add(case_output_root)
+        # Reporting consumes the common parent that contains score_output;
+        # case_output_root itself is the exact generation-output directory.
+        valid_output_roots.add(str(Path(case_output_root).parent))
     if stage == "all" and not profiling_matrix:
         if valid_jobs:
             for report_root in sorted(valid_output_roots):

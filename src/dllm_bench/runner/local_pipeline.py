@@ -75,7 +75,14 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
         default=[],
         help="Variant subset; space-separate or repeat, e.g. -v p1 p2 p4 p8",
     )
-    parser.add_argument("--output-root", default="output")
+    parser.add_argument(
+        "--output-root",
+        default="output/model_output",
+        help=(
+            "Exact generation-output root; model run directories are read "
+            "directly below this path"
+        ),
+    )
     if stage == "score":
         resume = parser.add_mutually_exclusive_group()
         resume.add_argument("--resume", dest="resume", action="store_true")
@@ -196,11 +203,12 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             )
 
     if stage == "visualize":
-        report_roots = (
-            [str(Path(args.output_root) / f"len{length}") for length in max_new_tokens]
+        generation_roots = (
+            [Path(args.output_root) / f"len{length}" for length in max_new_tokens]
             if len(max_new_tokens) > 1
-            else [args.output_root]
+            else [Path(args.output_root)]
         )
+        report_roots = [str(root.parent) for root in generation_roots]
         for report_root in report_roots:
             report_command = [
                 sys.executable, "-m", "dllm_bench.cli", "report",
