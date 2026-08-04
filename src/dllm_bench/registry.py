@@ -115,6 +115,14 @@ def build_dataset(config_path: str | Path) -> Dataset:
     """
     config = load_yaml(config_path)
     dataset_cls = _import_from_string(config["dataset_class"])
+    if Path(config_path).stem == "sudoku4":
+        shot_count = int(os.environ.get("DLLM_BENCH_SUDOKU_SHOT", "0"))
+        if shot_count not in {0, 1}:
+            raise ValueError(f"DLLM_BENCH_SUDOKU_SHOT must be 0 or 1, got {shot_count}")
+        if shot_count == 1:
+            dataset_cls = _import_from_string(
+                "dllm_bench.datasets.sudoku4.Sudoku4OneShotDataset"
+            )
     dataset_kwargs = dict(config.get("dataset_kwargs", {}))
     return dataset_cls(**dataset_kwargs)
 

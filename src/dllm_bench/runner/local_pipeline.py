@@ -56,6 +56,10 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
     parser.set_defaults(real_data=True)
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument(
+        "-shot", "--shot", type=int, choices=(0, 1), default=0,
+        help="Use the fixed Sudoku4 one-shot prompt when set to 1",
+    )
+    parser.add_argument(
         "-max",
         "--max-new-tokens",
         action="extend",
@@ -174,6 +178,8 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             "--no-demo" if args.real_data else "--demo",
             "--output-root",
             args.output_root,
+            "--shot",
+            str(args.shot),
         ]
         if stage == "visualize":
             command.extend(["--n-representative", str(args.n_representative)])
@@ -219,7 +225,10 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             for value in args.dataset:
                 for dataset_name in value.split(","):
                     if dataset_name.strip():
-                        report_command.extend(["--dataset", dataset_name.strip()])
+                        dataset_name = dataset_name.strip()
+                        if args.shot == 1 and dataset_name == "sudoku4":
+                            dataset_name = "sudoku4_one_shot"
+                        report_command.extend(["--dataset", dataset_name])
             print(f"Report: {' '.join(report_command)}", flush=True)
             if not args.dry_run:
                 subprocess.run(report_command, cwd=PROJECT_ROOT, check=True)

@@ -119,6 +119,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the original reasoning prompt for Sudoku4/Sudoku9 (default: direct answer)",
     )
     parser.add_argument(
+        "-shot", "--shot", type=int, choices=(0, 1), default=0,
+        help="Use the fixed Sudoku4 one-shot prompt when set to 1",
+    )
+    parser.add_argument(
         "-max",
         "--max-new-tokens",
         action="extend",
@@ -225,6 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     env_updates["DLLM_BENCH_ENABLE_REASONING"] = (
         "1" if args.enable_reasoning else "0"
     )
+    env_updates["DLLM_BENCH_SUDOKU_SHOT"] = str(args.shot)
     max_new_tokens = list(dict.fromkeys(args.max_new_tokens))
     if max_new_tokens:
         if any(value <= 0 for value in max_new_tokens):

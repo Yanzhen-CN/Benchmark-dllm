@@ -37,6 +37,9 @@ from ..interfaces import GenerationResult
 SUDOKU4_SOURCE_REVISION = "6f5abf5ca8a58c6e08bbf06d412ad260dca6dbd3"
 SUDOKU4_PROTOCOL_REVISION = "fixed-clues-valid-grid-direct-4x4-v7"
 SUDOKU4_REASONING_PROTOCOL_REVISION = "d1-zero-shot-4x4-v1"
+SUDOKU4_ONE_SHOT_PROTOCOL_REVISION = "d1-one-shot-4x4-v1"
+SUDOKU4_ONE_SHOT_EXAMPLE_PUZZLE = "1200430031002010"
+SUDOKU4_ONE_SHOT_EXAMPLE_ANSWER = "1234432131422413"
 SUDOKU4_SOURCE_SHA256 = "ef86c7c28ebef88484d85fda59b3909a7b621241aa1abf36343437dbc4a3ffb6"
 SUDOKU4_SOURCE_URL = (
     "https://raw.githubusercontent.com/dllm-reasoning/d1/"
@@ -124,13 +127,25 @@ def _reasoning_enabled(configured: bool | None = None) -> bool:
 
 
 def format_sudoku4_prompt(
-    puzzle: str, enable_reasoning: bool | None = None
+    puzzle: str,
+    enable_reasoning: bool | None = None,
+    shot_count: int = 0,
 ) -> str:
     if _reasoning_enabled(enable_reasoning):
         return (
             f"{SUDOKU4_REASONING_PROMPT}\n\n"
             f"Solve the following Sudoku puzzle: {puzzle}\n"
         )
+    if shot_count == 1:
+        return (
+            "0 represents a blank cell.\n"
+            f"Example input: {SUDOKU4_ONE_SHOT_EXAMPLE_PUZZLE}\n"
+            f"Example output: {SUDOKU4_ONE_SHOT_EXAMPLE_ANSWER}\n"
+            f"Fill in this Sudoku: {puzzle}\n"
+            "Directly return your answer with only 16 digits."
+        )
+    if shot_count != 0:
+        raise ValueError(f"Sudoku4 supports only 0-shot or 1-shot prompts, got {shot_count}")
     return SUDOKU4_SYSTEM_PROMPT.format(puzzle=puzzle)
 
 
@@ -241,11 +256,19 @@ class Sudoku4Dataset(Dataset):
         sample_count: int = 100,
         seed: int = 42,
         enable_reasoning: bool | None = None,
+        shot_count: int = 0,
     ) -> None:
         self._samples = list(samples) if samples is not None else None
         self._sample_count = int(sample_count)
         self._seed = int(seed)
         self._enable_reasoning = _reasoning_enabled(enable_reasoning)
+        self._shot_count = int(shot_count)
+        if self._shot_count not in {0, 1}:
+            raise ValueError(
+                f"Sudoku4 supports only 0-shot or 1-shot prompts, got {self._shot_count}"
+            )
+        if self._enable_reasoning and self._shot_count:
+            raise ValueError("Sudoku4 reasoning and one-shot direct prompts cannot be combined")
 
     def load_samples(self, n: int | None = None) -> list[Sample]:
         if self._samples is not None:
@@ -258,7 +281,9 @@ class Sudoku4Dataset(Dataset):
                 sha256=SUDOKU4_SOURCE_SHA256,
             )
             samples = _load_d1_samples(
-                source, enable_reasoning=self._enable_reasoning
+                source,
+                enable_reasoning=self._enable_reasoning,
+                shot_count=self._shot_count,
             )
             rng = random.Random(self._seed)
             rng.shuffle(samples)
@@ -285,9 +310,14 @@ class Sudoku4Dataset(Dataset):
             "protocol_revision": (
                 SUDOKU4_REASONING_PROTOCOL_REVISION
                 if self._enable_reasoning
-                else SUDOKU4_PROTOCOL_REVISION
+                else (
+                    SUDOKU4_ONE_SHOT_PROTOCOL_REVISION
+                    if self._shot_count == 1
+                    else SUDOKU4_PROTOCOL_REVISION
+                )
             ),
             "enable_reasoning": self._enable_reasoning,
+            "shot_count": self._shot_count,
             "source_sha256": SUDOKU4_SOURCE_SHA256,
             "sample_count": self._sample_count,
             "seed": self._seed,
@@ -301,6 +331,7 @@ class Sudoku4Dataset(Dataset):
             "upstream_metric": "single_reference_blank_cell_accuracy",
             "answer_extraction": "final-submission-adapter-v1",
             "direct_track_adapter": not self._enable_reasoning,
+            "shot_count": self._shot_count,
         }
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
@@ -403,6 +434,17 @@ class Sudoku4Dataset(Dataset):
         return summary
 
 
+class Sudoku4OneShotDataset(Sudoku4Dataset):
+    """The formal Sudoku4 subset with a fixed, non-overlapping example."""
+
+    name = "sudoku4_one_shot"
+
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs["enable_reasoning"] = False
+        kwargs["shot_count"] = 1
+        super().__init__(*args, **kwargs)
+
+
 class Sudoku4ThinkingDataset(Sudoku4Dataset):
     """The same 100-row Sudoku4 set with the original reasoning prompt."""
 
@@ -423,13 +465,20 @@ class Sudoku4ThinkingDataset(Sudoku4Dataset):
 
 
 def _load_d1_samples(
-    path: Path, *, enable_reasoning: bool | None = None
+    path: Path,
+    *,
+    enable_reasoning: bool | None = None,
+    shot_count: int = 0,
 ) -> list[Sample]:
     reasoning = _reasoning_enabled(enable_reasoning)
     protocol_revision = (
         SUDOKU4_REASONING_PROTOCOL_REVISION
         if reasoning
-        else SUDOKU4_PROTOCOL_REVISION
+        else (
+            SUDOKU4_ONE_SHOT_PROTOCOL_REVISION
+            if shot_count == 1
+            else SUDOKU4_PROTOCOL_REVISION
+        )
     )
     samples: list[Sample] = []
     with path.open("r", encoding="utf-8", newline="") as source:
@@ -449,7 +498,9 @@ def _load_d1_samples(
                 Sample(
                     sample_id=f"sudoku4-d1-{index:04d}",
                     prompt=format_sudoku4_prompt(
-                        puzzle, enable_reasoning=reasoning
+                        puzzle,
+                        enable_reasoning=reasoning,
+                        shot_count=shot_count,
                     ),
                     reference=Sudoku4Reference(puzzle, solution),
                     meta={
@@ -460,9 +511,14 @@ def _load_d1_samples(
                         "prompt_protocol": (
                             "d1 official zero-shot reasoning"
                             if reasoning
-                            else "direct fixed-clues valid-grid"
+                            else (
+                                "fixed one-shot direct answer"
+                                if shot_count == 1
+                                else "direct fixed-clues valid-grid"
+                            )
                         ),
                         "enable_reasoning": reasoning,
+                        "shot_count": shot_count,
                         "blank_count": 8,
                         "difficulty_stratified": False,
                     },

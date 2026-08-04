@@ -43,12 +43,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Prepare Sudoku4/Sudoku9 with their original reasoning prompts",
     )
+    parser.add_argument(
+        "-shot", "--shot", type=int, choices=(0, 1), default=0,
+        help="Use the fixed Sudoku4 one-shot prompt when set to 1",
+    )
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments)
 
     os.environ["DLLM_BENCH_ENABLE_REASONING"] = (
         "1" if args.enable_reasoning else "0"
     )
+    os.environ["DLLM_BENCH_SUDOKU_SHOT"] = str(args.shot)
 
     run_in_root_venv(__file__, arguments)
 

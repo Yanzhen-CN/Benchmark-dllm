@@ -733,6 +733,8 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
         for length in os.environ["HELLOBENCH_LENGTHS"].split(","):
             if length.strip():
                 arguments.extend(["--hellobench-length", length.strip()])
+    if os.environ.get("DLLM_BENCH_SUDOKU_SHOT"):
+        arguments.extend(["--shot", os.environ["DLLM_BENCH_SUDOKU_SHOT"]])
     return arguments
 
 
