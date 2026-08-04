@@ -44,7 +44,7 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     ])
     assert "generated=3 skipped=0" in generate_result.output
     assert "loading model into runtime device (outside sample timing)" in generate_result.output
-    assert "[default] [1/3] gsm8k-demo-0: generating" in generate_result.output
+    assert "[default] gsm8k [1/3] gsm8k-demo-0: success" in generate_result.output
 
     model_out = output_root / "model_output" / "mock_default" / "gsm8k"
     assert (model_out / "_meta.json").exists()
@@ -122,37 +122,10 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     ).exists()
 
 
-def test_generate_uses_sample_progress_bar_on_interactive_terminal(
-    tmp_path, monkeypatch
-):
-    class InteractiveStream(io.StringIO):
-        def isatty(self):
-            return True
-
-    terminal = InteractiveStream()
-    monkeypatch.setattr(
-        cli_module.click,
-        "get_text_stream",
-        lambda name: terminal if name == "stdout" else io.StringIO(),
-    )
-    real_run_generation = cli_module.run_generation
-
-    def slow_run_generation(*args, **kwargs):
-        real_progress = kwargs["progress"]
-
-        def slow_progress(event, *progress_args):
-            real_progress(event, *progress_args)
-            if event == "start":
-                time.sleep(0.12)
-
-        kwargs["progress"] = slow_progress
-        return real_run_generation(*args, **kwargs)
-
-    monkeypatch.setattr(cli_module, "run_generation", slow_run_generation)
-    monkeypatch.setattr(cli_module, "_SAMPLE_PROGRESS_HEARTBEAT_SECONDS", 0.005)
+def test_generate_reports_durable_sample_counts_without_terminal_controls(tmp_path):
     runner = CliRunner()
 
-    _run(runner, [
+    result = _run(runner, [
         "generate",
         "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
         "--variant", "default",
@@ -161,15 +134,9 @@ def test_generate_uses_sample_progress_bar_on_interactive_terminal(
         "--output-root", str(tmp_path / "output"),
     ])
 
-    rendered = terminal.getvalue()
-    assert "[default] gsm8k" in rendered
-    assert "2/2" in rendered
-    assert "gsm8k-demo-1" in rendered
-    elapsed_updates = [
-        float(value) for value in re.findall(r"(\d+\.\d+)s elapsed", rendered)
-    ]
-    assert elapsed_updates
-    assert max(elapsed_updates) > 0
+    assert "\r" not in result.output
+    assert "[default] gsm8k [1/2] gsm8k-demo-0: success" in result.output
+    assert "[default] gsm8k [2/2] gsm8k-demo-1: success" in result.output
 
 
 def test_long_task_warmup_uses_short_prompt_without_formal_context_budget(
