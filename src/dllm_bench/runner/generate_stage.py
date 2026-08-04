@@ -297,8 +297,8 @@ def _missing_step_metrics(
             missing.append("stage_time_or_compute")
         if generation.extra.get("stage_compute_status") != "complete":
             missing.append("stage_compute_status")
-        if generation.extra.get("clean_replay_validation", {}).get("status") != "matched":
-            missing.append("clean_replay_validation")
+        if generation.extra.get("compute_replay_validation", {}).get("status") != "matched":
+            missing.append("compute_replay_validation")
     return missing
 
 
@@ -398,46 +398,21 @@ def _apply_compute_handle(generation: GenerationResult, compute_handle) -> None:
     )
 
 
-def _clean_replay_request(request: GenerationRequest) -> GenerationRequest:
-    config = {
-        key: value
-        for key, value in request.config.items()
-        if not key.startswith("_compute_")
-    }
-    config["step_profiling"] = False
-    config["capture_trace"] = False
-    config["deep_torch_profile"] = False
-    return GenerationRequest(
-        prompt=request.prompt,
-        max_new_tokens=request.max_new_tokens,
-        config=config,
-        sample_id=request.sample_id,
-        seed=request.seed,
-    )
-
-
-def _merge_clean_replay(
-    generation: GenerationResult, clean: GenerationResult
+def _validate_compute_replay(
+    generation: GenerationResult, replay: GenerationResult
 ) -> bool:
     checks = {
-        "status_match": clean.status is generation.status,
-        "output_match": clean.output_text == generation.output_text,
-        "final_length_match": clean.final_valid_length == generation.final_valid_length,
-        "step_count_match": clean.num_forward_passes == generation.num_forward_passes,
+        "status_match": replay.status is generation.status,
+        "output_match": replay.output_text == generation.output_text,
+        "final_length_match": replay.final_valid_length == generation.final_valid_length,
+        "step_count_match": replay.num_forward_passes == generation.num_forward_passes,
     }
     matched = all(checks.values())
-    generation.extra["clean_replay_validation"] = {
+    generation.extra["compute_replay_validation"] = {
         "status": "matched" if matched else "mismatch",
         **checks,
     }
-    if not matched:
-        return False
-    generation.timing = clean.timing
-    generation.energy_joules = clean.energy_joules
-    generation.peak_vram_gb = clean.peak_vram_gb
-    if generation.timing is not None:
-        generation.timing.source = "clean_replay"
-    return True
+    return matched
 
 
 def run_generation(
@@ -611,6 +586,8 @@ def run_generation(
         if progress is not None:
             progress("start", index, len(samples), sample, None)
         generation = adapter.generate(request)
+        if measure_compute and generation.timing is not None:
+            generation.timing.source = "step_profile"
 
         if generation.status is RunStatus.OOM:
             stopped_early = True
@@ -699,18 +676,9 @@ def run_generation(
             finally:
                 generation.request.config.pop("_compute_progress_callback", None)
             _apply_compute_handle(generation, compute_handle)
-            if (
-                generation.extra.get("clean_replay_validation", {}).get("status")
-                != "matched"
-            ):
-                if progress is not None:
-                    progress("clean_start", index, len(samples), sample, generation)
-                clean_generation = adapter.generate(
-                    _clean_replay_request(generation.request)
-                )
-                _merge_clean_replay(generation, clean_generation)
-                if progress is not None:
-                    progress("clean_finish", index, len(samples), sample, generation)
+            replay_result = getattr(compute_handle, "replay_result", None)
+            if replay_result is not None:
+                _validate_compute_replay(generation, replay_result)
         if progress is not None:
             progress("compute_finish", index, len(samples), sample, generation)
         if require_all_metrics:

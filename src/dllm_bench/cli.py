@@ -458,24 +458,19 @@ def generate(
                     detail_text = f"{completed} steps ({elapsed:.1f}s elapsed)"
                 click.echo(f"{prefix}: [compute] replay {detail_text}")
                 return
-            if event == "clean_start":
-                click.echo(f"{prefix}: [validation] clean replay started")
-                return
-            if event == "clean_finish":
-                status = (
-                    generation.extra.get("clean_replay_validation", {}).get(
-                        "status", "unknown"
-                    )
-                    if generation is not None
-                    else "unknown"
-                )
-                click.echo(f"{prefix}: [validation] clean replay {status}")
-                return
             if event == "compute_finish":
                 started = compute_started.pop(sample.sample_id, None)
                 elapsed = perf_counter() - started if started is not None else 0.0
+                validation = (
+                    generation.extra.get("compute_replay_validation", {}).get(
+                        "status", "unavailable"
+                    )
+                    if generation is not None
+                    else "unavailable"
+                )
                 click.echo(
-                    f"{prefix}: [profiling] complete ({elapsed:.1f}s)"
+                    f"{prefix}: [profiling] complete, replay {validation} "
+                    f"({elapsed:.1f}s)"
                 )
                 return
             elapsed = (

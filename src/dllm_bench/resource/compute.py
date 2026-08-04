@@ -24,6 +24,7 @@ class ComputeHandle:
     forward_tflops: list[float] | None = None
     forward_flops: list[int] | None = None
     forward_phases: list[str] | None = None
+    replay_result: object | None = None
     stage_profiles: list[dict] | None = None
     torch_profile: dict | None = None
     _counter: object | None = None

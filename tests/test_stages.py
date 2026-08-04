@@ -102,14 +102,7 @@ def test_compute_replays_only_after_all_formal_generations(tmp_path):
     ids = [sample.sample_id for sample in samples]
     assert events == [
         *(("generate", sample_id) for sample_id in ids),
-        *(
-            event
-            for sample_id in ids
-            for event in (
-                ("compute", sample_id),
-                ("generate", sample_id),
-            )
-        ),
+        *(("compute", sample_id) for sample_id in ids),
     ]
     assert all(
         load_generation_result(out_dir / f"{sample_id}.json").compute_tflops == 1.25

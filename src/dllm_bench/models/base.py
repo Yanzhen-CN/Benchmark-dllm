@@ -394,7 +394,8 @@ class BaseModelAdapter(ABC):
         New profiling runs use :meth:`generate_profiled` directly so the
         instrumented pass is not preceded by another full generation.
         """
-        _, handle = self.generate_profiled(request)
+        replay_result, handle = self.generate_profiled(request)
+        handle.replay_result = replay_result
         return handle
 
     def warmup_generation(self, request: GenerationRequest) -> None:

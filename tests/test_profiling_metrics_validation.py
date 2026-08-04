@@ -50,7 +50,7 @@ def _result() -> GenerationResult:
                     "compute_tflops": None,
                 }
             ],
-            "clean_replay_validation": {"status": "matched"},
+            "compute_replay_validation": {"status": "matched"},
         },
     )
 
@@ -150,27 +150,32 @@ def test_profiling_pipeline_keeps_timing_acceptance_compute_and_clean_totals(
         return result
 
     adapter.generate = generate
-    adapter.profile_compute = lambda request: SimpleNamespace(
-        available=True,
-        flops=3_000_000_000_000,
-        tflops=3.0,
-        forward_tflops=[1.0, 2.0],
-        forward_flops=[1_000_000_000_000, 2_000_000_000_000],
-        forward_phases=["denoise", "denoise"],
-        stage_profiles=[
-            {
-                "stage": "denoise_step",
-                "compute_flops": 1_000_000_000_000,
-                "compute_tflops": 1.0,
-            },
-            {
-                "stage": "denoise_step",
-                "compute_flops": 2_000_000_000_000,
-                "compute_tflops": 2.0,
-            },
-        ],
-        torch_profile={"status": "complete"},
-    )
+    def profile_compute(request):
+        replay_result = generate(request)
+        return SimpleNamespace(
+            available=True,
+            flops=3_000_000_000_000,
+            tflops=3.0,
+            forward_tflops=[1.0, 2.0],
+            forward_flops=[1_000_000_000_000, 2_000_000_000_000],
+            forward_phases=["denoise", "denoise"],
+            stage_profiles=[
+                {
+                    "stage": "denoise_step",
+                    "compute_flops": 1_000_000_000_000,
+                    "compute_tflops": 1.0,
+                },
+                {
+                    "stage": "denoise_step",
+                    "compute_flops": 2_000_000_000_000,
+                    "compute_tflops": 2.0,
+                },
+            ],
+            torch_profile={"status": "complete"},
+            replay_result=replay_result,
+        )
+
+    adapter.profile_compute = profile_compute
     sample = build_demo_samples("gsm8k", n=1)[0]
     out_dir = tmp_path / "model_profiling"
     events = []
@@ -190,8 +195,7 @@ def test_profiling_pipeline_keeps_timing_acceptance_compute_and_clean_totals(
     )
 
     result = load_generation_result(out_dir / f"{sample.sample_id}.json")
-    assert result.timing.wall_clock_seconds == 0.5
-    assert result.timing.source == "clean_replay"
+    assert result.timing.source == "step_profile"
     assert [profile.wall_clock_seconds for profile in result.forward_profiles] == [
         0.1,
         0.11,
@@ -201,14 +205,12 @@ def test_profiling_pipeline_keeps_timing_acceptance_compute_and_clean_totals(
         1.0,
         2.0,
     ]
-    assert result.extra["clean_replay_validation"]["status"] == "matched"
+    assert result.extra["compute_replay_validation"]["status"] == "matched"
     assert result.extra["step_compute_status"] == "complete"
     assert result.extra["stage_compute_status"] == "complete"
     assert events == [
         "start",
         "timing_finish",
         "compute",
-        "clean_start",
-        "clean_finish",
         "compute_finish",
     ]
