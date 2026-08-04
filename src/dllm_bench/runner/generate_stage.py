@@ -583,13 +583,9 @@ def run_generation(
 
             if generation.status is RunStatus.SUCCESS:
                 if progress is not None:
-                    progress("replay", index, len(samples), sample, generation)
+                    progress("start", index, len(samples), sample, None)
                 clean_generation = adapter.generate(_clean_replay_request(request))
                 _merge_clean_replay(generation, clean_generation)
-                if progress is not None:
-                    progress(
-                        "replay_finish", index, len(samples), sample, generation
-                    )
         else:
             if progress is not None:
                 progress("start", index, len(samples), sample, None)

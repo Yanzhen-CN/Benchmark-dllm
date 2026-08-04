@@ -429,7 +429,7 @@ def generate(
                 return
             if event == "compute":
                 compute_started[sample.sample_id] = perf_counter()
-                click.echo(f"{prefix}: [1/2] collecting profiling metrics ...")
+                click.echo(f"{prefix}: [profiling] collecting metrics ...")
                 return
             if event == "compute_progress":
                 detail = (
@@ -449,24 +449,13 @@ def generate(
                     )
                 else:
                     detail_text = f"{completed} steps ({elapsed:.1f}s elapsed)"
-                click.echo(f"{prefix}: [1/2] profiling metrics {detail_text}")
+                click.echo(f"{prefix}: [profiling] metrics {detail_text}")
                 return
             if event == "compute_finish":
                 started = compute_started.pop(sample.sample_id, None)
                 elapsed = perf_counter() - started if started is not None else 0.0
                 click.echo(
-                    f"{prefix}: [1/2] profiling metrics complete ({elapsed:.1f}s)"
-                )
-                return
-            if event == "replay":
-                compute_started[sample.sample_id] = perf_counter()
-                click.echo(f"{prefix}: [2/2] clean timing replay ...")
-                return
-            if event == "replay_finish":
-                started = compute_started.pop(sample.sample_id, None)
-                elapsed = perf_counter() - started if started is not None else 0.0
-                click.echo(
-                    f"{prefix}: [2/2] clean timing replay complete ({elapsed:.1f}s)"
+                    f"{prefix}: [profiling] metrics complete ({elapsed:.1f}s)"
                 )
                 return
             elapsed = (
@@ -501,7 +490,7 @@ def generate(
                             return
                         elapsed = perf_counter() - active_started
                         width = 20
-                        if active_phase == "[1/2] profiling metrics":
+                        if active_phase == "[profiling] metrics":
                             if active_expected:
                                 filled = min(
                                     width,
@@ -518,11 +507,15 @@ def generate(
                                 )
                                 phase_detail = f"{active_completed} steps"
                         else:
-                            cursor = int(elapsed * 2) % width
-                            phase_bar = (
-                                "-" * cursor + ">" + "-" * (width - cursor - 1)
+                            sample_bar.update(
+                                0,
+                                current_item=(
+                                    f"{active_sample_id} {active_phase} "
+                                    f"{elapsed:.1f}s elapsed"
+                                ),
                             )
-                            phase_detail = "clean, no step hooks"
+                            sample_bar.render_progress()
+                            return
                         sample_bar.update(
                             0,
                             current_item=(
@@ -550,7 +543,7 @@ def generate(
                                 active_phase = (
                                     "generating"
                                     if event == "start"
-                                    else "[1/2] profiling metrics"
+                                    else "[profiling] metrics"
                                 )
                                 active_started = perf_counter()
                                 active_completed = 0
@@ -580,28 +573,6 @@ def generate(
                                 if active_expected:
                                     active_completed = active_expected
                                     render_active_sample()
-                                active_sample_id = None
-                                active_phase = None
-                            return
-                        if event == "replay":
-                            with progress_lock:
-                                active_sample_id = sample.sample_id
-                                active_phase = "[2/2] clean timing replay"
-                                active_started = perf_counter()
-                                active_completed = 0
-                                active_expected = None
-                                render_active_sample()
-                            return
-                        if event == "replay_finish":
-                            with progress_lock:
-                                sample_bar.update(
-                                    0,
-                                    current_item=(
-                                        f"{sample.sample_id} [2/2] clean timing "
-                                        f"complete, {perf_counter() - active_started:.1f}s"
-                                    ),
-                                )
-                                sample_bar.render_progress()
                                 active_sample_id = None
                                 active_phase = None
                             return
