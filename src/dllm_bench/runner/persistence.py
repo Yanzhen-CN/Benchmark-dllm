@@ -24,6 +24,7 @@ from typing import Any
 
 from ..datasets.base import ScoreResult
 from ..interfaces import (
+    EditingTraceStep,
     GenerationRequest,
     GenerationResult,
     ForwardProfile,
@@ -121,7 +122,7 @@ def _to_jsonable(obj: Any, include_trace: bool) -> Any:
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         result = {}
         for f in dataclasses.fields(obj):
-            if f.name == "trace" and not include_trace:
+            if f.name in {"trace", "editing_trace"} and not include_trace:
                 result[f.name] = []
                 continue
             if f.name == "records":
@@ -203,6 +204,7 @@ def generation_result_to_dict(generation: GenerationResult) -> dict[str, Any]:
             }
             for step in generation.trace
         ],
+        "editing_trace": [dataclasses.asdict(step) for step in generation.editing_trace],
         "forward_profiles": [dataclasses.asdict(profile) for profile in generation.forward_profiles],
     }
 
@@ -229,6 +231,9 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         )
         for step in data.get("trace", [])
     ]
+    editing_trace = [
+        EditingTraceStep(**step) for step in data.get("editing_trace", [])
+    ]
     timing = TimingResult(**data["timing"]) if data.get("timing") else None
     forward_profiles = [
         ForwardProfile(**profile) for profile in data.get("forward_profiles", [])
@@ -238,6 +243,7 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         output_text=data["output_text"],
         status=RunStatus(data["status"]),
         trace=trace,
+        editing_trace=editing_trace,
         forward_profiles=forward_profiles,
         num_forward_passes=data["num_forward_passes"],
         final_valid_length=data["final_valid_length"],

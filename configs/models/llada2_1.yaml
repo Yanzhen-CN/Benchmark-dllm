@@ -1,0 +1,25 @@
+model: llada2_1
+max_context_tokens: 32768
+configs:
+  qmode:
+    adapter: dllm_bench.models.llada2_1.Llada21Adapter
+    init_kwargs:
+      model_name_or_path: inclusionAI/LLaDA2.1-mini
+      revision: 20e64e2
+      block_length: 32
+      threshold: 0.7
+      editing_threshold: 0.5
+      max_post_steps: 16
+      editing_enabled: true
+      temperature: 0.0
+  smode:
+    adapter: dllm_bench.models.llada2_1.Llada21Adapter
+    init_kwargs:
+      model_name_or_path: inclusionAI/LLaDA2.1-mini
+      revision: 20e64e2
+      block_length: 32
+      threshold: 0.5
+      editing_threshold: 0.0
+      max_post_steps: 16
+      editing_enabled: true
+      temperature: 0.0

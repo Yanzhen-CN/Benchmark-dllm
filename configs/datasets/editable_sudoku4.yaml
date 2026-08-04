@@ -1,0 +1,18 @@
+dataset: editable_sudoku4
+dataset_class: dllm_bench.datasets.editable_sudoku.EditableSudoku4Dataset
+primary_metric: blank_cell_accuracy_any_legal_solution
+aux_metrics:
+  - puzzle_success_rate
+  - given_preservation_rate
+  - editing_correction_rate
+  - editing_harmful_rate
+  - editing_collateral_damage
+  - editing_repair_latency_forwards
+  - editing_constraint_conflict_reduction
+  - editing_wrong_first_rate
+  - editing_mapping_coverage
+sample_size: 16
+seed: 42
+dataset_kwargs:
+  sample_count: 4
+  seed: 42

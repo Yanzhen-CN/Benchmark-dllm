@@ -1,0 +1,17 @@
+base_dir: ../..
+output_root: output/model_output
+
+models:
+  - config: configs/models/llada2_1.yaml
+    variants: [qmode, smode]
+
+datasets:
+  - config: configs/datasets/editable_sudoku4.yaml
+    n_samples: 16
+    max_new_tokens: 32
+  - config: configs/datasets/llada2_1_sudoku9.yaml
+    n_samples: 1
+    max_new_tokens: 96
+
+seed: 42
+capture_trace: true

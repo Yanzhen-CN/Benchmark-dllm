@@ -106,11 +106,37 @@ class TimingResult:
 
 
 @dataclass
+class EditingTraceStep:
+    """One LLaDA2.1 editable-block forward, kept separate from public trace."""
+
+    forward_index: int
+    block_id: int
+    phase: str
+    old_block_tokens: list[int]
+    new_block_tokens: list[int]
+    predicted_tokens: list[int]
+    predicted_confidence: list[float]
+    mask_positions: list[int]
+    mask_transfer_positions: list[int]
+    editable_positions: list[int]
+    editing_transfer_positions: list[int]
+    immutable_positions: list[int]
+    committed_positions: list[int]
+    position_to_cell_map: dict[int, int]
+    post_step_index: int = 0
+    stop_reason: str | None = None
+    old_block_token_texts: list[str] = field(default_factory=list)
+    new_block_token_texts: list[str] = field(default_factory=list)
+    predicted_token_texts: list[str] = field(default_factory=list)
+
+
+@dataclass
 class GenerationResult:
     request: GenerationRequest
     output_text: str
     status: RunStatus
     trace: list[TraceStep] = field(default_factory=list)
+    editing_trace: list[EditingTraceStep] = field(default_factory=list)
     forward_profiles: list[ForwardProfile] = field(default_factory=list)
     num_forward_passes: int = 0
     final_valid_length: int = 0

@@ -423,6 +423,8 @@ def run_generation(
         request_config = dict(extra_config or {})
         request_config["capture_trace"] = capture_trace
         request_config["step_profiling"] = bool(measure_compute)
+        if "editable_sudoku" in sample.meta:
+            request_config["editable_sudoku"] = dict(sample.meta["editable_sudoku"])
         if "target_input_tokens" in sample.meta:
             request_config["target_input_tokens"] = int(
                 sample.meta["target_input_tokens"]
