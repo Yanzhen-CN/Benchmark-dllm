@@ -965,7 +965,12 @@ def pairwise_report(
         "values write to <output-root>/len<value>/"
     ),
 )
-@click.option("--output-root", default="output", show_default=True, type=click.Path())
+@click.option(
+    "--output-root",
+    default=None,
+    type=click.Path(),
+    help="Override output_root from the experiment YAML",
+)
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
 @click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
 @click.option("--resume/--no-resume", default=True, show_default=True)
@@ -998,7 +1003,7 @@ def matrix_command(
     demo: bool,
     n_samples: int | None,
     max_new_tokens_values: tuple[int, ...],
-    output_root: str,
+    output_root: str | None,
     measure_compute: bool,
     require_all_metrics: bool,
     resume: bool,
@@ -1007,6 +1012,7 @@ def matrix_command(
     figures: str | None,
 ) -> None:
     """Run every model-variant x dataset row declared in an experiment YAML."""
+    experiment_settings = load_yaml(experiment_config)
     if len(model_names) != 1:
         raise click.UsageError(
             "matrix runs inside one model environment and accepts exactly one --model; "
@@ -1027,6 +1033,34 @@ def matrix_command(
             "one matrix cannot mix profiling_output and standard-output jobs"
         )
     profiling_matrix = bool(profiling_jobs)
+    expected_output_stage = "model_profiling" if profiling_matrix else "model_output"
+    configured_output_stage = str(
+        experiment_settings.get("output_stage", expected_output_stage)
+    )
+    if configured_output_stage != expected_output_stage:
+        raise click.UsageError(
+            f"experiment output_stage={configured_output_stage!r} conflicts with "
+            f"profiling_output={profiling_matrix}; expected {expected_output_stage!r}"
+        )
+    if output_root is None:
+        configured_output_dir = Path(
+            str(
+                experiment_settings.get(
+                    "output_root", Path("output") / expected_output_stage
+                )
+            )
+        )
+        if configured_output_dir.name != expected_output_stage:
+            raise click.UsageError(
+                f"experiment output_root={str(configured_output_dir)!r} must end "
+                f"with output_stage={expected_output_stage!r}"
+            )
+        # Existing stage-aware layout helpers append model_output,
+        # model_profiling, score_output, etc. Pass their common parent so the
+        # concrete YAML directory is produced exactly once.
+        output_root = str(configured_output_dir.parent)
+    else:
+        output_root = str(output_root)
     if profiling_matrix and stage in {"generate", "all"} and not measure_compute:
         raise click.UsageError(
             "this profiling matrix requires --measure-compute; nothing was run"

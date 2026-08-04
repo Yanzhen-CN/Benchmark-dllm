@@ -695,11 +695,12 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
         "--model", profile.model_id,
         "--stage", stage,
         "--demo" if data_source == "demo" else "--no-demo",
-        "--output-root", os.environ.get("OUTPUT_ROOT", "output"),
         "--measure-compute" if os.environ.get("MEASURE_COMPUTE", "0") == "1" else "--no-measure-compute",
         "--require-all-metrics" if os.environ.get("REQUIRE_ALL_METRICS", "0") == "1" else "--allow-missing-metrics",
         "--resume" if os.environ.get("RESUME", "1") == "1" else "--no-resume",
     ]
+    if os.environ.get("OUTPUT_ROOT"):
+        arguments.extend(["--output-root", os.environ["OUTPUT_ROOT"]])
     if stage in {"visualize", "all"}:
         arguments.extend(
             ["--n-representative", os.environ.get("N_REPRESENTATIVE", "3")]

@@ -152,7 +152,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--variants",
         help="Comma-separated sampling variants, e.g. p1,p2",
     )
-    parser.add_argument("--output-root", default="output")
+    parser.add_argument(
+        "--output-root",
+        default=None,
+        help="Override the experiment YAML output_root (default: use the matrix setting)",
+    )
     compute = parser.add_mutually_exclusive_group()
     compute.add_argument("--measure-compute", dest="measure_compute", action="store_true")
     compute.add_argument("--no-measure-compute", dest="measure_compute", action="store_false")
@@ -199,11 +203,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "EXPERIMENT_CONFIG": str(matrix_path),
         "DATA_SOURCE": args.data_source,
         "STAGE": args.stage,
-        "OUTPUT_ROOT": args.output_root,
         "MEASURE_COMPUTE": "1" if args.measure_compute else "0",
         "REQUIRE_ALL_METRICS": "1" if args.require_all_metrics else "0",
         "RESUME": "1" if args.resume else "0",
     }
+    if args.output_root is not None:
+        env_updates["OUTPUT_ROOT"] = args.output_root
     if args.dataset:
         env_updates["DATASETS"] = ",".join(
             dict.fromkeys(

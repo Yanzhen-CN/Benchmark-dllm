@@ -6,6 +6,9 @@
 # selects the expected IDs below. Confirm each generated _meta.json before use.
 
 base_dir: ../..
+# Concrete generation directory for profiling artifacts.
+output_root: output/model_profiling
+output_stage: model_profiling
 
 models:
   - config: configs/models/diffusiongemma.yaml

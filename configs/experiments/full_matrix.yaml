@@ -9,6 +9,8 @@
 # the formal sampling profiles for each model.
 
 base_dir: ../..
+output_root: output/model_output
+output_stage: model_output
 
 models:
   - config: configs/models/qwen3_4b.yaml  # AR reference model

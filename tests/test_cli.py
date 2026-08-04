@@ -772,3 +772,53 @@ def test_visualize_and_report_exclude_oom_invalid_test_even_with_stale_scores(
     assert report_result.exit_code != 0
     assert "excluding OOM-invalid test" in report_result.output
     assert "no valid summary.json files remain" in report_result.output
+
+
+def test_matrix_yaml_uses_concrete_stage_directory_without_duplication(
+    tmp_path, monkeypatch
+):
+    runner = CliRunner()
+    captured = []
+
+    def capture_generate(**kwargs):
+        captured.append((kwargs["output_root"], kwargs["profiling_output"]))
+
+    monkeypatch.setattr(cli_module, "generate", capture_generate)
+    model_config = (CONFIGS_DIR / "models" / "mock.yaml").as_posix()
+    dataset_config = (CONFIGS_DIR / "datasets" / "gsm8k.yaml").as_posix()
+
+    for stage_name, profiling in (
+        ("model_output", False),
+        ("model_profiling", True),
+    ):
+        experiment = tmp_path / f"{stage_name}.yaml"
+        concrete_output = tmp_path / "output" / stage_name
+        experiment.write_text(
+            f"base_dir: .\n"
+            f"output_root: {concrete_output.as_posix()}\n"
+            f"output_stage: {stage_name}\n"
+            f"models:\n"
+            f"  - config: {model_config}\n"
+            f"    variants: [default]\n"
+            f"datasets:\n"
+            f"  - config: {dataset_config}\n"
+            f"    max_new_tokens: 16\n"
+            f"seed: 42\n"
+            f"profiling_output: {str(profiling).lower()}\n",
+            encoding="utf-8",
+        )
+        arguments = [
+            "matrix", "--experiment-config", str(experiment),
+            "--model", "mock", "--stage", "generate", "--demo",
+            "--n-samples", "1",
+        ]
+        if profiling:
+            arguments.append("--measure-compute")
+        result = runner.invoke(main, arguments)
+        assert result.exit_code == 0, result.output
+
+    expected_parent = str(tmp_path / "output")
+    assert captured == [
+        (expected_parent, False),
+        (expected_parent, True),
+    ]
