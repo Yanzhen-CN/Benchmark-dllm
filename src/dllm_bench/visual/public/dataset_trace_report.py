@@ -17,7 +17,11 @@ from .trace_metrics import (
     visible_revision_profile,
     write_auxiliary_performance_csv,
 )
-from ...metrics.commit_order import aggregate_commit_order, commit_order_tau_windows
+from ...metrics.commit_order import (
+    aggregate_commit_order,
+    commit_order_tau_windows,
+    kendall_tau_b,
+)
 from ...metrics.stats_utils import BinnedPoint, aggregate_curve_by_bins, summarize
 from ...metrics.strategy_score import normalized_progress_series, strategy_score
 from ...metrics.trace_parallelism import (
@@ -451,6 +455,8 @@ def build_dataset_trace_summary(
     }
     shares: dict[str, list[float]] = {"early": [], "middle": [], "late": []}
     taus = []
+    block_local_tau_means: list[float] = []
+    block_local_taus_by_index: dict[int, list[float]] = {}
     observed_entropy_steps = observed_top1_steps = total_steps = 0
     observed_entropy_positions = observed_top1_positions = expected_remaining_positions = 0
     style_detected = style_mapped = style_eligible = 0
@@ -496,6 +502,25 @@ def build_dataset_trace_summary(
         for stage, value in finalization_share(stable, len(sequences)).items():
             shares[stage].append(value)
         taus.append(commit_order_tau_windows(list(range(len(stable))), stable))
+        block_length = int(result.request.config.get("block_length", 0) or 0)
+        if block_length >= 2:
+            sample_block_taus: list[float] = []
+            for block_index, start in enumerate(range(0, len(stable), block_length)):
+                end = min(start + block_length, len(stable))
+                if end - start < 2:
+                    continue
+                local_tau = kendall_tau_b(
+                    [float(position) for position in range(end - start)],
+                    [float(step) for step in stable[start:end]],
+                )
+                sample_block_taus.append(local_tau)
+                block_local_taus_by_index.setdefault(block_index, []).append(
+                    local_tau
+                )
+            if sample_block_taus:
+                block_local_tau_means.append(
+                    float(np.mean(sample_block_taus))
+                )
         for key, value in _update_geometry(stable, len(sequences)).items():
             geometry_values[key].append(value)
 
@@ -630,6 +655,21 @@ def build_dataset_trace_summary(
         stage: _jsonable(summarize(values, seed=seed)) for stage, values in shares.items()
     }
     summary["commit_order_tau"] = _jsonable(aggregate_commit_order(taus, seed=seed))
+    summary["commit_order_tau_scope"] = (
+        "global non-overlapping windows; includes sequential block scheduling"
+    )
+    if block_local_tau_means:
+        summary["block_local_commit_order_tau"] = {
+            "scope": (
+                "Kendall tau_b(position_in_block, final_stable_step); "
+                "sample-weighted across blocks"
+            ),
+            "overall": _jsonable(summarize(block_local_tau_means, seed=seed)),
+            "by_block": {
+                str(block_index): _jsonable(summarize(values, seed=seed))
+                for block_index, values in sorted(block_local_taus_by_index.items())
+            },
+        }
     summary["certainty_observation"] = {
         "entropy_step_rate": observed_entropy_steps / total_steps if total_steps else 0.0,
         "top1_step_rate": observed_top1_steps / total_steps if total_steps else 0.0,
