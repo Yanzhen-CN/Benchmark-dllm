@@ -100,8 +100,17 @@ def test_compute_replays_only_after_all_formal_generations(tmp_path):
     )
 
     ids = [sample.sample_id for sample in samples]
-    assert events == [*(('generate', sample_id) for sample_id in ids),
-                      *(('compute', sample_id) for sample_id in ids)]
+    assert events == [
+        *(("generate", sample_id) for sample_id in ids),
+        *(
+            event
+            for sample_id in ids
+            for event in (
+                ("compute", sample_id),
+                ("generate", sample_id),
+            )
+        ),
+    ]
     assert all(
         load_generation_result(out_dir / f"{sample_id}.json").compute_tflops == 1.25
         for sample_id in ids
@@ -150,7 +159,7 @@ def test_resume_fills_missing_compute_without_regenerating(tmp_path):
     assert load_generation_result(first_path).compute_tflops == 3.0
 
 
-def test_compute_can_be_added_to_a_no_compute_run_without_regeneration(tmp_path):
+def test_strict_profiling_rejects_a_no_compute_run_without_step_timings(tmp_path):
     adapter = MockDiffusionAdapter(response_fn=_correct_gsm8k_response, steps=2)
     samples = build_demo_samples("gsm8k", n=2)
     out_dir = tmp_path / "model_output"
@@ -172,32 +181,23 @@ def test_compute_can_be_added_to_a_no_compute_run_without_regeneration(tmp_path)
         generation.peak_vram_gb = 2.0
         save_generation_result(generation, sample_path)
 
-    adapter.generate = lambda request: (_ for _ in ()).throw(
-        AssertionError("compute supplementation regenerated a formal sample")
-    )
     replayed = []
     adapter.profile_compute = lambda request: (
         replayed.append(request.sample_id)
         or SimpleNamespace(available=True, tflops=4.0)
     )
-    summary = run_generation(
-        adapter,
-        "gsm8k",
-        samples,
-        max_new_tokens=16,
-        out_dir=out_dir,
-        measure_compute=True,
-        require_all_metrics=True,
-    )
+    with pytest.raises(RuntimeError, match="step_profiles"):
+        run_generation(
+            adapter,
+            "gsm8k",
+            samples,
+            max_new_tokens=16,
+            out_dir=out_dir,
+            measure_compute=True,
+            require_all_metrics=True,
+        )
 
-    assert summary.generated == 0
-    assert summary.skipped == 2
-    assert replayed == [sample.sample_id for sample in samples]
-    assert all(
-        load_generation_result(out_dir / f"{sample.sample_id}.json").compute_tflops
-        == 4.0
-        for sample in samples
-    )
+    assert replayed == []
 
 
 def test_run_generation_uses_per_sample_max_new_tokens(tmp_path):

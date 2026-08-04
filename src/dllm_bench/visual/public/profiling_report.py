@@ -27,7 +27,9 @@ def build_stage_profiling_summary(
             )
             stage["calls"] = int(stage["calls"] or 0) + 1
             elapsed = profile.get("wall_clock_seconds")
-            if elapsed is not None:
+            if elapsed is None:
+                stage["time_seconds"] = None
+            elif stage["time_seconds"] is not None:
                 stage["time_seconds"] = float(stage["time_seconds"] or 0.0) + float(elapsed)
             raw_flops = profile.get("compute_flops")
             if raw_flops is None:
@@ -52,8 +54,18 @@ def plot_stage_profiling(
     import matplotlib.pyplot as plt
 
     names = list(stages)
-    times = [float(stages[name]["time_seconds"] or 0.0) for name in names]
-    compute = [float(stages[name].get("compute_tflops") or 0.0) for name in names]
+    times = [
+        float(stages[name]["time_seconds"])
+        if stages[name]["time_seconds"] is not None
+        else float("nan")
+        for name in names
+    ]
+    compute = [
+        float(stages[name]["compute_tflops"])
+        if stages[name].get("compute_tflops") is not None
+        else float("nan")
+        for name in names
+    ]
     figure, axes = plt.subplots(1, 2, figsize=(14, max(4, len(names) * 0.42)))
     axes[0].barh(names, times)
     axes[0].set(title="Measured time by generation stage", xlabel="Seconds")
@@ -87,7 +99,14 @@ def build_dataset_profiling_summary(
             rows.extend(sample_rows)
             samples.append({"sample_id": sample.sample_id, **sample_summary})
 
-    total_time = sum(row.time_seconds or 0.0 for row in rows)
+    time_complete = bool(rows) and all(
+        row.time_seconds is not None for row in rows
+    )
+    total_time = (
+        sum(float(row.time_seconds) for row in rows)
+        if time_complete
+        else None
+    )
     compute_values = [row.compute_tflops for row in rows]
     compute_complete = bool(rows) and all(value is not None for value in compute_values)
     total_compute = (
@@ -95,7 +114,19 @@ def build_dataset_profiling_summary(
         if compute_complete
         else None
     )
-    total_accepted = sum(row.accepted_tokens or 0 for row in rows)
+    productive_rows = [
+        row
+        for row in rows
+        if row.phase not in {"prefill", "prefill_or_cache_build", "finalization"}
+    ]
+    acceptance_complete = bool(productive_rows) and all(
+        row.accepted_tokens is not None for row in productive_rows
+    )
+    total_accepted = (
+        sum(row.accepted_tokens or 0 for row in rows)
+        if acceptance_complete
+        else None
+    )
 
     phases: dict[str, dict[str, float | int | None]] = {}
     for row in rows:
@@ -104,9 +135,12 @@ def build_dataset_profiling_summary(
             {"steps": 0, "time_seconds": 0.0, "compute_tflops": 0.0},
         )
         phase["steps"] = int(phase["steps"] or 0) + 1
-        phase["time_seconds"] = float(phase["time_seconds"] or 0.0) + float(
-            row.time_seconds or 0.0
-        )
+        if row.time_seconds is None:
+            phase["time_seconds"] = None
+        elif phase["time_seconds"] is not None:
+            phase["time_seconds"] = float(phase["time_seconds"]) + float(
+                row.time_seconds
+            )
         if row.compute_tflops is None:
             phase["compute_tflops"] = None
         elif phase["compute_tflops"] is not None:
@@ -116,8 +150,8 @@ def build_dataset_profiling_summary(
 
     for phase in phases.values():
         phase["time_share"] = (
-            float(phase["time_seconds"] or 0.0) / total_time
-            if total_time > 0
+            float(phase["time_seconds"]) / total_time
+            if phase["time_seconds"] is not None and total_time
             else None
         )
         phase_compute = phase["compute_tflops"]
@@ -131,19 +165,34 @@ def build_dataset_profiling_summary(
         "dataset": dataset_name,
         "model": model_name,
         "config": config_name,
-        "measurement_status": "complete" if rows else "unavailable",
+        "measurement_status": (
+            "complete"
+            if rows and time_complete and compute_complete and acceptance_complete
+            else "partial" if rows else "unavailable"
+        ),
+        "time_status": "complete" if time_complete else "unavailable",
+        "compute_status": "complete" if compute_complete else "unavailable",
+        "acceptance_status": (
+            "complete" if acceptance_complete else "unavailable"
+        ),
         "selected_samples": len(records),
         "profiled_samples": len(samples),
         "step_count": len(rows),
-        "time_seconds": total_time if rows else None,
+        "time_seconds": total_time,
         "compute_tflops": total_compute,
-        "accepted_tokens": total_accepted if rows else None,
+        "accepted_tokens": total_accepted,
         "time_per_accepted_token": (
-            total_time / total_accepted if total_accepted > 0 else None
+            total_time / total_accepted
+            if total_time is not None
+            and total_accepted is not None
+            and total_accepted > 0
+            else None
         ),
         "compute_per_accepted_token": (
             total_compute / total_accepted
-            if total_compute is not None and total_accepted > 0
+            if total_compute is not None
+            and total_accepted is not None
+            and total_accepted > 0
             else None
         ),
         "phase_contribution": phases,

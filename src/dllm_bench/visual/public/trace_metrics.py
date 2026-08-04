@@ -611,13 +611,24 @@ def build_step_profiling(
     if not profiles:
         return {"measurement_status": "unavailable"}, []
 
+    compute_complete = all(
+        profile.compute_tflops is not None for profile in profiles
+    )
+    time_complete = all(
+        profile.wall_clock_seconds is not None for profile in profiles
+    )
+    productive_profiles = [
+        profile
+        for profile in profiles
+        if profile.phase not in {"prefill", "prefill_or_cache_build", "finalization"}
+    ]
+    acceptance_complete = bool(productive_profiles) and all(
+        profile.accepted_tokens is not None for profile in productive_profiles
+    )
     cumulative_compute = 0.0
-    compute_complete = True
     rows: list[StepProfilingRow] = []
     for profile in profiles:
-        if profile.compute_tflops is None:
-            compute_complete = False
-        else:
+        if profile.compute_tflops is not None:
             cumulative_compute += profile.compute_tflops
         rows.append(
             StepProfilingRow(
@@ -643,37 +654,73 @@ def build_step_profiling(
             )
         )
 
-    timed = [row for row in rows if row.time_seconds is not None]
-    computed = [row for row in rows if row.compute_tflops is not None]
-    accepted = sum(row.accepted_tokens or 0 for row in rows)
-    total_time = sum(row.time_seconds or 0.0 for row in timed)
-    total_compute = sum(row.compute_tflops or 0.0 for row in computed)
+    accepted = (
+        sum(row.accepted_tokens or 0 for row in rows)
+        if acceptance_complete
+        else None
+    )
+    total_time = (
+        sum(float(row.time_seconds) for row in rows)
+        if time_complete
+        else None
+    )
+    total_compute = (
+        sum(float(row.compute_tflops) for row in rows)
+        if compute_complete
+        else None
+    )
     phases: dict[str, dict[str, float]] = {}
     for row in rows:
-        phase = phases.setdefault(row.phase, {"time_seconds": 0.0, "compute_tflops": 0.0})
-        phase["time_seconds"] += row.time_seconds or 0.0
-        phase["compute_tflops"] += row.compute_tflops or 0.0
+        phase = phases.setdefault(
+            row.phase,
+            {"time_seconds": 0.0, "compute_tflops": 0.0},
+        )
+        if row.time_seconds is None:
+            phase["time_seconds"] = None
+        elif phase["time_seconds"] is not None:
+            phase["time_seconds"] += row.time_seconds
+        if row.compute_tflops is None:
+            phase["compute_tflops"] = None
+        elif phase["compute_tflops"] is not None:
+            phase["compute_tflops"] += row.compute_tflops
     for values in phases.values():
         values["time_share"] = (
-            values["time_seconds"] / total_time if total_time > 0 else 0.0
+            values["time_seconds"] / total_time
+            if values["time_seconds"] is not None and total_time
+            else None
         )
         values["compute_share"] = (
-            values["compute_tflops"] / total_compute if total_compute > 0 else 0.0
+            values["compute_tflops"] / total_compute
+            if values["compute_tflops"] is not None and total_compute
+            else None
         )
 
     return {
-        "measurement_status": "complete",
+        "measurement_status": (
+            "complete"
+            if time_complete and compute_complete and acceptance_complete
+            else "partial"
+        ),
+        "time_status": "complete" if time_complete else "unavailable",
+        "compute_status": "complete" if compute_complete else "unavailable",
+        "acceptance_status": (
+            "complete" if acceptance_complete else "unavailable"
+        ),
         "profiled_steps": len(rows),
         "time_per_step": [row.time_seconds for row in rows],
         "flops_per_step": [row.compute_tflops for row in rows],
         "accepted_tokens_per_step": [row.accepted_tokens for row in rows],
         "time_per_accepted_token": (
-            total_time / accepted if accepted > 0 and timed else None
+            total_time / accepted
+            if total_time is not None and accepted is not None and accepted > 0
+            else None
         ),
         "compute_per_accepted_token": (
-            total_compute / accepted if accepted > 0 and computed else None
+            total_compute / accepted
+            if total_compute is not None and accepted is not None and accepted > 0
+            else None
         ),
-        "cumulative_compute": total_compute if computed else None,
+        "cumulative_compute": total_compute,
         "phase_contribution": phases,
         "compute_scope": "model inference steps captured during deterministic FLOP replay",
         "time_scope": "GPU-synchronized model inference steps in the timed profiling run",
@@ -715,19 +762,19 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
         frameon=False,
         loc="best",
     )
-    axes[1, 0].plot(x, [row.accepted_tokens or 0 for row in rows])
+    axes[1, 0].plot(x, [row.accepted_tokens for row in rows])
     axes[1, 0].set(title="Accepted tokens per step", xlabel="Step", ylabel="Tokens")
 
-    accepted = [row.accepted_tokens or 0 for row in rows]
+    accepted = [row.accepted_tokens for row in rows]
     time_cost = [
         row.time_seconds / count
-        if row.time_seconds is not None and count > 0
+        if row.time_seconds is not None and count is not None and count > 0
         else None
         for row, count in zip(rows, accepted)
     ]
     compute_cost = [
         row.compute_tflops / count
-        if row.compute_tflops is not None and count > 0
+        if row.compute_tflops is not None and count is not None and count > 0
         else None
         for row, count in zip(rows, accepted)
     ]
@@ -766,27 +813,56 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
 
     phases = list(dict.fromkeys(row.phase for row in rows))
     phase_time = [
-        sum(row.time_seconds or 0.0 for row in rows if row.phase == phase)
+        sum(
+            row.time_seconds
+            for row in rows
+            if row.phase == phase and row.time_seconds is not None
+        )
+        if all(
+            row.time_seconds is not None
+            for row in rows
+            if row.phase == phase
+        )
+        else None
         for phase in phases
     ]
     phase_compute = [
-        sum(row.compute_tflops or 0.0 for row in rows if row.phase == phase)
+        sum(
+            row.compute_tflops
+            for row in rows
+            if row.phase == phase and row.compute_tflops is not None
+        )
+        if all(
+            row.compute_tflops is not None
+            for row in rows
+            if row.phase == phase
+        )
+        else None
         for phase in phases
     ]
-    total_time = sum(phase_time)
-    total_compute = sum(phase_compute)
+    total_time = sum(phase_time) if all(value is not None for value in phase_time) else None
+    total_compute = (
+        sum(phase_compute) if all(value is not None for value in phase_compute) else None
+    )
     positions = list(range(len(phases)))
     width = 0.38
     axes[2, 1].bar(
         [position - width / 2 for position in positions],
-        [value / total_time if total_time > 0 else 0.0 for value in phase_time],
+        [
+            value / total_time
+            if value is not None and total_time
+            else float("nan")
+            for value in phase_time
+        ],
         width,
         label="Time share",
     )
     axes[2, 1].bar(
         [position + width / 2 for position in positions],
         [
-            value / total_compute if total_compute > 0 else 0.0
+            value / total_compute
+            if value is not None and total_compute
+            else float("nan")
             for value in phase_compute
         ],
         width,

@@ -78,9 +78,35 @@ def test_profiling_summary_uses_forward_profiles_without_trace():
     assert summary["step_count"] == 2
     assert summary["compute_tflops"] == 3.0
     assert summary["accepted_tokens"] == 4
+    assert summary["measurement_status"] == "complete"
+    assert summary["time_status"] == "complete"
+    assert summary["compute_status"] == "complete"
+    assert summary["acceptance_status"] == "complete"
     assert summary["phase_contribution"]["prefill"]["steps"] == 1
     assert summary["stage_contribution"]["prefill"]["calls"] == 1
     assert rows[-1].cumulative_compute_tflops == 3.0
+
+
+def test_profiling_summary_does_not_turn_missing_metrics_into_zero():
+    result = _profiled_result()
+    result.forward_profiles[1].wall_clock_seconds = None
+    result.forward_profiles[1].accepted_tokens = None
+    sample = Sample("sample-1", "profile", "answer")
+
+    summary, rows = build_dataset_profiling_summary(
+        "gsm8k",
+        [(sample, result)],
+        model_name="dreamreasoner",
+        config_name="p2",
+    )
+
+    assert summary["measurement_status"] == "partial"
+    assert summary["time_status"] == "unavailable"
+    assert summary["acceptance_status"] == "unavailable"
+    assert summary["time_seconds"] is None
+    assert summary["accepted_tokens"] is None
+    assert summary["time_per_accepted_token"] is None
+    assert rows[1].time_seconds is None
 
 
 def test_profiling_visualization_writes_only_png(tmp_path):

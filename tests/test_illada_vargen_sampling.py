@@ -96,6 +96,21 @@ def test_vargen_commits_each_block_before_appending_the_next():
     )
 
 
+def test_vargen_reports_acceptance_for_every_forward():
+    adapter, _ = _adapter()
+    annotations = []
+    adapter._annotate_last_forward = lambda **values: annotations.append(values)
+
+    adapter._run_denoising("prompt", adapter._step_config)
+
+    assert annotations == [
+        {"accepted_tokens": 1, "active_tokens": 2, "eligible_tokens": 2},
+        {"accepted_tokens": 1, "active_tokens": 2, "eligible_tokens": 1},
+        {"accepted_tokens": 1, "active_tokens": 2, "eligible_tokens": 2},
+        {"accepted_tokens": 1, "active_tokens": 2, "eligible_tokens": 1},
+    ]
+
+
 def test_vargen_matches_official_block_divisibility_requirement():
     adapter, _ = _adapter(gen_length=5)
 

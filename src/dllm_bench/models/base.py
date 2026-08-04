@@ -227,7 +227,10 @@ class BaseModelAdapter(ABC):
         eligible_tokens: int,
     ) -> None:
         for profile in reversed(getattr(self, "_forward_profiles", [])):
-            if profile.phase == "denoise" and profile.accepted_tokens is None:
+            if (
+                profile.phase not in {"prefill", "prefill_or_cache_build", "finalization"}
+                and profile.accepted_tokens is None
+            ):
                 profile.accepted_tokens = int(accepted_tokens)
                 profile.active_tokens = int(active_tokens)
                 profile.eligible_tokens = int(eligible_tokens)

@@ -249,6 +249,59 @@ def _persist_oom_invalidation(
     save_meta(oom_info, meta_path.parent / OOM_INFO_FILENAME)
 
 
+_NON_ACCEPTING_FORWARD_PHASES = {
+    "prefill",
+    "prefill_or_cache_build",
+    "finalization",
+}
+
+
+def _missing_step_metrics(
+    generation: GenerationResult,
+    *,
+    require_compute: bool,
+) -> list[str]:
+    profiles = generation.forward_profiles
+    if not profiles:
+        return ["step_profiles"]
+
+    missing: list[str] = []
+    if any(
+        profile.wall_clock_seconds is None or profile.wall_clock_seconds <= 0
+        for profile in profiles
+    ):
+        missing.append("time_per_step")
+    productive = [
+        profile
+        for profile in profiles
+        if profile.phase not in _NON_ACCEPTING_FORWARD_PHASES
+    ]
+    if productive and any(profile.accepted_tokens is None for profile in productive):
+        missing.append("accepted_tokens_per_step")
+    if require_compute:
+        if any(
+            profile.compute_flops is None or profile.compute_tflops is None
+            for profile in profiles
+        ):
+            missing.append("flops_per_step")
+        if generation.extra.get("step_compute_status") != "complete":
+            missing.append("step_compute_status")
+        stages = generation.extra.get("stage_profiles", [])
+        if not stages:
+            missing.append("stage_profiles")
+        elif any(
+            stage.get("wall_clock_seconds") is None
+            or stage.get("compute_flops") is None
+            for stage in stages
+        ):
+            missing.append("stage_time_or_compute")
+        if generation.extra.get("stage_compute_status") != "complete":
+            missing.append("stage_compute_status")
+        if generation.extra.get("clean_replay_validation", {}).get("status") != "matched":
+            missing.append("clean_replay_validation")
+    return missing
+
+
 def _validate_required_metrics(
     adapter: ModelAdapter,
     generation: GenerationResult,
@@ -270,6 +323,10 @@ def _validate_required_metrics(
             missing.append("compute_tflops")
     if require_trace and adapter.supports_trace and not generation.trace:
         missing.append("trace")
+    if require_compute:
+        missing.extend(
+            _missing_step_metrics(generation, require_compute=True)
+        )
     if missing:
         raise RuntimeError(
             f"sample {generation.request.sample_id} is missing required formal metrics: "
@@ -293,10 +350,14 @@ def _estimated_profile_steps(request: GenerationRequest) -> int | None:
 
 def _apply_compute_handle(generation: GenerationResult, compute_handle) -> None:
     generation.compute_flops = (
-        compute_handle.flops if compute_handle.available else None
+        getattr(compute_handle, "flops", None)
+        if compute_handle.available
+        else None
     )
     generation.compute_tflops = (
-        compute_handle.tflops if compute_handle.available else None
+        getattr(compute_handle, "tflops", None)
+        if compute_handle.available
+        else None
     )
     replay_flops = getattr(compute_handle, "forward_tflops", None) or []
     replay_raw_flops = getattr(compute_handle, "forward_flops", None) or []
@@ -330,7 +391,11 @@ def _apply_compute_handle(generation: GenerationResult, compute_handle) -> None:
         generation.extra["stage_compute_status"] = "complete"
     elif measured_stages:
         generation.extra["stage_compute_status"] = "profile_mismatch"
-    generation.extra["torch_profiler"] = compute_handle.torch_profile
+    generation.extra["torch_profiler"] = getattr(
+        compute_handle,
+        "torch_profile",
+        {"status": "not_available"},
+    )
 
 
 def _clean_replay_request(request: GenerationRequest) -> GenerationRequest:
@@ -508,12 +573,19 @@ def run_generation(
                     f"matrix requires {sample_max_new_tokens}; rerun with --no-resume "
                     "(overwrites this dataset) or choose a fresh --output-root"
                 )
-            if (
-                measure_compute
-                and existing.status.value == "success"
-                and existing.compute_tflops is None
-            ):
-                compute_queue.append((index, sample, sample_path, existing))
+            if measure_compute and existing.status.value == "success":
+                timed_profile_errors = _missing_step_metrics(
+                    existing,
+                    require_compute=False,
+                )
+                if timed_profile_errors and require_all_metrics:
+                    raise RuntimeError(
+                        f"existing profiling sample {sample.sample_id} is incomplete "
+                        f"({', '.join(timed_profile_errors)}); rerun with --no-resume "
+                        "or choose a fresh --output-root"
+                    )
+                if existing.compute_tflops is None:
+                    compute_queue.append((index, sample, sample_path, existing))
             continue
 
         request_config = dict(extra_config or {})
@@ -536,78 +608,20 @@ def run_generation(
             sample_id=sample.sample_id,
             seed=seed,
         )
-        generate_profiled = getattr(adapter, "generate_profiled", None)
-        profiled_in_first_pass = measure_compute and callable(generate_profiled)
-        if profiled_in_first_pass:
-            progress_carrier = GenerationResult(
-                request=request,
-                output_text="",
-                status=RunStatus.SUCCESS,
-            )
-            expected_steps = _estimated_profile_steps(request)
-            report_interval = max(1, ((expected_steps or 100) + 9) // 10)
-            last_reported_step = 0
-
-            def report_metric_progress(completed_steps: int) -> None:
-                nonlocal last_reported_step
-                should_report = (
-                    completed_steps == 1
-                    or completed_steps - last_reported_step >= report_interval
-                    or completed_steps == expected_steps
-                )
-                if progress is None or not should_report:
-                    return
-                last_reported_step = completed_steps
-                progress_carrier.extra["_metric_collection_progress"] = {
-                    "completed_steps": int(completed_steps),
-                    "expected_steps": expected_steps,
-                }
-                progress(
-                    "compute_progress",
-                    index,
-                    len(samples),
-                    sample,
-                    progress_carrier,
-                )
-
-            if progress is not None:
-                progress("compute", index, len(samples), sample, progress_carrier)
-            request.config["_compute_progress_callback"] = report_metric_progress
-            try:
-                generation, compute_handle = generate_profiled(request)
-            finally:
-                request.config.pop("_compute_progress_callback", None)
-            _apply_compute_handle(generation, compute_handle)
-            if progress is not None:
-                progress("compute_finish", index, len(samples), sample, generation)
-
-            if generation.status is RunStatus.SUCCESS:
-                if progress is not None:
-                    progress("start", index, len(samples), sample, None)
-                clean_generation = adapter.generate(_clean_replay_request(request))
-                _merge_clean_replay(generation, clean_generation)
-        else:
-            if progress is not None:
-                progress("start", index, len(samples), sample, None)
-            generation = adapter.generate(request)
+        if progress is not None:
+            progress("start", index, len(samples), sample, None)
+        generation = adapter.generate(request)
 
         if generation.status is RunStatus.OOM:
             stopped_early = True
             first_oom_sample_id = sample.sample_id
             first_oom_ordinal = index
 
-        if (
-            require_all_metrics
-            and profiled_in_first_pass
-            and generation.extra.get("clean_replay_validation", {}).get("status")
-            == "mismatch"
-        ):
-            save_generation_result(generation, sample_path)
-        if require_all_metrics:
+        if require_all_metrics and not measure_compute:
             _validate_required_metrics(
                 adapter,
                 generation,
-                require_compute=bool(profiled_in_first_pass),
+                require_compute=False,
                 require_trace=capture_trace,
             )
 
@@ -622,11 +636,7 @@ def run_generation(
             )
         else:
             save_generation_result(generation, sample_path)
-        if (
-            measure_compute
-            and not profiled_in_first_pass
-            and generation.status.value == "success"
-        ):
+        if measure_compute and generation.status.value == "success":
             compute_queue.append((index, sample, sample_path, generation))
         generated += 1
         if progress is not None:
@@ -683,6 +693,14 @@ def run_generation(
             finally:
                 generation.request.config.pop("_compute_progress_callback", None)
             _apply_compute_handle(generation, compute_handle)
+            if (
+                generation.extra.get("clean_replay_validation", {}).get("status")
+                != "matched"
+            ):
+                clean_generation = adapter.generate(
+                    _clean_replay_request(generation.request)
+                )
+                _merge_clean_replay(generation, clean_generation)
         if progress is not None:
             progress("compute_finish", index, len(samples), sample, generation)
         if require_all_metrics:

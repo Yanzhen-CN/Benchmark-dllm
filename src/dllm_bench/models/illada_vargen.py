@@ -137,6 +137,11 @@ class IlladaVarGenAdapter(HFDiffusionAdapter):
                     transfer_index[0, selected] = True
                 with self._profile_stage("canvas_update"):
                     x[transfer_index] = x0[transfer_index]
+                self._annotate_last_forward(
+                    accepted_tokens=k,
+                    active_tokens=active_length,
+                    eligible_tokens=remaining,
+                )
 
                 if self._trace_instrumentation_enabled():
                     with self._exclude_from_measurement():
