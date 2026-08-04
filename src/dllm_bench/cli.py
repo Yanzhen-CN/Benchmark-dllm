@@ -412,8 +412,9 @@ def generate(
         compute_started: dict[str, float] = {}
 
         def log_progress(event, index, total, sample, generation):
-            prefix = f"[{v}] {dataset.name} [{index}/{total}] {sample.sample_id}"
+            prefix = f"[{v}] [{index}/{total}] {sample.sample_id}"
             if event == "start":
+                click.echo(f"{prefix}: generating ...")
                 return
             if event == "compute":
                 compute_started[sample.sample_id] = perf_counter()
