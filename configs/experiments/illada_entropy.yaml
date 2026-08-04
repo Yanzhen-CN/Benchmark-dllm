@@ -1,6 +1,8 @@
 # Formal iLLaDA entropy-acceptance benchmark. This is an independent model
 # run, not a fixed-sample pair against native iLLaDA.
 base_dir: ../..
+output_root: output/model_output
+output_stage: model_output
 
 models:
   - config: configs/models/illada_entropy.yaml
