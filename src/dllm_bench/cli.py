@@ -569,7 +569,9 @@ def score(
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
-    primary_metric = load_yaml(dataset_config).get("primary_metric")
+    dataset_settings = load_yaml(dataset_config)
+    primary_metric = dataset_settings.get("primary_metric")
+    preview_aux_metrics = dataset_settings.get("aux_metrics", [])
     samples, _ = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
     configured_model = model_name(model_config)
 
@@ -603,7 +605,34 @@ def score(
             click.echo(f"[{v}] MISSING DATASET OUTPUT: {exc}")
             continue
 
-        click.echo(f"[{v}] q={result.summary.q:.4f}  scored={result.scored}  skipped={result.skipped}  -> {score_out / 'summary.json'}")
+        if result.preview:
+            summary = result.summary
+            metric_rows = [
+                (primary_metric or f"{dataset.name}_score", summary.q),
+                ("valid_rate", summary.aux.get("valid_rate")),
+                ("complete_rate", summary.aux.get("complete_rate")),
+            ]
+            metric_rows.extend(
+                (name, summary.aux[name])
+                for name in preview_aux_metrics
+                if name in summary.aux
+                and name not in {"valid_rate", "complete_rate"}
+            )
+            label_width = max(len(str(name)) for name, _ in metric_rows)
+            click.echo("")
+            click.echo("=" * 72)
+            click.echo(
+                f"PREVIEW  model={configured_model}  variant={v}  "
+                f"dataset={dataset.name}  samples={summary.n_samples}"
+            )
+            click.echo("-" * 72)
+            for name, value in metric_rows:
+                rendered = "N/A" if value is None else f"{float(value):.6f}"
+                click.echo(f"{str(name):<{label_width}}  {rendered}")
+            click.echo("-" * 72)
+            click.echo("No score files were created or updated.")
+        else:
+            click.echo(f"[{v}] q={result.summary.q:.4f}  scored={result.scored}  skipped={result.skipped}  -> {score_out / 'summary.json'}")
         if result.missing_sample_ids:
             click.echo(f"[{v}] WARNING: {len(result.missing_sample_ids)} sample(s) not yet generated: {result.missing_sample_ids}")
 

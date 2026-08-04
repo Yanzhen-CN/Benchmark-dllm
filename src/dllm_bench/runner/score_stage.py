@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ class ScoreStageResult:
     scored: int
     skipped: int
     missing_sample_ids: list[str] = field(default_factory=list)
+    preview: bool = False
 
 
 class InvalidTestError(RuntimeError):
@@ -163,16 +165,19 @@ def run_scoring(
 
     model_output_dir = Path(model_output_dir)
     score_output_dir = Path(score_output_dir)
+    preview = os.environ.get("DLLM_SCORE_PREVIEW") == "1"
     meta = ensure_test_valid(model_output_dir)
     expected_ids = [sample.sample_id for sample in samples]
     generated_ids = list(meta.get("selected_sample_ids", []))
     if generated_ids != expected_ids:
-        (score_output_dir / "summary.json").unlink(missing_ok=True)
+        if not preview:
+            (score_output_dir / "summary.json").unlink(missing_ok=True)
         raise IncompleteTestError(
             "ordered selected_sample_ids mismatch: generation has "
             f"{generated_ids}, scoring requested {expected_ids}"
         )
-    score_output_dir.mkdir(parents=True, exist_ok=True)
+    if not preview:
+        score_output_dir.mkdir(parents=True, exist_ok=True)
 
     metric_name = primary_metric or f"{dataset.name}_score"
     dataset_revision = _dataset_revision(dataset, samples)
@@ -206,7 +211,8 @@ def run_scoring(
         generation = load_generation_result(generation_path)
 
         if generation.status not in {RunStatus.SUCCESS, RunStatus.TRUNCATED}:
-            (score_output_dir / "summary.json").unlink(missing_ok=True)
+            if not preview:
+                (score_output_dir / "summary.json").unlink(missing_ok=True)
             raise InvalidTestError(
                 f"{sample.sample_id} has infrastructure status "
                 f"{generation.status.value}; the complete dataset row is invalid"
@@ -228,7 +234,8 @@ def run_scoring(
         score_fingerprints.append(score_metadata["fingerprint"])
 
         if (
-            resume
+            not preview
+            and resume
             and score_path.exists()
             and load_score_metadata(score_path).get("fingerprint")
             == score_metadata["fingerprint"]
@@ -242,7 +249,8 @@ def run_scoring(
             )
             if generation.status == RunStatus.TRUNCATED:
                 score.complete = False
-            save_score_result(score, score_path, metadata=score_metadata)
+            if not preview:
+                save_score_result(score, score_path, metadata=score_metadata)
             scored += 1
 
         records.append(SampleRecord(sample=sample, generation=generation, score=score))
@@ -256,7 +264,8 @@ def run_scoring(
     if missing:
         # Per-sample scores are resumable, but a partial formal aggregate must
         # never survive as a reportable benchmark row.
-        (score_output_dir / "summary.json").unlink(missing_ok=True)
+        if not preview:
+            (score_output_dir / "summary.json").unlink(missing_ok=True)
         raise IncompleteTestError(
             f"{len(missing)} of {len(samples)} selected generation(s) are missing "
             f"under {model_output_dir}: {missing}"
@@ -292,8 +301,13 @@ def run_scoring(
         "actual_scored_sample_count": len(records),
         "aggregation_method": "micro_mean_over_exact_selected_sample_set",
     }
-    save_run_summary(summary, score_output_dir / "summary.json")
+    if not preview:
+        save_run_summary(summary, score_output_dir / "summary.json")
 
     return ScoreStageResult(
-        summary=summary, scored=scored, skipped=skipped, missing_sample_ids=missing
+        summary=summary,
+        scored=scored,
+        skipped=skipped,
+        missing_sample_ids=missing,
+        preview=preview,
     )

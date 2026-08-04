@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -63,6 +64,14 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
         resume.add_argument("--resume", dest="resume", action="store_true")
         resume.add_argument("--no-resume", dest="resume", action="store_false")
         parser.set_defaults(resume=True)
+        parser.add_argument(
+            "--preview",
+            action="store_true",
+            help=(
+                "Recompute scores in memory and print them to the terminal; "
+                "do not create or update score_output files"
+            ),
+        )
     if stage == "visualize":
         parser.add_argument(
             "--figure",
@@ -120,7 +129,12 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
 
     print(f"Matrix: {matrix_path}")
     print(f"Local stage: {stage}")
+    if stage == "score" and args.preview:
+        print("Score mode: PREVIEW ONLY (no score files will be written)")
     print(f"Models: {', '.join(models)}")
+    child_environment = os.environ.copy()
+    if stage == "score" and args.preview:
+        child_environment["DLLM_SCORE_PREVIEW"] = "1"
     for index, model in enumerate(models, start=1):
         command = [
             sys.executable,
@@ -157,7 +171,12 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
                     command.extend(["--dataset", dataset_name.strip()])
         print(f"[{index}/{len(models)}] {model}: {' '.join(command)}", flush=True)
         if not args.dry_run:
-            subprocess.run(command, cwd=PROJECT_ROOT, check=True)
+            subprocess.run(
+                command,
+                cwd=PROJECT_ROOT,
+                env=child_environment,
+                check=True,
+            )
 
     if stage == "visualize":
         report_roots = (
