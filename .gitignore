@@ -26,7 +26,9 @@ temp_visualizaion/
 temp_visualization/
 .tmp_*/
 tmp/
-temp/
+temp/*
+!temp/prepare_sudoku4_direct.py
+!temp/llada2_1_sudoku4_direct.yaml
 *.png
 *.gif
 
