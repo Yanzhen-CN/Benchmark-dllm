@@ -186,15 +186,17 @@ format. Both trees use the identical
 per-sample JSON, completion state, and OOM records. Profiling sample JSON only
 adds the profiling measurements collected by this protocol.
 
-The profiling matrix reduces the experiment to one fixed MBPP, GSM8K, and
-StructEval-T sample for DiffusionGemma official, iLLaDA P2, and DreamReasoner
-P2: 3 model operating points x 3 representative tasks. Keep all three datasets
-in one command so each model is loaded once. `--measure-compute` enables
-GPU-synchronized per-forward timing and a separate deterministic FLOP replay.
-Token trace capture is disabled by this matrix: profiling records forward time,
-FLOPs, accepted-token count, input length, KV-cache length, attention span, and
-cache read/write phase. Results go to `model_profiling` so the instrumented run
-does not overwrite the corresponding formal generation in `model_output`.
+The profiling matrix reduces the experiment to ten fixed samples from each of
+MBPP, GSM8K, and StructEval-T for DiffusionGemma official, iLLaDA P2, and
+DreamReasoner P2: 3 model operating points x 3 representative tasks x 10
+samples. The shared seed and pinned datasets give every model the same sample
+set. Keep all three datasets in one command so each model is loaded once.
+`--measure-compute` enables GPU-synchronized per-forward timing and a separate
+deterministic FLOP replay. Token trace capture is disabled by this matrix:
+profiling records forward time, FLOPs, accepted-token count, input length,
+KV-cache length, attention span, and cache read/write phase. Results go to
+`model_profiling` so the instrumented run does not overwrite the corresponding
+formal generation in `model_output`.
 
 ```bash
 python run_model.py --matrix configs/experiments/profiling_matrix.yaml \
