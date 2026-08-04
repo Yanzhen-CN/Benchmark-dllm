@@ -74,6 +74,10 @@ class TraceStep:
     entropy_by_position: dict[int, float] | None = None
     top1_confidence_by_position: dict[int, float] | None = None
     token_texts: list[str] | None = None
+    current_token_confidence_by_position: dict[int, float] | None = None
+    proposed_token_ids_by_position: dict[int, int] | None = None
+    confidence_margin_by_position: dict[int, float] | None = None
+    editing_state_by_position: dict[int, str] | None = None
 
 
 @dataclass

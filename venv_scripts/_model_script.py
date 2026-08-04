@@ -51,7 +51,7 @@ PROFILES: Mapping[str, ModelProfile] = {
     ),
     "llada2_1": ModelProfile(
         "llada2_1", "llada2_1", "configs/models/llada2_1.yaml",
-        "dev,hf,gpu", "2.6.0", "4.57.1", ("cu118", "cu124", "cu126"),
+        "dev,hf,gpu", "2.6.0", "5.13.0", ("cu118", "cu124", "cu126"),
     ),
     "illada_vargen": ModelProfile(
         "illada_vargen", "illada_vargen", "configs/models/illada_vargen.yaml",

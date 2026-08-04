@@ -96,6 +96,42 @@ def _truncate_trace_step(step: TraceStep, valid_length: int) -> TraceStep:
             else None
         ),
         token_texts=token_texts,
+        current_token_confidence_by_position=(
+            {
+                position: value
+                for position, value in step.current_token_confidence_by_position.items()
+                if int(position) < valid_length
+            }
+            if step.current_token_confidence_by_position is not None
+            else None
+        ),
+        proposed_token_ids_by_position=(
+            {
+                position: value
+                for position, value in step.proposed_token_ids_by_position.items()
+                if int(position) < valid_length
+            }
+            if step.proposed_token_ids_by_position is not None
+            else None
+        ),
+        confidence_margin_by_position=(
+            {
+                position: value
+                for position, value in step.confidence_margin_by_position.items()
+                if int(position) < valid_length
+            }
+            if step.confidence_margin_by_position is not None
+            else None
+        ),
+        editing_state_by_position=(
+            {
+                position: value
+                for position, value in step.editing_state_by_position.items()
+                if int(position) < valid_length
+            }
+            if step.editing_state_by_position is not None
+            else None
+        ),
     )
 
 
@@ -202,6 +238,10 @@ def generation_result_to_dict(generation: GenerationResult) -> dict[str, Any]:
                 "entropy_by_position": step.entropy_by_position,
                 "top1_confidence_by_position": step.top1_confidence_by_position,
                 "token_texts": step.token_texts,
+                "current_token_confidence_by_position": step.current_token_confidence_by_position,
+                "proposed_token_ids_by_position": step.proposed_token_ids_by_position,
+                "confidence_margin_by_position": step.confidence_margin_by_position,
+                "editing_state_by_position": step.editing_state_by_position,
             }
             for step in generation.trace
         ],
@@ -239,6 +279,16 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
             entropy_by_position=step.get("entropy_by_position"),
             top1_confidence_by_position=step.get("top1_confidence_by_position"),
             token_texts=step.get("token_texts"),
+            current_token_confidence_by_position=step.get(
+                "current_token_confidence_by_position"
+            ),
+            proposed_token_ids_by_position=step.get(
+                "proposed_token_ids_by_position"
+            ),
+            confidence_margin_by_position=step.get(
+                "confidence_margin_by_position"
+            ),
+            editing_state_by_position=step.get("editing_state_by_position"),
         )
         for step in data.get("trace", [])
     ]

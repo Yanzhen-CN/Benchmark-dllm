@@ -38,7 +38,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     }
     llada21_jobs = [job for job in jobs if job.model_name == "llada2_1"]
     assert len(llada21_jobs) == 10
-    assert all(job.variants == ("official",) for job in llada21_jobs)
+    assert all(job.variants == ("qmode", "smode") for job in llada21_jobs)
     illada_job = next(
         job for job in jobs
         if job.model_name == "illada" and job.dataset_config.stem == "gsm8k"

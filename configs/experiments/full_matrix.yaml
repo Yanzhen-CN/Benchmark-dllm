@@ -66,7 +66,7 @@ models:
         hellobench_lengths: [2k]
         n_samples: 1
   - config: configs/models/llada2_1.yaml # inclusionAI LLaDA2.1-mini
-    variants: [official]
+    variants: [qmode, smode] # checkpoint-native official Quality/Speed modes
   - config: configs/models/w1.yaml  # w1-instruct-4B
     variants: [standard, jump, gidd]  # sampler difference
     dataset_overrides:

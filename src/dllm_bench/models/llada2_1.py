@@ -1,36 +1,50 @@
+"""Official LLaDA2.1 Q/S generation with observation-only tracing.
+
+The checkpoint's remote ``generate`` method remains the sole owner of mask
+transfer and token editing. Temporary wrappers observe real canvases and
+distributions, delegate unchanged, and are restored after every request.
+"""
+
 from __future__ import annotations
 
 import math
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from typing import Any
 
 from .base import BaseModelAdapter
 from .device_transfer import move_model_to_device
 from .model_cache import get_or_load
-from ..interfaces import (
-    EditingTraceStep,
-    GenerationRequest,
-    GenerationResult,
-    PositionState,
-    RunStatus,
-    TraceStep,
-)
+from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 
 
 class Llada21Adapter(BaseModelAdapter):
-    """LLaDA2.1-mini adapter with an instrumented, intra-block T2T sampler."""
-
     name = "llada2_1"
     supports_trace = True
     deferred_measurement = True
 
-    def __init__(self, model_name_or_path: str = "inclusionAI/LLaDA2.1-mini", revision: str | None = None,
-                 config_name: str = "qmode",
-                 device: str = "cuda", torch_dtype: str = "bfloat16", block_length: int = 32,
-                 threshold: float = 0.7, editing_threshold: float = 0.5, max_post_steps: int = 16,
-                 editing_enabled: bool = True, temperature: float = 0.0, mask_id: int = 156895,
-                 eos_id: int = 156892, trust_remote_code: bool = True,
-                 official_generation: bool = False, **_: Any) -> None:
+    def __init__(
+        self,
+        model_name_or_path: str = "inclusionAI/LLaDA2.1-mini",
+        revision: str | None = None,
+        config_name: str = "qmode",
+        device: str = "cuda",
+        torch_dtype: str = "bfloat16",
+        block_length: int = 32,
+        steps: int = 32,
+        threshold: float = 0.7,
+        editing_threshold: float = 0.5,
+        max_post_steps: int = 16,
+        temperature: float = 0.0,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        eos_early_stop: bool = True,
+        minimal_topk: int = 1,
+        num_to_transfer: int = 1,
+        mask_id: int = 156895,
+        eos_id: int = 156892,
+        trust_remote_code: bool = True,
+        **_: Any,
+    ) -> None:
         super().__init__()
         self.config_name = config_name
         self.model_name_or_path = model_name_or_path
@@ -38,16 +52,21 @@ class Llada21Adapter(BaseModelAdapter):
         self.device = device
         self.torch_dtype = torch_dtype
         self.block_length = int(block_length)
+        self.steps = int(steps)
         self.threshold = float(threshold)
         self.editing_threshold = float(editing_threshold)
         self.max_post_steps = int(max_post_steps)
-        self.editing_enabled = bool(editing_enabled)
         self.temperature = float(temperature)
+        self.top_p = top_p
+        self.top_k = top_k
+        self.eos_early_stop = bool(eos_early_stop)
+        self.minimal_topk = int(minimal_topk)
+        self.num_to_transfer = int(num_to_transfer)
         self.mask_id = int(mask_id)
         self.eos_id = int(eos_id)
         self.trust_remote_code = bool(trust_remote_code)
-        self.official_generation = bool(official_generation)
-        self.supports_trace = not self.official_generation
+        self.execution_path = "official-transformers-remote-generate"
+        self.trace_source = "observational-forward-and-sampler-wrapper"
         self._model = None
         self._tokenizer = None
 
@@ -72,28 +91,14 @@ class Llada21Adapter(BaseModelAdapter):
             model.eval()
             return tokenizer, model
 
-        cache_key = f"{self.model_name_or_path}@{self.revision or 'main'}:{self.torch_dtype}"
-        self._tokenizer, self._model = get_or_load(cache_key, self.device, _load)
+        key = f"{self.model_name_or_path}@{self.revision or 'main'}:{self.torch_dtype}"
+        self._tokenizer, self._model = get_or_load(key, self.device, _load)
 
     @contextmanager
     def _capture_model_forwards(self, request, compute_handle=None):
-        """Load before BaseModelAdapter installs optional per-forward hooks."""
         self._ensure_loaded()
         with super()._capture_model_forwards(request, compute_handle):
             yield
-
-    def _token_text(self, token_id: int) -> str:
-        return self._tokenizer.decode([int(token_id)], skip_special_tokens=False).strip()
-
-    def _digit_token_ids(self, size: int) -> dict[str, int]:
-        result: dict[str, int] = {}
-        for digit in range(1, size + 1):
-            text = str(digit)
-            ids = self._tokenizer.encode(text, add_special_tokens=False)
-            if len(ids) != 1 or self._token_text(ids[0]) != text:
-                raise ValueError(f"Editable Sudoku requires one token per digit; {text!r} encoded as {ids}.")
-            result[text] = int(ids[0])
-        return result
 
     def _prompt_ids(self, prompt: str):
         import torch
@@ -106,225 +111,188 @@ class Llada21Adapter(BaseModelAdapter):
         )
         if not torch.is_tensor(ids):
             ids = torch.tensor([ids], dtype=torch.long)
-        if ids.ndim == 1:
-            ids = ids.unsqueeze(0)
-        return ids.to(self.device)
+        return (ids.unsqueeze(0) if ids.ndim == 1 else ids).to(self.device)
 
-    def _sample_predictions(self, logits):
-        sampler = getattr(self._model, "_sample_with_temperature_topk_topp", None)
-        if sampler is None:
-            raise RuntimeError("The remote LLaDA2.1 model does not expose its official sampler helper.")
-        return sampler(logits, self.temperature, 0, 1.0)
-
-    def _generate_official(self, request: GenerationRequest) -> GenerationResult:
-        """Use the checkpoint's public Transformers generation entrypoint."""
+    def _generate_core(self, request: GenerationRequest) -> GenerationResult:
+        self._ensure_loaded()
         import torch
 
         prompt_ids = self._prompt_ids(request.prompt)
-        attention_mask = torch.ones_like(prompt_ids)
-        generation_kwargs = {
-            "input_ids": prompt_ids,
-            "attention_mask": attention_mask,
-            "max_new_tokens": int(request.max_new_tokens),
-            "return_dict_in_generate": True,
-            "pad_token_id": self.eos_id,
-            "eos_token_id": self.eos_id,
-        }
-        if self.temperature > 0:
-            generation_kwargs.update(
-                {"do_sample": True, "temperature": self.temperature}
+        prompt_length = int(prompt_ids.shape[1])
+        observations: list[dict[str, Any]] = []
+        pending_canvas = None
+        forward_count = 0
+        trace_enabled = self._trace_instrumentation_enabled()
+        original_forward = self._model.forward
+        original_sampler = self._model._sample_with_temperature_topk_topp
+
+        def observed_forward(*args, **kwargs):
+            nonlocal pending_canvas, forward_count
+            input_ids = args[0] if args else kwargs.get("input_ids")
+            forward_count += 1
+            pending_canvas = input_ids.detach() if input_ids is not None else None
+            with self._forward_phase("denoise_step"):
+                return original_forward(*args, **kwargs)
+
+        def observed_sampler(logits, temperature=0.0, top_k=None, top_p=None):
+            sampled, confidence = original_sampler(
+                logits, temperature=temperature, top_k=top_k, top_p=top_p
             )
-        else:
-            generation_kwargs["do_sample"] = False
+            if trace_enabled and pending_canvas is not None:
+                with self._exclude_from_measurement():
+                    probabilities = torch.softmax(logits.float(), dim=-1)
+                    entropy = -(
+                        probabilities * probabilities.clamp_min(1e-12).log()
+                    ).sum(dim=-1) / math.log(probabilities.shape[-1])
+                    active_tokens = pending_canvas[:, -logits.shape[-2]:]
+                    current_confidence = torch.gather(
+                        probabilities,
+                        dim=-1,
+                        index=active_tokens.unsqueeze(-1),
+                    ).squeeze(-1)
+                    observations.append({
+                        "canvas": pending_canvas[0].detach().cpu().tolist(),
+                        "active_start": int(pending_canvas.shape[1] - logits.shape[-2]),
+                        "entropy": entropy[0].detach().cpu().tolist(),
+                        "confidence": confidence[0].detach().float().cpu().tolist(),
+                        "current_confidence": current_confidence[0].detach().cpu().tolist(),
+                        "proposed_tokens": sampled[0].detach().cpu().tolist(),
+                    })
+            return sampled, confidence
 
-        self._start_measurement()
-        with self._forward_phase("generation_step"), torch.inference_mode():
-            generated = self._model.generate(**generation_kwargs)
-        self._stop_measurement()
+        self._model.forward = observed_forward
+        self._model._sample_with_temperature_topk_topp = observed_sampler
+        measurement_started = False
+        try:
+            self._start_measurement()
+            measurement_started = True
+            with torch.inference_mode():
+                generated = self._model.generate(
+                    inputs=prompt_ids,
+                    temperature=self.temperature,
+                    block_length=self.block_length,
+                    steps=self.steps,
+                    gen_length=int(request.max_new_tokens),
+                    top_p=self.top_p,
+                    top_k=self.top_k,
+                    eos_early_stop=self.eos_early_stop,
+                    minimal_topk=self.minimal_topk,
+                    threshold=self.threshold,
+                    editing_threshold=self.editing_threshold,
+                    max_post_steps=self.max_post_steps,
+                    eos_id=self.eos_id,
+                    mask_id=self.mask_id,
+                    num_to_transfer=self.num_to_transfer,
+                )
+        finally:
+            if measurement_started:
+                self._stop_measurement()
+            self._model.forward = original_forward
+            self._model._sample_with_temperature_topk_topp = original_sampler
 
-        sequences = getattr(generated, "sequences", generated)
-        token_ids = [int(value) for value in sequences[0, prompt_ids.shape[1] :].tolist()]
-        valid_ids = []
-        for token_id in token_ids:
-            if token_id == self.eos_id:
-                break
-            valid_ids.append(token_id)
-        output_text = self._tokenizer.decode(valid_ids, skip_special_tokens=True)
-        reported_steps = getattr(generated, "nfe", None)
-        if hasattr(reported_steps, "item"):
-            reported_steps = reported_steps.item()
-        num_steps = int(reported_steps) if reported_steps is not None else len(token_ids)
+        raw_ids = [int(value) for value in generated[0].tolist()]
+        final_ids = raw_ids[:raw_ids.index(self.eos_id)] if self.eos_id in raw_ids else raw_ids
+        output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
+        trace = _build_observational_trace(
+            observations=observations,
+            prompt_ids=[int(value) for value in prompt_ids[0].tolist()],
+            final_ids=final_ids,
+            prompt_length=prompt_length,
+            mask_id=self.mask_id,
+            tokenizer=self._tokenizer,
+        )
         return GenerationResult(
             request=request,
             output_text=output_text,
             status=RunStatus.SUCCESS,
-            num_forward_passes=num_steps,
-            final_valid_length=len(valid_ids),
+            trace=trace,
+            num_forward_passes=forward_count,
+            final_valid_length=len(final_ids),
             extra={
-                "execution_path": "official-transformers-generate",
+                "execution_path": self.execution_path,
+                "trace_source": self.trace_source,
+                "trace_capability": "official-token-editing-trace-v1",
                 "model_revision": self.revision,
-                "input_tokens": int(prompt_ids.shape[1]),
+                "input_tokens": prompt_length,
+                "block_length": self.block_length,
+                "steps": self.steps,
+                "threshold": self.threshold,
+                "editing_threshold": self.editing_threshold,
+                "max_post_steps": self.max_post_steps,
+                "trace_revision_events": _count_revision_events(trace, self.mask_id),
             },
         )
 
-    def _generate_core(self, request: GenerationRequest) -> GenerationResult:
-        import torch
 
-        self._ensure_loaded()
-        spec = dict(request.config.get("editable_sudoku") or {})
-        if self.official_generation:
-            return self._generate_official(request)
-        answer_cells = int(spec.get("answer_cells", request.max_new_tokens))
-        size = int(round(math.sqrt(answer_cells)))
-        if size * size != answer_cells:
-            raise ValueError(f"Editable Sudoku answer_cells must be square, got {answer_cells}.")
-        digit_ids = self._digit_token_ids(size)
-        capture_trace = bool(request.config.get("capture_trace", True))
+def _canvas_tokens(canvas, prompt_length: int, output_length: int, mask_id: int):
+    generated = list(canvas[prompt_length:prompt_length + output_length])
+    return generated + [mask_id] * (output_length - len(generated))
 
-        prompt_ids = self._prompt_ids(request.prompt)
-        prompt_length = int(prompt_ids.shape[1])
-        aligned_prompt_length = math.ceil(prompt_length / self.block_length) * self.block_length
-        output_length = math.ceil(answer_cells / self.block_length) * self.block_length
-        total_length = aligned_prompt_length + output_length
-        x = torch.full((1, total_length), self.eos_id, dtype=torch.long, device=self.device)
-        x[:, :prompt_length] = prompt_ids
-        answer_start = aligned_prompt_length
-        x[:, answer_start : answer_start + answer_cells] = self.mask_id
 
-        immutable = torch.ones(total_length, dtype=torch.bool, device=self.device)
-        immutable[answer_start : answer_start + answer_cells] = False
-        for cell in {int(value) for value in spec.get("immutable_cells", [])}:
-            immutable[answer_start + cell] = True
-        seeded_grid = str(spec.get("seeded_grid", ""))
-        if seeded_grid:
-            if len(seeded_grid) != answer_cells:
-                raise ValueError("editable_sudoku.seeded_grid length does not match answer_cells.")
-            for cell, value in enumerate(seeded_grid):
-                if value in digit_ids:
-                    x[0, answer_start + cell] = digit_ids[value]
-                elif value not in {"0", ".", "_"}:
-                    raise ValueError(f"Unsupported seeded Sudoku value {value!r}.")
-
-        block_count = total_length // self.block_length
-        block_causal = torch.tril(torch.ones(block_count, block_count, dtype=torch.bool, device=self.device))
-        attention_mask = block_causal.repeat_interleave(self.block_length, 0).repeat_interleave(
-            self.block_length, 1
-        ).unsqueeze(0)
-        position_ids = torch.arange(total_length, device=self.device).unsqueeze(0)
-        generic_trace: list[TraceStep] = []
-        editing_trace: list[EditingTraceStep] = []
-        forward_count = 0
-        start_measurement = getattr(self, "_start_measurement", None)
-        if callable(start_measurement):
-            start_measurement()
-
-        for output_block in range(output_length // self.block_length):
-            block_start = answer_start + output_block * self.block_length
-            block_end = block_start + self.block_length
-            mapped = {local: output_block * self.block_length + local for local in range(self.block_length)
-                      if output_block * self.block_length + local < answer_cells}
-            post_step = 0
-            block_steps: list[int] = []
-            stop_reason = "block_complete"
-            while True:
-                old = x[0, block_start:block_end].clone()
-                immutable_block = immutable[block_start:block_end]
-                active_masks = old.eq(self.mask_id) & ~immutable_block
-                if active_masks.any():
-                    phase, current_post_step = "mask_filling", 0
+def _build_observational_trace(
+    *, observations, prompt_ids, final_ids, prompt_length, mask_id, tokenizer
+) -> list[TraceStep]:
+    """Pair every official decision distribution with its real post-canvas."""
+    output_length = len(final_ids)
+    if not observations or output_length <= 0:
+        return []
+    final_canvas = [*prompt_ids, *final_ids]
+    trace = []
+    for index, observation in enumerate(observations):
+        before = _canvas_tokens(observation["canvas"], prompt_length, output_length, mask_id)
+        after_source = observations[index + 1]["canvas"] if index + 1 < len(observations) else final_canvas
+        after = _canvas_tokens(after_source, prompt_length, output_length, mask_id)
+        changed = [i for i, (old, new) in enumerate(zip(before, after)) if old != new and new != mask_id]
+        active_start = int(observation["active_start"]) - prompt_length
+        entropy_by_position = {}
+        confidence_by_position = {}
+        current_confidence_by_position = {}
+        proposed_token_ids_by_position = {}
+        confidence_margin_by_position = {}
+        editing_state_by_position = {}
+        for local, value in enumerate(observation["entropy"]):
+            position = active_start + local
+            if 0 <= position < output_length:
+                top1_confidence = float(observation["confidence"][local])
+                current_confidence = float(observation["current_confidence"][local])
+                proposed_token = int(observation["proposed_tokens"][local])
+                entropy_by_position[position] = float(value)
+                confidence_by_position[position] = top1_confidence
+                current_confidence_by_position[position] = current_confidence
+                proposed_token_ids_by_position[position] = proposed_token
+                confidence_margin_by_position[position] = top1_confidence - current_confidence
+                if before[position] == mask_id:
+                    editing_state = "mask_fill" if after[position] != mask_id else "mask_wait"
+                elif proposed_token == before[position]:
+                    editing_state = "stable"
+                elif after[position] != before[position]:
+                    editing_state = "accepted_edit"
                 else:
-                    if not self.editing_enabled or self.max_post_steps <= 0:
-                        stop_reason = "editing_disabled" if not self.editing_enabled else "post_steps_disabled"
-                        break
-                    if post_step >= self.max_post_steps:
-                        stop_reason = "max_post_steps"
-                        break
-                    post_step += 1
-                    phase, current_post_step = "post_edit", post_step
+                    editing_state = "rejected_edit"
+                editing_state_by_position[position] = editing_state
+        states = [PositionState.MASKED if token == mask_id else PositionState.ACCEPTED for token in after]
+        texts = ["" if token == mask_id else tokenizer.decode([token], skip_special_tokens=False) for token in after]
+        trace.append(TraceStep(
+            forward_index=index,
+            token_ids=after,
+            position_states=states,
+            committed_positions=changed,
+            decoded_text="".join(texts),
+            entropy_by_position=entropy_by_position,
+            top1_confidence_by_position=confidence_by_position,
+            token_texts=texts,
+            current_token_confidence_by_position=current_confidence_by_position,
+            proposed_token_ids_by_position=proposed_token_ids_by_position,
+            confidence_margin_by_position=confidence_margin_by_position,
+            editing_state_by_position=editing_state_by_position,
+        ))
+    return trace
 
-                phase_context = getattr(self, "_forward_phase", None)
-                context = phase_context(phase) if callable(phase_context) else nullcontext()
-                with context, torch.no_grad():
-                    model_output = self._model(
-                        x[:, :block_end], attention_mask=attention_mask[:, :block_end, :block_end],
-                        position_ids=position_ids[:, :block_end], output_attentions=False,
-                    )
-                    logits = model_output.logits[:, -self.block_length :, :]
-                    predicted, confidence = self._sample_predictions(logits)
-                predicted, confidence = predicted[0], confidence[0]
-                mask_transfer = active_masks & confidence.gt(self.threshold)
-                if active_masks.any() and not mask_transfer.any():
-                    candidates = confidence.masked_fill(~active_masks, float("-inf"))
-                    mask_transfer[candidates.argmax()] = True
-                editable_candidates = old.ne(self.mask_id) & ~immutable_block
-                editing_transfer = (editable_candidates & predicted.ne(old)
-                                    & confidence.gt(self.editing_threshold) & self.editing_enabled)
-                new = old.clone()
-                transfer = mask_transfer | editing_transfer
-                new[transfer] = predicted[transfer]
-                x[0, block_start:block_end] = new
-                forward_count += 1
-                annotate = getattr(self, "_annotate_last_forward", None)
-                profiles = getattr(self, "_forward_profiles", [])
-                if profiles and profiles[-1].accepted_tokens is None:
-                    profiles[-1].accepted_tokens = int(transfer.sum().item())
-                    profiles[-1].active_tokens = int((~immutable_block).sum().item())
-                    profiles[-1].eligible_tokens = int((active_masks | editable_candidates).sum().item())
-                elif callable(annotate):
-                    annotate(accepted_tokens=int(transfer.sum().item()),
-                             active_tokens=int((~immutable_block).sum().item()),
-                             eligible_tokens=int((active_masks | editable_candidates).sum().item()))
 
-                if capture_trace:
-                    old_ids = [int(value) for value in old.tolist()]
-                    new_ids = [int(value) for value in new.tolist()]
-                    predicted_ids = [int(value) for value in predicted.tolist()]
-                    editing_trace.append(EditingTraceStep(
-                        forward_index=forward_count, block_id=output_block, phase=phase,
-                        old_block_tokens=old_ids, new_block_tokens=new_ids,
-                        predicted_tokens=predicted_ids,
-                        predicted_confidence=[float(value) for value in confidence.tolist()],
-                        mask_positions=[int(value) for value in active_masks.nonzero().flatten().tolist()],
-                        mask_transfer_positions=[int(value) for value in mask_transfer.nonzero().flatten().tolist()],
-                        editable_positions=[int(value) for value in editable_candidates.nonzero().flatten().tolist()],
-                        editing_transfer_positions=[int(value) for value in editing_transfer.nonzero().flatten().tolist()],
-                        immutable_positions=[int(value) for value in immutable_block.nonzero().flatten().tolist()],
-                        committed_positions=[], position_to_cell_map=mapped,
-                        post_step_index=current_post_step, stop_reason=None,
-                        old_block_token_texts=[self._token_text(value) for value in old_ids],
-                        new_block_token_texts=[self._token_text(value) for value in new_ids],
-                        predicted_token_texts=[self._token_text(value) for value in predicted_ids],
-                    ))
-                    block_steps.append(len(editing_trace) - 1)
-                    visible_ids = [int(value) for value in x[0, answer_start:answer_start + answer_cells].tolist()]
-                    accepted_cells = [mapped[pos] for pos in transfer.nonzero().flatten().tolist() if pos in mapped]
-                    generic_trace.append(TraceStep(
-                        forward_index=forward_count, token_ids=visible_ids,
-                        token_texts=[self._token_text(value) for value in visible_ids],
-                        position_states=[PositionState.MASKED if value == self.mask_id else PositionState.VISIBLE
-                                         for value in visible_ids],
-                        committed_positions=accepted_cells,
-                        decoded_text="".join(self._token_text(value) for value in visible_ids
-                                             if value != self.mask_id),
-                        top1_confidence_by_position={mapped[pos]: float(confidence[pos].item())
-                                                     for pos in mapped},
-                    ))
-                if phase == "post_edit" and not editing_transfer.any():
-                    stop_reason = "no_edit_change"
-                    break
-            if block_steps:
-                editing_trace[block_steps[-1]].committed_positions = list(mapped)
-                editing_trace[block_steps[-1]].stop_reason = stop_reason
-
-        output_ids = [int(value) for value in x[0, answer_start:answer_start + answer_cells].tolist()]
-        output_text = "".join(self._token_text(value) for value in output_ids if value != self.mask_id)
-        return GenerationResult(
-            request=request, output_text=output_text, status=RunStatus.SUCCESS,
-            num_forward_passes=forward_count,
-            final_valid_length=answer_cells, trace=generic_trace, editing_trace=editing_trace,
-            extra={"trace_capability": "editing_trace_v1", "editing_enabled": self.editing_enabled,
-                   "threshold": self.threshold, "editing_threshold": self.editing_threshold,
-                   "max_post_steps": self.max_post_steps,
-                   "prompt_padding_tokens": aligned_prompt_length - prompt_length,
-                   "output_token_ids": output_ids, "model_revision": self.revision},
-        )
+def _count_revision_events(trace: list[TraceStep], mask_id: int) -> int:
+    previous = [mask_id] * len(trace[0].token_ids) if trace else []
+    revisions = 0
+    for step in trace:
+        revisions += sum(old != mask_id and new != mask_id and old != new for old, new in zip(previous, step.token_ids))
+        previous = step.token_ids
+    return revisions

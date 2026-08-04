@@ -1,10 +1,9 @@
-from ..base import ModelVisual, public_comparison_renderer
-from ..public.sudoku_editing import render_editing_dataset
+"""Public visualization entry point for official LLaDA2.1 Q/S traces."""
 
-MODEL_VISUAL = ModelVisual(model_name="llada2_1", render_dataset=render_editing_dataset,
-                           render_comparison=public_comparison_renderer("llada2_1"))
+from ..base import public_model_visual
+
+MODEL_VISUAL = public_model_visual("llada2_1")
 main = MODEL_VISUAL.main
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

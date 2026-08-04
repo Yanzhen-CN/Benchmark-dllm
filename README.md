@@ -398,11 +398,11 @@ dataset_kwargs: {}
 
 `configs/experiments/full_matrix.yaml` selects formal models, variants, datasets, output ceilings, and per-model overrides. Change the matrix to change a run; do not edit runner code for experiment selection.
 
-LLaDA2.1-mini uses only its `official` Transformers generation path in the
-formal matrix and receives the same standard datasets, prompts, selected
-samples, and output ceilings as the other models. Its `qmode`/`smode`
-editable-canvas Sudoku matrix is diagnostic-only and is never included in
-cross-model benchmark results.
+LLaDA2.1-mini runs the checkpoint-native official Quality and Speed modes in
+the formal matrix and receives the same standard datasets, prompts, selected
+samples, and output ceilings as the other models. The adapter calls the remote
+checkpoint's `generate()` unchanged; observational wrappers only record the
+real canvas edits, confidence, and entropy needed by the public trace plots.
 
 ## Adding a new model
 
