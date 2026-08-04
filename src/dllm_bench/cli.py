@@ -648,12 +648,15 @@ def visualize(
     invalid_rows: list[str] = []
     incomplete_rows: list[str] = []
     comparison_records = {}
+    comparison_block_lengths: set[int] = set()
     for v in variant_list:
         variant_config = model_settings["configs"][v]
         block_length = (
             variant_config.get("step_config", {}).get("block_length")
             or model_settings.get("trace_block_length")
         )
+        if block_length:
+            comparison_block_lengths.add(int(block_length))
         if profiling_output:
             model_out = resolve_model_profiling_dir(
                 output_root, configured_model, v, dataset.name
@@ -742,7 +745,11 @@ def visualize(
             records_by_variant=comparison_records,
             out_dir=comparison_out,
             seed=resolved_seed,
-            block_length=model_settings.get("trace_block_length"),
+            block_length=(
+                next(iter(comparison_block_lengths))
+                if len(comparison_block_lengths) == 1
+                else None
+            ),
             figures=(
                 {value.strip() for value in figures.split(",") if value.strip()}
                 if figures

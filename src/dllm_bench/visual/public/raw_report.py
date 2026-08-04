@@ -181,6 +181,28 @@ def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -
         dataset_summaries = [
             summary for summary in summaries if summary["dataset_name"] == dataset_name
         ]
+        sample_groups: dict[str, list[dict[str, Any]]] = {}
+        for summary in dataset_summaries:
+            sample_hash = (
+                summary.get("scoring_metadata", {}).get("sample_set_hash")
+                or "unreported-samples"
+            )
+            sample_groups.setdefault(sample_hash, []).append(summary)
+        for sample_hash, trace_summaries in sample_groups.items():
+            trace_out = report_root / dataset_name
+            if len(sample_groups) > 1:
+                trace_out = trace_out / f"samples-{sample_hash[:12]}"
+            trace_out.mkdir(parents=True, exist_ok=True)
+            trace_rows = []
+            for summary in trace_summaries:
+                row = raw_results_row(summary)
+                _attach_trace_summary(summary, row, output_root)
+                trace_rows.append(row)
+            block_tau_path = trace_out / "block_local_tau_comparison.png"
+            block_tau_path.unlink(missing_ok=True)
+            plot_task4_block_local_tau(trace_rows, str(block_tau_path))
+            if block_tau_path.exists():
+                written.append(block_tau_path)
         groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for summary in dataset_summaries:
             groups.setdefault(_comparison_key(summary), []).append(summary)
