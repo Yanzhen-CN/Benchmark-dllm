@@ -31,7 +31,7 @@ from pathlib import Path
 
 from ...datasets.base import Sample
 from ...interfaces import TraceStep
-from .trace_distribution_viz import plot_all_updates
+from .trace_distribution_viz import plot_all_updates, plot_block_acceptance_zoom
 
 
 def _maybe_render_sudoku_gif(
@@ -135,6 +135,16 @@ def render_sample_report(
         )
         if updates_path.exists():
             written["all_updates"] = str(updates_path)
+
+        block_zoom_path = out_dir_path / f"{sample_id}_block_acceptance.png"
+        plot_block_acceptance_zoom(
+            trace,
+            block_zoom_path,
+            title=title,
+            block_length=block_length,
+        )
+        if block_zoom_path.exists():
+            written["block_acceptance"] = str(block_zoom_path)
 
     for suffix in (
         "entropy.png",

@@ -222,6 +222,92 @@ def plot_all_updates(
     plt.close(fig)
 
 
+def plot_block_acceptance_zoom(
+    trace: list[TraceStep],
+    out_path: str | Path,
+    title: str = "",
+    block_length: int | None = None,
+) -> None:
+    """Zoom every sequential block and report within-block acceptance order.
+
+    Global commit-order tau is dominated by models that must finish B0 before
+    entering B1. Resetting both position and step inside each block separates
+    that scheduler constraint from genuinely autoregressive behavior within
+    the active block.
+    """
+    if not trace or not block_length or block_length < 2:
+        return
+
+    from ...metrics.commit_order import kendall_tau_b
+
+    first_step: dict[int, int] = {}
+    for step_index, step in enumerate(trace):
+        for position in meaningful_committed_positions(trace, step_index):
+            first_step.setdefault(int(position), int(step.forward_index))
+    if not first_step:
+        return
+
+    n_positions = max(first_step) + 1
+    n_blocks = (n_positions + block_length - 1) // block_length
+    columns = min(4, n_blocks)
+    rows = (n_blocks + columns - 1) // columns
+    fig, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(3.45 * columns, 2.85 * rows),
+        squeeze=False,
+        sharex=False,
+        sharey=False,
+    )
+
+    for block_index, ax in enumerate(axes.flat):
+        if block_index >= n_blocks:
+            ax.set_visible(False)
+            continue
+        start = block_index * block_length
+        end = min(start + block_length, n_positions)
+        positions = [position for position in range(start, end) if position in first_step]
+        if len(positions) < 2:
+            ax.set_visible(False)
+            continue
+        global_steps = [first_step[position] for position in positions]
+        step_origin = min(global_steps)
+        local_positions = [position - start for position in positions]
+        local_steps = [step - step_origin for step in global_steps]
+        tau = kendall_tau_b(
+            [float(position) for position in local_positions],
+            [float(step) for step in local_steps],
+        )
+        ax.scatter(
+            local_positions,
+            local_steps,
+            s=24,
+            color="#2563eb",
+            alpha=0.94,
+            linewidths=0,
+        )
+        ax.set_xlim(-1, block_length)
+        ax.set_ylim(-1, max(local_steps) + 1)
+        ax.set_title(
+            f"B{block_index} | local tau={tau:.3f} | {max(local_steps) + 1} steps",
+            fontsize=9,
+        )
+        ax.set_xlabel("Position in block")
+        ax.set_ylabel("Step in block")
+        ax.grid(True, alpha=0.22)
+
+    fig.suptitle(
+        f"{title + ': ' if title else ''}within-block acceptance order",
+        fontsize=15,
+        y=1.01,
+    )
+    fig.tight_layout()
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_token_entropy_heatmap(
     trace: list[TraceStep],
     out_path: str | Path,
