@@ -27,13 +27,12 @@ def main() -> int:
                 "sample_id": sample.sample_id,
                 "prompt": (
                     f"Solve this 4x4 Sudoku: {puzzle}\n"
-                    "Replace every 0 with a digit from 1 to 4. Return only the "
-                    "solved 16-digit grid. Do not return the puzzle. No 0s."
+                    "Directly return only the final 16-digit answer using digits 1-4."
                 ),
                 "reference": dataclasses.asdict(sample.reference),
                 "meta": {
                     **sample.meta,
-                    "prompt_protocol": "temporary-minimal-direct-16-digits-v2",
+                    "prompt_protocol": "temporary-minimal-direct-16-digits-v3",
                 },
             }
             output.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")))
