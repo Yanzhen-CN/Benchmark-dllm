@@ -14,6 +14,7 @@ from typing import Any
 from .base import BaseModelAdapter
 from .device_transfer import move_model_to_device
 from .model_cache import get_or_load
+from .prompting import tokenize_instruction_prompt
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 
 
@@ -101,17 +102,11 @@ class Llada21Adapter(BaseModelAdapter):
             yield
 
     def _prompt_ids(self, prompt: str):
-        import torch
-
-        ids = self._tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}],
-            add_generation_prompt=True,
-            tokenize=True,
-            return_tensors="pt",
-        )
-        if not torch.is_tensor(ids):
-            ids = torch.tensor([ids], dtype=torch.long)
-        return (ids.unsqueeze(0) if ids.ndim == 1 else ids).to(self.device)
+        return tokenize_instruction_prompt(
+            self._tokenizer,
+            prompt,
+            device=self.device,
+        )["input_ids"]
 
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         self._ensure_loaded()

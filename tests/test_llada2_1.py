@@ -17,6 +17,25 @@ def test_llada21_registry_exposes_official_quality_and_speed_modes():
     assert speed.execution_path == "official-transformers-remote-generate"
 
 
+def test_llada21_uses_shared_prompt_tokenization_for_mapping_results():
+    import torch
+
+    class MappingTokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            assert messages == [{"role": "user", "content": "prompt"}]
+            assert kwargs["return_dict"] is True
+            return {
+                "input_ids": torch.tensor([[11, 12]]),
+                "attention_mask": torch.tensor([[1, 1]]),
+            }
+
+    adapter = build_model_adapter("configs/models/llada2_1.yaml", "qmode")
+    adapter._tokenizer = MappingTokenizer()
+    adapter.device = "cpu"
+
+    assert adapter._prompt_ids("prompt").tolist() == [[11, 12]]
+
+
 def test_observer_derives_mask_fills_and_real_edits_from_official_canvases():
     observations = [
         {"canvas": [90, 99, 99], "active_start": 1, "entropy": [0.8, 0.7], "confidence": [0.2, 0.3], "current_confidence": [0.0, 0.0], "proposed_tokens": [1, 3]},
