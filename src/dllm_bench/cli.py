@@ -40,7 +40,6 @@ so pass matching source/count/seed values to every stage.
 from __future__ import annotations
 
 from pathlib import Path
-from threading import Event, Lock, Thread
 from time import perf_counter
 
 import click
@@ -105,8 +104,6 @@ from .runner.data_preparation import (
     load_prepared_samples,
     prepare_dataset,
 )
-
-_SAMPLE_PROGRESS_HEARTBEAT_SECONDS = 1.0
 
 
 
@@ -326,14 +323,6 @@ def generate(
             not (out_dir / f"{sample.sample_id}.json").exists()
             for sample in samples
         )
-        pending_count = (
-            len(samples)
-            if not resume
-            else sum(
-                not (out_dir / f"{sample.sample_id}.json").exists()
-                for sample in samples
-            )
-        )
         warm = getattr(adapter, "warm", None)
         if needs_generation and callable(warm):
             click.echo(f"[{v}] loading model into runtime device (outside sample timing) ...")
@@ -425,15 +414,33 @@ def generate(
         def log_progress(event, index, total, sample, generation):
             prefix = f"[{v}] [{index}/{total}] {sample.sample_id}"
             if event == "start":
-                click.echo(f"{prefix}: generating ...")
+                if measure_compute:
+                    click.echo(f"{prefix}: [timing] generating ...")
+                else:
+                    click.echo(f"{prefix}: generating ...")
+                return
+            if event == "timing_finish":
+                elapsed = (
+                    generation.timing.wall_clock_seconds
+                    if generation is not None and generation.timing is not None
+                    else 0.0
+                )
+                click.echo(f"{prefix}: [timing] step collection complete ({elapsed:.2f}s)")
                 return
             if event == "compute":
                 compute_started[sample.sample_id] = perf_counter()
-                click.echo(f"{prefix}: [profiling] collecting metrics ...")
+                expected = (
+                    len(generation.forward_profiles)
+                    if generation is not None
+                    else 0
+                )
+                click.echo(
+                    f"{prefix}: [compute] replay started ({expected} forwards)"
+                )
                 return
             if event == "compute_progress":
                 detail = (
-                    generation.extra.get("_metric_collection_progress", {})
+                    generation.extra.get("_compute_replay_progress", {})
                     if generation is not None
                     else {}
                 )
@@ -449,13 +456,26 @@ def generate(
                     )
                 else:
                     detail_text = f"{completed} steps ({elapsed:.1f}s elapsed)"
-                click.echo(f"{prefix}: [profiling] metrics {detail_text}")
+                click.echo(f"{prefix}: [compute] replay {detail_text}")
+                return
+            if event == "clean_start":
+                click.echo(f"{prefix}: [validation] clean replay started")
+                return
+            if event == "clean_finish":
+                status = (
+                    generation.extra.get("clean_replay_validation", {}).get(
+                        "status", "unknown"
+                    )
+                    if generation is not None
+                    else "unknown"
+                )
+                click.echo(f"{prefix}: [validation] clean replay {status}")
                 return
             if event == "compute_finish":
                 started = compute_started.pop(sample.sample_id, None)
                 elapsed = perf_counter() - started if started is not None else 0.0
                 click.echo(
-                    f"{prefix}: [profiling] metrics complete ({elapsed:.1f}s)"
+                    f"{prefix}: [profiling] complete ({elapsed:.1f}s)"
                 )
                 return
             elapsed = (
@@ -466,165 +486,15 @@ def generate(
             status = generation.status.value if generation is not None else "unknown"
             click.echo(f"{prefix}: {status} ({elapsed:.2f}s)")
 
-        output_stream = click.get_text_stream("stdout")
         try:
-            if pending_count and output_stream.isatty():
-                with click.progressbar(
-                    length=pending_count,
-                    label=f"[{v}] {dataset.name}",
-                    show_pos=True,
-                    show_percent=True,
-                    item_show_func=lambda item: str(item or ""),
-                    file=output_stream,
-                ) as sample_bar:
-                    progress_lock = Lock()
-                    stop_heartbeat = Event()
-                    active_sample_id: str | None = None
-                    active_phase: str | None = None
-                    active_started = 0.0
-                    active_completed = 0
-                    active_expected: int | None = None
-
-                    def render_active_sample() -> None:
-                        if active_sample_id is None:
-                            return
-                        elapsed = perf_counter() - active_started
-                        width = 20
-                        if active_phase == "[profiling] metrics":
-                            if active_expected:
-                                filled = min(
-                                    width,
-                                    int(width * active_completed / active_expected),
-                                )
-                                phase_bar = "#" * filled + "-" * (width - filled)
-                                phase_detail = (
-                                    f"{active_completed}/{active_expected} steps"
-                                )
-                            else:
-                                cursor = int(elapsed * 2) % width
-                                phase_bar = (
-                                    "-" * cursor + ">" + "-" * (width - cursor - 1)
-                                )
-                                phase_detail = f"{active_completed} steps"
-                        else:
-                            sample_bar.update(
-                                0,
-                                current_item=(
-                                    f"{active_sample_id} {active_phase} "
-                                    f"{elapsed:.1f}s elapsed"
-                                ),
-                            )
-                            sample_bar.render_progress()
-                            return
-                        sample_bar.update(
-                            0,
-                            current_item=(
-                                f"{active_sample_id} {active_phase} "
-                                f"[{phase_bar}] {phase_detail}, "
-                                f"{elapsed:.1f}s elapsed"
-                            ),
-                        )
-                        sample_bar.render_progress()
-
-                    def report_elapsed_heartbeat() -> None:
-                        while not stop_heartbeat.wait(
-                            _SAMPLE_PROGRESS_HEARTBEAT_SECONDS
-                        ):
-                            with progress_lock:
-                                render_active_sample()
-
-                    def bar_progress(event, index, total, sample, generation):
-                        nonlocal active_sample_id, active_phase, active_started
-                        nonlocal active_completed, active_expected
-                        del index, total
-                        if event in {"start", "compute"}:
-                            with progress_lock:
-                                active_sample_id = sample.sample_id
-                                active_phase = (
-                                    "generating"
-                                    if event == "start"
-                                    else "[profiling] metrics"
-                                )
-                                active_started = perf_counter()
-                                active_completed = 0
-                                active_expected = None
-                                render_active_sample()
-                            return
-                        if event == "compute_progress":
-                            with progress_lock:
-                                detail = (
-                                    generation.extra.get(
-                                        "_metric_collection_progress", {}
-                                    )
-                                    if generation is not None
-                                    else {}
-                                )
-                                active_completed = int(
-                                    detail.get("completed_steps", 0)
-                                )
-                                expected = detail.get("expected_steps")
-                                active_expected = (
-                                    int(expected) if expected is not None else None
-                                )
-                                render_active_sample()
-                            return
-                        if event == "compute_finish":
-                            with progress_lock:
-                                if active_expected:
-                                    active_completed = active_expected
-                                    render_active_sample()
-                                active_sample_id = None
-                                active_phase = None
-                            return
-                        elapsed = (
-                            generation.timing.wall_clock_seconds
-                            if generation is not None
-                            and generation.timing is not None
-                            else 0.0
-                        )
-                        status = (
-                            generation.status.value
-                            if generation is not None
-                            else "unknown"
-                        )
-                        with progress_lock:
-                            active_sample_id = None
-                            active_phase = None
-                            sample_bar.update(
-                                1,
-                                current_item=(
-                                    f"{sample.sample_id} {status} {elapsed:.2f}s"
-                                ),
-                            )
-
-                    heartbeat = Thread(
-                        target=report_elapsed_heartbeat,
-                        name="sample-progress-heartbeat",
-                        daemon=True,
-                    )
-                    heartbeat.start()
-                    try:
-                        summary = run_generation(
-                            adapter, dataset.name, samples, max_new_tokens,
-                            out_dir=out_dir, measure_compute=measure_compute,
-                            require_all_metrics=require_all_metrics,
-                            seed=resolved_seed, capture_trace=capture_trace,
-                            resume=resume,
-                            force_max_new_tokens=force_max_new_tokens,
-                            progress=bar_progress,
-                        )
-                    finally:
-                        stop_heartbeat.set()
-                        heartbeat.join()
-            else:
-                summary = run_generation(
-                    adapter, dataset.name, samples, max_new_tokens,
-                    out_dir=out_dir, measure_compute=measure_compute,
-                    require_all_metrics=require_all_metrics, seed=resolved_seed,
-                    capture_trace=capture_trace, resume=resume,
-                    force_max_new_tokens=force_max_new_tokens,
-                    progress=log_progress,
-                )
+            summary = run_generation(
+                adapter, dataset.name, samples, max_new_tokens,
+                out_dir=out_dir, measure_compute=measure_compute,
+                require_all_metrics=require_all_metrics, seed=resolved_seed,
+                capture_trace=capture_trace, resume=resume,
+                force_max_new_tokens=force_max_new_tokens,
+                progress=log_progress,
+            )
         except OOMInvalidTestError as exc:
             invalid_variant_errors.append(str(exc))
             click.echo(f"[{v}] INVALID OOM DATASET: {exc}", err=True)

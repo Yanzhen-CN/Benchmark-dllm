@@ -173,6 +173,7 @@ def test_profiling_pipeline_keeps_timing_acceptance_compute_and_clean_totals(
     )
     sample = build_demo_samples("gsm8k", n=1)[0]
     out_dir = tmp_path / "model_profiling"
+    events = []
 
     run_generation(
         adapter,
@@ -183,6 +184,9 @@ def test_profiling_pipeline_keeps_timing_acceptance_compute_and_clean_totals(
         measure_compute=True,
         require_all_metrics=True,
         capture_trace=False,
+        progress=lambda event, index, total, sample, generation: events.append(
+            event
+        ),
     )
 
     result = load_generation_result(out_dir / f"{sample.sample_id}.json")
@@ -200,3 +204,11 @@ def test_profiling_pipeline_keeps_timing_acceptance_compute_and_clean_totals(
     assert result.extra["clean_replay_validation"]["status"] == "matched"
     assert result.extra["step_compute_status"] == "complete"
     assert result.extra["stage_compute_status"] == "complete"
+    assert events == [
+        "start",
+        "timing_finish",
+        "compute",
+        "clean_start",
+        "clean_finish",
+        "compute_finish",
+    ]

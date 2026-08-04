@@ -640,7 +640,13 @@ def run_generation(
             compute_queue.append((index, sample, sample_path, generation))
         generated += 1
         if progress is not None:
-            progress("finish", index, len(samples), sample, generation)
+            progress(
+                "timing_finish" if measure_compute else "finish",
+                index,
+                len(samples),
+                sample,
+                generation,
+            )
         if stopped_early:
             detail = json.loads(
                 (out_dir / OOM_INFO_FILENAME).read_text(encoding="utf-8")
@@ -697,10 +703,14 @@ def run_generation(
                 generation.extra.get("clean_replay_validation", {}).get("status")
                 != "matched"
             ):
+                if progress is not None:
+                    progress("clean_start", index, len(samples), sample, generation)
                 clean_generation = adapter.generate(
                     _clean_replay_request(generation.request)
                 )
                 _merge_clean_replay(generation, clean_generation)
+                if progress is not None:
+                    progress("clean_finish", index, len(samples), sample, generation)
         if progress is not None:
             progress("compute_finish", index, len(samples), sample, generation)
         if require_all_metrics:
