@@ -57,7 +57,7 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument(
         "-shot", "--shot", type=int, choices=(0, 1), default=0,
-        help="Use the fixed Sudoku4 one-shot prompt when set to 1",
+        help="Use the fixed Sudoku4/Sudoku9 one-shot prompt when set to 1",
     )
     parser.add_argument(
         "-max",
@@ -226,8 +226,8 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
                 for dataset_name in value.split(","):
                     if dataset_name.strip():
                         dataset_name = dataset_name.strip()
-                        if args.shot == 1 and dataset_name == "sudoku4":
-                            dataset_name = "sudoku4_one_shot"
+                        if args.shot == 1 and dataset_name in {"sudoku4", "sudoku9"}:
+                            dataset_name = f"{dataset_name}_one_shot"
                         report_command.extend(["--dataset", dataset_name])
             print(f"Report: {' '.join(report_command)}", flush=True)
             if not args.dry_run:

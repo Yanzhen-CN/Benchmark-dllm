@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-shot", "--shot", type=int, choices=(0, 1), default=0,
-        help="Use the fixed Sudoku4 one-shot prompt when set to 1",
+        help="Use the fixed Sudoku4/Sudoku9 one-shot prompt when set to 1",
     )
     parser.add_argument(
         "-max",

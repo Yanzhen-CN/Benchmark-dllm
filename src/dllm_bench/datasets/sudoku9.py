@@ -47,6 +47,15 @@ _BLANK_TOKENS = {".", "0", "_"}
 SUDOKU_SOURCE_REVISION = "bryanpark-sudoku-v3"
 SUDOKU_PROTOCOL_REVISION = "fixed-clues-valid-grid-direct-v9"
 SUDOKU_REASONING_PROTOCOL_REVISION = "grid-prompt-marked-answer-v3"
+SUDOKU_ONE_SHOT_PROTOCOL_REVISION = "fixed-one-shot-direct-81-digit-v1"
+SUDOKU_ONE_SHOT_EXAMPLE_PUZZLE = (
+    "640080000700216000019000070900070004500904002800030007"
+    "070000390000521006000090081"
+)
+SUDOKU_ONE_SHOT_EXAMPLE_ANSWER = (
+    "645789123783216459219453678961872534537964812824135967"
+    "172648391398521746456397281"
+)
 SUDOKU_ARCHIVE_URL = "https://www.kaggle.com/api/v1/datasets/download/bryanpark/sudoku"
 SUDOKU_ARCHIVE_SHA256 = "38437d3f1f47cbdd12e5cc9d86a7dafe2b23c7ebcb9c785ef881a81865651fb6"
 SUDOKU_CSV_SHA256 = "5a77d5392c19c783db68961e000c17fda246f1e362655dc9675f3e7cd4f57bd6"
@@ -135,6 +144,16 @@ def format_sudoku_trace_prompt(puzzle_digits: str) -> str:
         "Return exactly the completed 81 digits in row-major order. Use only "
         "digits 1-9, with no spaces, punctuation, code fences, or explanation.\n\n"
         f"Puzzle:\n{puzzle_digits}"
+    )
+
+
+def format_sudoku_one_shot_prompt(puzzle_digits: str) -> str:
+    return (
+        "0 represents a blank cell.\n"
+        f"Example input: {SUDOKU_ONE_SHOT_EXAMPLE_PUZZLE}\n"
+        f"Example output: {SUDOKU_ONE_SHOT_EXAMPLE_ANSWER}\n"
+        f"Fill in this Sudoku: {puzzle_digits}\n"
+        "Directly return your answer with only 81 digits."
     )
 
 
@@ -532,6 +551,49 @@ class Sudoku9Dataset(Dataset):
             "trace_error_then_correct_count": float(corrected),
             "trace_error_then_still_wrong_count": float(still_wrong),
         }
+
+
+class Sudoku9OneShotDataset(Sudoku9Dataset):
+    """The formal Sudoku9 subset with a fixed, non-overlapping example."""
+
+    name = "sudoku9_one_shot"
+
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs["enable_reasoning"] = False
+        super().__init__(*args, **kwargs)
+
+    def load_samples(self, n: int | None = None) -> list[Sample]:
+        samples = super().load_samples(n=n)
+        instructed: list[Sample] = []
+        for sample in samples:
+            puzzle_digits = _grid_to_digits(sample.reference.puzzle)
+            if puzzle_digits == SUDOKU_ONE_SHOT_EXAMPLE_PUZZLE:
+                raise ValueError("Sudoku9 one-shot example overlaps the formal test subset")
+            instructed.append(
+                replace(
+                    sample,
+                    prompt=format_sudoku_one_shot_prompt(puzzle_digits),
+                    meta={
+                        **sample.meta,
+                        "protocol_revision": SUDOKU_ONE_SHOT_PROTOCOL_REVISION,
+                        "prompt_protocol": "fixed_one_shot_direct_81_digits",
+                        "shot_count": 1,
+                    },
+                )
+            )
+        return instructed
+
+    def preparation_signature(self) -> dict[str, object]:
+        return {
+            **super().preparation_signature(),
+            "protocol_revision": SUDOKU_ONE_SHOT_PROTOCOL_REVISION,
+            "shot_count": 1,
+            "example_puzzle": SUDOKU_ONE_SHOT_EXAMPLE_PUZZLE,
+            "example_answer": SUDOKU_ONE_SHOT_EXAMPLE_ANSWER,
+        }
+
+    def scoring_signature(self) -> dict[str, object]:
+        return {**super().scoring_signature(), "shot_count": 1}
 
 
 class Sudoku9ThinkingDataset(Sudoku9Dataset):

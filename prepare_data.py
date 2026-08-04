@@ -45,7 +45,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "-shot", "--shot", type=int, choices=(0, 1), default=0,
-        help="Use the fixed Sudoku4 one-shot prompt when set to 1",
+        help="Use the fixed Sudoku4/Sudoku9 one-shot prompt when set to 1",
     )
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(arguments)
