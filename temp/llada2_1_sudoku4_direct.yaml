@@ -6,6 +6,8 @@ output_stage: model_output
 models:
   - config: configs/models/llada2_1.yaml
     variants: [qmode, smode]
+  - config: configs/models/diffusiongemma.yaml
+    variants: [official]
 
 datasets:
   - config: configs/datasets/sudoku4.yaml
