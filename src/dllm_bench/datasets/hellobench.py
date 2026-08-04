@@ -1,13 +1,9 @@
-"""HelloBench long-output diagnostics without an LLM judge.
+"""Judge-free HelloBench long-output integrity diagnostics.
 
-Official HelloEval depends on checklist-based LLM judgments.  This offline
-benchmark intentionally does not claim to reproduce it.  The primary score
-here is therefore named ``objective_quality_score`` and combines only
-auditable surface signals: target-length fidelity, Seq-Rep-4, repeated
-segment rate, and explicit penalties for major observable failures.
-
-Semantic correctness, factuality, instruction satisfaction, coherence, and
-style are outside the scope of this no-judge score.
+Official HelloEval uses checklist-wise LLM judgments and human-fitted
+weights. The default scorer here measures a narrower construct: whether the
+final answer reaches the requested minimum length without obvious visible
+degeneration. It does not claim to reproduce HelloEval or semantic quality.
 """
 
 from __future__ import annotations
@@ -19,13 +15,17 @@ import statistics
 import unicodedata
 
 from .base import Dataset, Sample, ScoreResult
-from .answer_region import scored_payload_aux
+from .answer_region import (
+    AnswerRegion,
+    empty_answer_region,
+    position_aux,
+    scored_payload_aux,
+    thinking_boundary,
+)
 from ..interfaces import GenerationResult, RunStatus
 from .remote import ensure_download
 
-LENGTH_TOLERANCE = 0.1
 SEVERE_LENGTH_RATIO_LOW = 0.5
-SEVERE_LENGTH_RATIO_HIGH = 1.5
 HIGH_SEQ_REP_4 = 0.25
 REPEATED_SEGMENT_FRACTION = 0.20
 
@@ -55,6 +55,36 @@ _REFUSAL_PATTERNS = (
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 _SEGMENT_SPLIT_RE = re.compile(r"(?:\n\s*\n+)|(?<=[.!?。！？])\s+")
 
+_ARTICLE_START_RE = re.compile(
+    r"(?im)^(?:"
+    r"#{1,6}\s+\S.*"
+    r"|\*\*(?:introduction|essay|title)\b[^\r\n]*\*\*\s*$"
+    r"|(?:introduction|essay)\s*:?[ \t]*$"
+    r")"
+)
+_META_PREFIX_RE = re.compile(
+    r"(?i)(?:"
+    r"\bwe need to\b|\bi need to\b|\blet['\u2019]?s\b|\bwe['\u2019]?ll\b"
+    r"|\boutline\b|\btechnical constraint\b|\bi will provide\b"
+    r"|\bbelow is\b|\bword count\b|\bwrite an argumentative essay\b"
+    r")"
+)
+_LEADING_REASONING_LABEL_RE = re.compile(
+    r"(?is)^\s*(?:thought|analysis|reasoning)\s+(?=#{1,6}\s+)"
+)
+_COUNTERARGUMENT_RE = re.compile(
+    r"(?i)\b(?:counterargument|critics? (?:argue|contend|claim)|"
+    r"opponents? (?:argue|contend|claim)|some (?:may|might) argue|objection)\b"
+)
+_CONCLUSION_RE = re.compile(
+    r"(?im)^(?:#{1,6}\s+|\*\*)?(?:in conclusion|conclusion|to conclude|"
+    r"ultimately)\b"
+)
+_EVIDENCE_RE = re.compile(
+    r"(?i)\b(?:according to|research|stud(?:y|ies)|data|statistics?|evidence|"
+    r"for example|for instance)\b"
+)
+
 
 @dataclass
 class HelloBenchReference:
@@ -78,7 +108,6 @@ class MajorIssueReport:
             (
                 self.empty_output,
                 self.severe_underlength,
-                self.severe_overlength,
                 self.high_repetition,
                 self.repeated_segment_loop,
                 self.refusal,
@@ -103,20 +132,54 @@ class MajorIssueReport:
 
 
 def seq_rep_n(text: str, n: int = 4) -> float:
-    """Fraction of repeated whitespace-token n-grams."""
-    words = text.split()
+    """Fraction of repeated normalized word n-grams."""
+    words = _WORD_RE.findall(text.casefold())
     if len(words) < n:
         return 0.0
     ngrams = [tuple(words[i : i + n]) for i in range(len(words) - n + 1)]
     return 1 - len(set(ngrams)) / len(ngrams)
 
 
-def length_compliant(
-    word_count: int, target_words: int, tolerance: float = LENGTH_TOLERANCE
-) -> bool:
+def length_compliant(word_count: int, target_words: int) -> bool:
+    """Return whether the requested minimum word count is reached."""
     if target_words <= 0:
         raise ValueError("target_words must be positive")
-    return abs(word_count / target_words - 1.0) <= tolerance
+    return word_count >= target_words
+
+
+def locate_hellobench_answer(text: str) -> AnswerRegion:
+    """Locate the final article without scoring a preceding reasoning plan."""
+    boundary, unclosed = thinking_boundary(text)
+    if unclosed:
+        return empty_answer_region(text, "unclosed_thinking")
+
+    scan_start = boundary if boundary > 0 else 0
+    tail = text[scan_start:]
+    if not tail.strip():
+        return empty_answer_region(text, "empty_after_thinking")
+
+    labelled = _LEADING_REASONING_LABEL_RE.match(tail)
+    if labelled:
+        scan_start += labelled.end()
+        tail = text[scan_start:]
+
+    marker = _ARTICLE_START_RE.search(tail)
+    if marker:
+        prefix = tail[: marker.start()]
+        if marker.start() <= 80 or _META_PREFIX_RE.search(prefix):
+            scan_start += marker.start()
+            tail = text[scan_start:]
+
+    whitespace = len(tail) - len(tail.lstrip())
+    start = scan_start + whitespace
+    return AnswerRegion(
+        text=text[start:].strip(),
+        start_char=start,
+        end_char=len(text),
+        detected=True,
+        method="article_after_thinking" if boundary else "article_start",
+        reasoning_end_char=boundary,
+    )
 
 
 def repeated_segment_fraction(text: str) -> float:
@@ -175,7 +238,7 @@ def detect_major_issues(
     rep4: float | None = None,
     repeated_fraction: float | None = None,
 ) -> MajorIssueReport:
-    word_count = len(output.split())
+    word_count = len(_WORD_RE.findall(output))
     length_ratio = word_count / target_words if target_words > 0 else 0.0
     rep4 = seq_rep_n(output, 4) if rep4 is None else rep4
     repeated_fraction = (
@@ -187,12 +250,36 @@ def detect_major_issues(
     return MajorIssueReport(
         empty_output=word_count == 0,
         severe_underlength=length_ratio < SEVERE_LENGTH_RATIO_LOW,
-        severe_overlength=length_ratio > SEVERE_LENGTH_RATIO_HIGH,
+        # Upstream specifies a minimum length, not an upper bound.
+        severe_overlength=False,
         high_repetition=rep4 >= HIGH_SEQ_REP_4,
         repeated_segment_loop=repeated_fraction >= REPEATED_SEGMENT_FRACTION,
         refusal=any(pattern in lowered for pattern in _REFUSAL_PATTERNS),
         prompt_echo=_contains_prompt_echo(prompt, output),
         corrupt_text=_contains_corrupt_text(output),
+    )
+
+
+def long_output_integrity_score(
+    length_ratio: float,
+    rep4: float,
+    repeated_fraction: float,
+    issues: MajorIssueReport,
+) -> tuple[float, float, float, float, float]:
+    """Score minimum-length attainment and visible degeneration once each."""
+    length_score = max(0.0, min(1.0, length_ratio))
+    repetition_score = max(0.0, 1.0 - rep4 / 0.5)
+    segment_score = max(0.0, 1.0 - repeated_fraction / 0.5)
+    degeneration_score = 0.70 * repetition_score + 0.30 * segment_score
+    score = length_score * degeneration_score
+    if issues.empty_output or issues.refusal or issues.corrupt_text:
+        score = 0.0
+    return (
+        max(0.0, min(1.0, score)),
+        length_score,
+        repetition_score,
+        segment_score,
+        degeneration_score,
     )
 
 
@@ -202,31 +289,36 @@ def objective_quality_score(
     repeated_fraction: float,
     issues: MajorIssueReport,
 ) -> tuple[float, float, float, float]:
-    """Return the transparent no-judge score and its three components."""
-    length_score = max(0.0, 1.0 - abs(length_ratio - 1.0))
-    repetition_score = max(0.0, 1.0 - rep4 / 0.5)
-    segment_score = max(0.0, 1.0 - repeated_fraction / 0.5)
-    score = 0.50 * length_score + 0.35 * repetition_score + 0.15 * segment_score
+    """Backward-compatible wrapper for the former public helper."""
+    score, length, repetition, segment, _ = long_output_integrity_score(
+        length_ratio, rep4, repeated_fraction, issues
+    )
+    return score, length, repetition, segment
 
-    # Multiplicative penalties keep each failure independently visible and
-    # make combinations of catastrophic problems substantially worse.
-    if issues.empty_output:
-        score = 0.0
-    if issues.severe_underlength:
-        score *= 0.35
-    if issues.severe_overlength:
-        score *= 0.75
-    if issues.high_repetition:
-        score *= 0.65
-    if issues.repeated_segment_loop:
-        score *= 0.60
-    if issues.refusal:
-        score *= 0.20
-    if issues.prompt_echo:
-        score *= 0.70
-    if issues.corrupt_text:
-        score *= 0.50
-    return max(0.0, min(1.0, score)), length_score, repetition_score, segment_score
+
+def _structure_metrics(text: str) -> dict[str, float]:
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
+    developed = [
+        part
+        for part in paragraphs
+        if len(part.split()) >= 40 and not part.startswith("#")
+    ]
+    body_count = max(0, len(developed) - 2)
+    three_arguments = float(body_count >= 3)
+    counterargument = float(bool(_COUNTERARGUMENT_RE.search(text)))
+    conclusion = float(bool(_CONCLUSION_RE.search(text)))
+    evidence = float(bool(_EVIDENCE_RE.search(text)))
+    structure_score = statistics.fmean(
+        (three_arguments, counterargument, conclusion, evidence)
+    )
+    return {
+        "developed_body_paragraph_count": float(body_count),
+        "three_argument_paragraphs_rate": three_arguments,
+        "counterargument_cue_rate": counterargument,
+        "conclusion_cue_rate": conclusion,
+        "evidence_cue_rate": evidence,
+        "objective_structure_score": structure_score,
+    }
 
 
 class HelloBenchDataset(Dataset):
@@ -275,53 +367,90 @@ class HelloBenchDataset(Dataset):
             "upstream": "Quehry/HelloBench",
             "upstream_revision": HELLOBENCH_REVISION,
             "official_helloeval_used": False,
-            "metric_owner": "dllm-bench judge-free reference diagnostic",
+            "metric_owner": "dllm-bench judge-free long-output integrity diagnostic",
             "reporting_scope": "case_study_only",
         }
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: HelloBenchReference = sample.reference
-        word_count = len(output_text.split())
+        region = locate_hellobench_answer(output_text)
+        scored_text = region.text if region.detected else ""
+        word_count = len(_WORD_RE.findall(scored_text))
         length_ratio = word_count / ref.target_length_words
         length_ok = length_compliant(word_count, ref.target_length_words)
-        rep4 = seq_rep_n(output_text, 4)
-        repeated_fraction = repeated_segment_fraction(output_text)
+        rep4 = seq_rep_n(scored_text, 4)
+        repeated_fraction = repeated_segment_fraction(scored_text)
         issues = detect_major_issues(
             sample.prompt,
-            output_text,
+            scored_text,
             ref.target_length_words,
             rep4=rep4,
             repeated_fraction=repeated_fraction,
         )
-        score, length_score, repetition_score, segment_score = objective_quality_score(
+        score, length_score, repetition_score, segment_score, degeneration_score = long_output_integrity_score(
             length_ratio, rep4, repeated_fraction, issues
+        )
+        region_metrics = position_aux(region, output_text)
+        answer_start_ratio = float(region_metrics.get("answer_start_char_ratio", 1.0))
+        directness_score = max(0.0, 1.0 - answer_start_ratio)
+        structure_metrics = _structure_metrics(scored_text)
+        terminal_punctuation = float(
+            bool(re.search(r"[.!?][\"')\]]?\s*$", scored_text))
+        )
+        style_score = (
+            0.40 * directness_score
+            + 0.40 * structure_metrics["objective_structure_score"]
+            + 0.20 * terminal_punctuation
+        )
+        degeneration_free = not issues.high_repetition and not issues.repeated_segment_loop
+        long_output_success = (
+            region.detected
+            and length_ok
+            and degeneration_free
+            and not issues.empty_output
+            and not issues.refusal
+            and not issues.prompt_echo
+            and not issues.corrupt_text
         )
         result = ScoreResult(
             primary_score=score,
             aux={
                 "length_compliance_rate": 1.0 if length_ok else 0.0,
+                "minimum_length_success_rate": 1.0 if length_ok else 0.0,
+                "length_attainment": length_score,
                 "seq_rep_4": rep4,
                 "length_ratio": length_ratio,
                 "output_word_count": float(word_count),
-                "objective_length_score": length_score,
-                "objective_repetition_score": repetition_score,
-                "objective_segment_score": segment_score,
+                "answer_word_count": float(word_count),
+                "reasoning_word_count": float(
+                    len(_WORD_RE.findall(output_text[: region.start_char]))
+                ),
+                "ngram_novelty_score": repetition_score,
+                "segment_uniqueness_score": segment_score,
+                "degeneration_score": degeneration_score,
+                "degeneration_free_rate": float(degeneration_free),
+                "long_output_success_rate": float(long_output_success),
                 "repeated_segment_fraction": repeated_fraction,
+                "directness_score": directness_score,
+                "terminal_punctuation_rate": terminal_punctuation,
+                "objective_style_score": style_score,
                 "case_study_only": 1.0,
                 "official_helloeval_compatible": 0.0,
+                **region_metrics,
+                **structure_metrics,
                 **issues.as_metrics(),
             },
-            valid=word_count > 0 and not issues.corrupt_text,
-            complete=length_ok,
+            valid=region.detected and word_count > 0 and not issues.corrupt_text,
+            complete=region.detected and length_ok,
         )
-        result.aux.update(scored_payload_aux(output_text))
+        result.aux.update(scored_payload_aux(scored_text))
         return result
 
     def aggregate_records(
         self, samples: list[Sample], results: list[ScoreResult]
     ) -> dict[str, float]:
         summary = super().aggregate_records(samples, results)
-        summary["objective_quality_score"] = summary["hellobench_score"]
+        summary["long_output_integrity_score"] = summary["hellobench_score"]
         targets = sorted({sample.reference.target_length_words for sample in samples})
         for target in targets:
             group = [
@@ -329,7 +458,7 @@ class HelloBenchDataset(Dataset):
                 for sample, result in zip(samples, results)
                 if sample.reference.target_length_words == target
             ]
-            summary[f"objective_quality_{target}_words"] = (
+            summary[f"long_output_integrity_{target}_words"] = (
                 sum(result.primary_score for result in group) / len(group)
             )
             summary[f"length_compliance_{target}_words"] = (
@@ -341,13 +470,23 @@ class HelloBenchDataset(Dataset):
             summary[f"major_issue_free_{target}_words"] = (
                 sum(result.aux["major_issue_free_rate"] for result in group) / len(group)
             )
+            summary[f"long_output_success_{target}_words"] = (
+                sum(result.aux["long_output_success_rate"] for result in group) / len(group)
+            )
+            summary[f"objective_style_{target}_words"] = (
+                sum(result.aux["objective_style_score"] for result in group) / len(group)
+            )
+            summary[f"answer_start_char_ratio_{target}_words"] = (
+                sum(result.aux.get("answer_start_char_ratio", 1.0) for result in group)
+                / len(group)
+            )
             summary[f"mean_output_words_{target}_words"] = (
                 sum(result.aux["output_word_count"] for result in group) / len(group)
             )
         if 2000 in targets and 4000 in targets:
-            score_2k = summary["objective_quality_2000_words"]
-            score_4k = summary["objective_quality_4000_words"]
-            summary["long_output_quality_retention"] = (
+            score_2k = summary["long_output_integrity_2000_words"]
+            score_4k = summary["long_output_integrity_4000_words"]
+            summary["long_output_integrity_retention"] = (
                 score_4k / score_2k if score_2k > 0 else 0.0
             )
         return summary

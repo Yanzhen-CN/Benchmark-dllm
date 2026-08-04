@@ -336,24 +336,31 @@ class Sudoku4Dataset(Dataset):
         clue_indices = [
             index for index, value in enumerate(reference.puzzle) if value != "0"
         ]
+        clue_matches = sum(
+            prediction is not None
+            and prediction[index] == reference.puzzle[index]
+            for index in clue_indices
+        )
+        clue_mismatches = len(clue_indices) - clue_matches
         clue_rate = (
-            sum(
-                prediction is not None
-                and prediction[index] == reference.puzzle[index]
-                for index in clue_indices
-            )
-            / len(clue_indices)
+            clue_matches / len(clue_indices)
             if clue_indices
             else 1.0
         )
+        constraint_valid = is_valid_sudoku4(prediction, "0" * 16)
         aux = {
-            "d1_blank_cell_accuracy": cell_accuracy,
+            "official_score": reference_cell_accuracy,
+            "blank_cell_accuracy": cell_accuracy,
+            "d1_blank_cell_accuracy": reference_cell_accuracy,
             "d1_reference_blank_cell_accuracy": reference_cell_accuracy,
             "valid_solution_count": float(len(accepted_solutions)),
             "accepted_solution_match": float(puzzle_success),
             "puzzle_success_rate": float(puzzle_success),
+            "legal_completion": float(puzzle_success),
             "reference_exact_match": float(exact),
             "given_preservation_rate": clue_rate,
+            "given_mismatch_count": float(clue_mismatches),
+            "constraint_valid": float(constraint_valid),
             "strict_16_digit_format_rate": float(format_valid),
             "direct_answer_instruction_following_rate": float(
                 marker_complete and format_valid

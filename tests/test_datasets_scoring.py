@@ -403,6 +403,24 @@ def test_sudoku4_reports_d1_cell_accuracy_and_strict_puzzle_success():
     assert is_valid_sudoku4(reference.solution, reference.puzzle)
 
 
+def test_sudoku4_blank_score_does_not_hide_changed_given():
+    dataset = Sudoku4Dataset()
+    reference = Sudoku4Reference(
+        puzzle="3102200002100320",
+        solution="3142243142131324",
+    )
+    sample = Sample("s4", "prompt", reference)
+
+    result = dataset.score(sample, "4142243142131324")
+
+    assert result.primary_score == 1.0
+    assert result.aux["blank_cell_accuracy"] == 1.0
+    assert result.aux["given_preservation_rate"] < 1.0
+    assert result.aux["given_mismatch_count"] == 1.0
+    assert result.aux["constraint_valid"] == 0.0
+    assert result.aux["legal_completion"] == 0.0
+
+
 def test_sudoku4_primary_metric_mirrors_d1_extraction_and_padding_rules():
     dataset = Sudoku4Dataset()
     reference = Sudoku4Reference(
@@ -726,7 +744,33 @@ def test_sudoku9_official_primary_is_reference_sequence_not_legality():
     assert is_valid_solution(alternative, puzzle) is True
     assert result.primary_score == 0.0
     assert result.aux["constraint_valid"] == 1.0
+    assert result.aux["legal_completion"] == 1.0
     assert result.aux["reference_exact_match"] == 0.0
+
+
+def test_sudoku9_legal_board_with_changed_givens_is_not_the_puzzle_solution():
+    ds = Sudoku9Dataset()
+    alternative = [
+        [2 if value == 1 else 1 if value == 2 else value for value in row]
+        for row in _EASY_PUZZLE
+    ]
+    sample = Sample(
+        sample_id="1",
+        prompt="solve",
+        reference=SudokuReference(
+            puzzle=_EASY_PUZZLE,
+            solution=_EASY_PUZZLE,
+        ),
+    )
+    text = "".join(str(value) for row in alternative for value in row)
+
+    result = ds.score(sample, text)
+
+    assert result.primary_score == 0.0
+    assert result.aux["constraint_valid"] == 1.0
+    assert result.aux["given_preservation_rate"] < 1.0
+    assert result.aux["given_mismatch_count"] > 0.0
+    assert result.aux["legal_completion"] == 0.0
 
 
 def test_sudoku_copied_puzzle_gets_no_solving_credit():
@@ -1051,7 +1095,7 @@ def test_seq_rep_4_full_repetition():
     assert rep > 0.5
 
 
-def test_hellobench_score_within_length_tolerance():
+def test_hellobench_minimum_length_is_complete_and_overlength_is_not_penalized():
     ds = HelloBenchDataset()
     ref = HelloBenchReference(target_length_words=100)
     sample = Sample(sample_id="1", prompt="p", reference=ref)
@@ -1059,9 +1103,13 @@ def test_hellobench_score_within_length_tolerance():
     result = ds.score(sample, output)
     assert result.aux["length_compliance_rate"] == 1.0
     assert result.complete is True
+    longer = ds.score(sample, " ".join(f"w{i}" for i in range(150)))
+    assert longer.aux["length_attainment"] == 1.0
+    assert longer.aux["severe_overlength_issue_rate"] == 0.0
+    assert longer.complete is True
 
 
-def test_hellobench_score_outside_length_tolerance():
+def test_hellobench_score_below_minimum_length():
     ds = HelloBenchDataset()
     ref = HelloBenchReference(target_length_words=100)
     sample = Sample(sample_id="1", prompt="p", reference=ref)
@@ -1089,7 +1137,7 @@ def test_hellobench_detects_refusal_and_prompt_echo():
     assert issues.prompt_echo is True
 
 
-def test_hellobench_objective_score_is_not_named_helloeval():
+def test_hellobench_integrity_score_is_not_named_helloeval():
     ds = HelloBenchDataset()
     ref = HelloBenchReference(target_length_words=10)
     sample = Sample(sample_id="1", prompt="write", reference=ref)
@@ -1097,7 +1145,28 @@ def test_hellobench_objective_score_is_not_named_helloeval():
     assert result.primary_score == pytest.approx(1.0)
     assert result.aux["major_issue_free_rate"] == 1.0
     summary = ds.aggregate_records([sample], [result])
-    assert summary["objective_quality_score"] == 1.0
+    assert summary["long_output_integrity_score"] == 1.0
+
+
+def test_hellobench_scores_only_the_article_after_thinking():
+    ds = HelloBenchDataset()
+    ref = HelloBenchReference(target_length_words=4)
+    sample = Sample(sample_id="1", prompt="write", reference=ref)
+    output = "<think>private plan with repeated repeated text</think>\n\n# Essay\none two three four"
+    result = ds.score(sample, output)
+    assert result.aux["answer_region_detected_rate"] == 1.0
+    assert result.aux["answer_word_count"] == 5.0
+    assert result.aux["reasoning_word_count"] > 0
+
+
+def test_hellobench_rejects_unclosed_thinking_as_final_article():
+    ds = HelloBenchDataset()
+    ref = HelloBenchReference(target_length_words=4)
+    sample = Sample(sample_id="1", prompt="write", reference=ref)
+    result = ds.score(sample, "<think>one two three four")
+    assert result.primary_score == 0.0
+    assert result.aux["answer_region_detected_rate"] == 0.0
+    assert result.complete is False
 
 
 def test_hellobench_aggregates_per_length_generation_time():

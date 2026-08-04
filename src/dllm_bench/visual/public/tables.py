@@ -29,12 +29,17 @@ PRIMARY_AUX_KEYS = {
     "gsm8k": ("valid_rate",),
     "mbpp": ("executable_rate",),
     "structeval_t": ("official_render_score", "official_key_validation_score"),
-    "sudoku4": ("d1_blank_cell_accuracy", "given_preservation_rate"),
-    "sudoku4_thinking": ("d1_blank_cell_accuracy", "given_preservation_rate"),
-    "sudoku9": ("blank_cell_accuracy", "constraint_satisfaction_rate"),
-    "sudoku9_thinking": ("blank_cell_accuracy", "constraint_satisfaction_rate"),
+    "sudoku4": ("blank_cell_accuracy", "given_preservation_rate", "legal_completion"),
+    "sudoku4_thinking": ("blank_cell_accuracy", "given_preservation_rate", "legal_completion"),
+    "sudoku9": ("blank_cell_accuracy", "given_preservation_rate", "legal_completion"),
+    "sudoku9_thinking": ("blank_cell_accuracy", "given_preservation_rate", "legal_completion"),
     "ruler": ("all_answers_match",),
-    "hellobench": ("length_compliance_rate", "major_issue_free_rate"),
+    "hellobench": (
+        "minimum_length_success_rate",
+        "long_output_success_rate",
+        "degeneration_free_rate",
+        "objective_style_score",
+    ),
 }
 
 

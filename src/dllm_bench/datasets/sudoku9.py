@@ -347,6 +347,9 @@ class Sudoku9Dataset(Dataset):
 
     def score(self, sample: Sample, output_text: str) -> ScoreResult:
         ref: SudokuReference = sample.reference
+        given_count = sum(
+            value != 0 for row in ref.puzzle for value in row
+        )
         prediction = output_text.strip()
         target = _grid_to_digits(ref.solution)
         located_region = locate_sudoku9_answer(
@@ -387,6 +390,7 @@ class Sudoku9Dataset(Dataset):
             result = ScoreResult(
                 primary_score=0.0,
                 aux={
+                    "official_score": 0.0,
                     "strict_reference_exact_match": strict_reference_exact,
                     "strict_81_digit_format_rate": 0.0,
                     "direct_answer_instruction_following_rate": 0.0,
@@ -394,10 +398,12 @@ class Sudoku9Dataset(Dataset):
                     "blank_cell_accuracy": 0.0,
                     "cell_accuracy": 0.0,
                     "given_preservation_rate": 0.0,
+                    "given_mismatch_count": float(given_count),
                     "constraint_satisfaction_rate": 0.0,
                     "completion_rate": 0.0,
                     "conflict_rate": 1.0,
                     "constraint_valid": 0.0,
+                    "legal_completion": 0.0,
                     "reference_exact_match": 0.0,
                     "answer_marker_present": float(marker_present),
                     "answer_marker_complete_rate": float(marker_complete),
@@ -412,10 +418,19 @@ class Sudoku9Dataset(Dataset):
         exact = ye_sudoku_sequence_accuracy(_grid_to_digits(grid), target)
         partial_credit = blank_cell_accuracy(grid, ref.puzzle, ref.solution)
         satisfaction = constraint_satisfaction_rate(grid)
-        constraint_valid = is_valid_solution(grid, ref.puzzle)
+        completed = completion_rate(grid)
+        clue_rate = given_preservation_rate(grid, ref.puzzle)
+        clue_mismatches = sum(
+            ref.puzzle[r][c] != 0 and grid[r][c] != ref.puzzle[r][c]
+            for r in range(9)
+            for c in range(9)
+        )
+        constraint_valid = completed == 1.0 and satisfaction == 1.0
+        legal_completion = is_valid_solution(grid, ref.puzzle)
         result = ScoreResult(
             primary_score=exact,
             aux={
+                "official_score": exact,
                 "strict_reference_exact_match": strict_reference_exact,
                 "strict_81_digit_format_rate": float(strict_format_valid),
                 "direct_answer_instruction_following_rate": float(
@@ -426,19 +441,19 @@ class Sudoku9Dataset(Dataset):
                 "exact_solve_rate": exact,
                 "blank_cell_accuracy": partial_credit,
                 "cell_accuracy": cell_accuracy(grid, ref.solution),
-                "given_preservation_rate": given_preservation_rate(
-                    grid, ref.puzzle
-                ),
+                "given_preservation_rate": clue_rate,
+                "given_mismatch_count": float(clue_mismatches),
                 "constraint_satisfaction_rate": satisfaction,
-                "completion_rate": completion_rate(grid),
+                "completion_rate": completed,
                 "conflict_rate": 1.0 - satisfaction,
                 "constraint_valid": float(constraint_valid),
+                "legal_completion": float(legal_completion),
                 "reference_exact_match": exact,
                 "answer_marker_present": float(marker_present),
                 "answer_marker_complete_rate": float(marker_complete),
             },
             valid=True,
-            complete=completion_rate(grid) == 1.0,
+            complete=completed == 1.0,
         )
         result.aux.update(position_aux(located_region, output_text))
         result.aux.update(scored_payload_aux(_grid_to_digits(grid)))

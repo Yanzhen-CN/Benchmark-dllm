@@ -4,20 +4,34 @@
 # Generation caps are per sample, not a matrix-wide 256.
 dataset: hellobench
 dataset_class: dllm_bench.datasets.hellobench.HelloBenchDataset
-# This deliberately does not claim to be official HelloEval: official
-# HelloEval requires checklist-based LLM judging. The offline primary score
-# combines objective length/repetition/segment signals and explicit major
-# observable failure penalties.
-primary_metric: objective_quality_score
+# This deliberately does not claim to be official HelloEval. The default
+# primary score measures final-article minimum-length attainment and visible
+# degeneration only; semantic quality remains outside the judge-free score.
+primary_metric: long_output_integrity_score
 aux_metrics:
+  - minimum_length_success_rate
+  - length_attainment
   - length_compliance_rate
   - complete_rate
   - truncated_rate
+  - long_output_success_rate
+  - degeneration_free_rate
+  - degeneration_score
   - seq_rep_4
   - repeated_segment_fraction
+  - answer_region_detected_rate
+  - answer_start_char_ratio
+  - reasoning_word_count
+  - answer_word_count
+  - directness_score
+  - objective_structure_score
+  - objective_style_score
+  - three_argument_paragraphs_rate
+  - counterargument_cue_rate
+  - conclusion_cue_rate
+  - evidence_cue_rate
   - empty_output_issue_rate
   - severe_underlength_issue_rate
-  - severe_overlength_issue_rate
   - high_repetition_issue_rate
   - repeated_segment_loop_issue_rate
   - refusal_issue_rate

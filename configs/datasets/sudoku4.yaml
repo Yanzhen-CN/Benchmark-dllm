@@ -4,11 +4,17 @@
 # validity is also reported so partial credit cannot look like a solved board.
 dataset: sudoku4
 dataset_class: dllm_bench.datasets.sudoku4.Sudoku4Dataset
-primary_metric: d1_blank_cell_accuracy
+primary_metric: blank_cell_accuracy_any_legal_solution
 aux_metrics:
+  - official_score
+  - blank_cell_accuracy
+  - d1_blank_cell_accuracy
   - puzzle_success_rate
+  - legal_completion
   - reference_exact_match
   - given_preservation_rate
+  - given_mismatch_count
+  - constraint_valid
   - strict_16_digit_format_rate
   - direct_answer_instruction_following_rate
   - answer_marker_present_rate

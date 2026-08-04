@@ -5,6 +5,7 @@ dataset: sudoku9_thinking
 dataset_class: dllm_bench.datasets.sudoku9.Sudoku9ThinkingDataset
 primary_metric: complete_reference_sequence_accuracy
 aux_metrics:
+  - official_score
   - reference_exact_match
   - strict_reference_exact_match
   - strict_81_digit_format_rate
@@ -20,7 +21,10 @@ aux_metrics:
   - exact_solve_rate_by_difficulty
   - cell_accuracy
   - given_preservation_rate
+  - given_mismatch_count
   - constraint_satisfaction_rate
+  - constraint_valid
+  - legal_completion
   - completion_rate
   - conflict_rate
   - accuracy_easy
