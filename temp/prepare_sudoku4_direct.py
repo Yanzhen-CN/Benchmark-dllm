@@ -26,17 +26,13 @@ def main() -> int:
             record = {
                 "sample_id": sample.sample_id,
                 "prompt": (
-                    "Complete the 4x4 Sudoku. 0 is blank; each row, column, and "
-                    "2x2 box must contain 1-4 once.\n"
-                    "Example puzzle: 1200430031002010\n"
-                    "Example answer: 1234432131422413\n"
-                    f"Puzzle: {puzzle}\n"
-                    "Answer only with the final 16 digits:"
+                    f"Solve this Sudoku: {puzzle}\n"
+                    "Directly return your answer with only 16 digits."
                 ),
                 "reference": dataclasses.asdict(sample.reference),
                 "meta": {
                     **sample.meta,
-                    "prompt_protocol": "temporary-one-shot-direct-16-digits-v6",
+                    "prompt_protocol": "temporary-minimal-direct-return-v7",
                 },
             }
             output.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")))
