@@ -15,8 +15,9 @@ from __future__ import annotations
 import random
 from abc import ABC, abstractmethod
 from contextlib import ExitStack, contextmanager
+from time import perf_counter
 
-from ..interfaces import GenerationRequest, GenerationResult, RunStatus, TimingResult
+from ..interfaces import ForwardProfile, GenerationRequest, GenerationResult, RunStatus, TimingResult
 from ..resource.compute import ComputeHandle, measure_compute_tflops
 from ..resource.energy import measure_energy_joules
 from ..resource.timing import measure_wall_clock
@@ -44,6 +45,137 @@ class BaseModelAdapter(ABC):
         return not getattr(self, "_suppress_trace_instrumentation", False)
 
     @contextmanager
+    def _forward_phase(self, phase: str):
+        previous = getattr(self, "_active_forward_phase", "denoise")
+        self._active_forward_phase = phase
+        try:
+            yield
+        finally:
+            self._active_forward_phase = previous
+
+    @staticmethod
+    def _synchronize_forward_device() -> None:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except (ImportError, RuntimeError):
+            return
+
+    @contextmanager
+    def _capture_model_forwards(
+        self,
+        request: GenerationRequest,
+        compute_handle: ComputeHandle | None = None,
+    ):
+        enabled = bool(request.config.get("step_profiling"))
+        model = getattr(self, "_model", None)
+        if not enabled or model is None or not hasattr(model, "register_forward_pre_hook"):
+            yield
+            return
+
+        pending: list[tuple[str, float | None, float | None, dict]] = []
+        capture_time = compute_handle is None
+
+        def before_forward(_module, args, kwargs):
+            phase = str(getattr(self, "_active_forward_phase", "denoise"))
+            input_ids = kwargs.get("input_ids")
+            if input_ids is None and args:
+                input_ids = args[0]
+            attention_mask = kwargs.get("attention_mask")
+            past_key_values = kwargs.get("past_key_values")
+            kv_cache_tokens = None
+            get_seq_length = getattr(past_key_values, "get_seq_length", None)
+            if callable(get_seq_length):
+                try:
+                    kv_cache_tokens = int(get_seq_length())
+                except (TypeError, ValueError):
+                    kv_cache_tokens = None
+            input_tokens = (
+                int(input_ids.shape[-1]) if hasattr(input_ids, "shape") else None
+            )
+            attention_tokens = (
+                int(attention_mask.shape[-1])
+                if hasattr(attention_mask, "shape")
+                else (
+                    input_tokens + (kv_cache_tokens or 0)
+                    if input_tokens is not None
+                    else None
+                )
+            )
+            metadata = {
+                "input_tokens": input_tokens,
+                "kv_cache_tokens": kv_cache_tokens,
+                "attention_tokens": attention_tokens,
+                "uses_kv_cache": bool(
+                    past_key_values is not None and (kv_cache_tokens or 0) > 0
+                ),
+                "stores_kv": (
+                    bool(kwargs["store_kv"])
+                    if "store_kv" in kwargs
+                    else (
+                        bool(kwargs["use_cache"])
+                        if "use_cache" in kwargs
+                        else None
+                    )
+                ),
+            }
+            if capture_time:
+                self._synchronize_forward_device()
+            started = perf_counter() if capture_time else None
+            flops_before = (
+                compute_handle.snapshot_tflops() if compute_handle is not None else None
+            )
+            pending.append((phase, started, flops_before, metadata))
+
+        def after_forward(_module, _args, _kwargs, _output):
+            phase, started, flops_before, metadata = pending.pop()
+            elapsed = None
+            if started is not None:
+                self._synchronize_forward_device()
+                elapsed = perf_counter() - started
+            flops_after = (
+                compute_handle.snapshot_tflops() if compute_handle is not None else None
+            )
+            step_tflops = (
+                flops_after - flops_before
+                if flops_after is not None and flops_before is not None
+                else None
+            )
+            self._forward_profiles.append(
+                ForwardProfile(
+                    forward_index=len(self._forward_profiles),
+                    phase=phase,
+                    wall_clock_seconds=elapsed,
+                    compute_tflops=step_tflops,
+                    **metadata,
+                )
+            )
+
+        pre_handle = model.register_forward_pre_hook(before_forward, with_kwargs=True)
+        post_handle = model.register_forward_hook(after_forward, with_kwargs=True)
+        try:
+            yield
+        finally:
+            pre_handle.remove()
+            post_handle.remove()
+
+    def _annotate_last_forward(
+        self,
+        *,
+        accepted_tokens: int,
+        active_tokens: int,
+        eligible_tokens: int,
+    ) -> None:
+        for profile in reversed(getattr(self, "_forward_profiles", [])):
+            if profile.phase == "denoise" and profile.accepted_tokens is None:
+                profile.accepted_tokens = int(accepted_tokens)
+                profile.active_tokens = int(active_tokens)
+                profile.eligible_tokens = int(eligible_tokens)
+                return
+
+    @contextmanager
     def _exclude_from_measurement(self):
         """Pause every formal resource counter around instrumentation work.
 
@@ -68,6 +200,11 @@ class BaseModelAdapter(ABC):
 
     def generate(self, request: GenerationRequest) -> GenerationResult:
         _seed_everything(request.seed)
+        if request.config.get("step_profiling"):
+            ensure_loaded = getattr(self, "_ensure_loaded", None)
+            if callable(ensure_loaded):
+                ensure_loaded()
+        self._forward_profiles: list[ForwardProfile] = []
         measurement = _SampleMeasurement()
         self._active_measurement = measurement
         result: GenerationResult
@@ -80,7 +217,8 @@ class BaseModelAdapter(ABC):
             if request.config.get("capture_trace") is False:
                 self._suppress_trace_instrumentation = True
             try:
-                result = self._generate_core(request)
+                with self._capture_model_forwards(request):
+                    result = self._generate_core(request)
             finally:
                 self._suppress_trace_instrumentation = previous_trace_suppression
         except Exception as exc:  # noqa: BLE001 - failure is persisted per sample
@@ -101,6 +239,9 @@ class BaseModelAdapter(ABC):
         )
         result.energy_joules = measurement.energy_joules
         result.peak_vram_gb = measurement.peak_vram_gb
+        result.forward_profiles = list(self._forward_profiles)
+        if result.forward_profiles:
+            result.extra["profiled_model_forwards"] = len(result.forward_profiles)
         return result
 
     def profile_compute(self, request: GenerationRequest) -> ComputeHandle:
@@ -111,11 +252,19 @@ class BaseModelAdapter(ABC):
         _seed_everything(request.seed)
         previous = getattr(self, "_suppress_trace_instrumentation", False)
         self._suppress_trace_instrumentation = True
+        self._forward_profiles = []
         try:
             with measure_compute_tflops() as handle:
-                self._generate_core(request)
+                with self._capture_model_forwards(request, compute_handle=handle):
+                    self._generate_core(request)
         finally:
             self._suppress_trace_instrumentation = previous
+        handle.forward_tflops = [
+            float(profile.compute_tflops)
+            for profile in self._forward_profiles
+            if profile.compute_tflops is not None
+        ]
+        handle.forward_phases = [profile.phase for profile in self._forward_profiles]
         return handle
 
     def warmup_generation(self, request: GenerationRequest) -> None:

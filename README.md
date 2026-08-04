@@ -178,6 +178,44 @@ python run_score.py -m illada_vargen \
 
 When multiple lengths are selected, each length is isolated under `len<tokens>/` inside the output root. Length probes are diagnostic and must not overwrite formal rows.
 
+## Profiling 3x3
+
+The profiling matrix runs one fixed MBPP, GSM8K, and StructEval-T sample for
+DiffusionGemma official, iLLaDA P2, and DreamReasoner P2. Keep all three
+datasets in one command so each model is loaded once. `--measure-compute`
+enables GPU-synchronized per-forward timing and a separate deterministic FLOP
+replay. Token trace capture is disabled by this matrix: profiling records only
+forward time, FLOPs, accepted-token count, input length, KV-cache length,
+attention span, and cache read/write phase. The dedicated matrix writes to the
+isolated `model_profiling` stage because this protocol intentionally adds step
+synchronization overhead.
+
+```bash
+python run_model.py --matrix configs/experiments/profiling_matrix.yaml \
+  -m diffusiongemma illada dreamreasoner \
+  -d mbpp gsm8k structeval_t --measure-compute --no-resume \
+  --output-root output
+
+python run_visualization.py --matrix configs/experiments/profiling_matrix.yaml \
+  -m diffusiongemma illada dreamreasoner \
+  -d mbpp gsm8k structeval_t --output-root output
+```
+
+Each dataset visualization directory contains `dataset_step_profiling.png`.
+The plot is derived directly from per-sample profiling JSON and does not create
+a duplicate CSV or summary JSON. Per-step compute covers captured top-level
+model forwards; total replay FLOPs remain separately available as
+`compute_tflops`, so unattributed sampler-side tensor work is not silently
+assigned to a forward.
+
+The profiling matrix declares `profiling_output: true`. Raw `_meta.json` and
+per-sample JSON files are written under
+`output/model_profiling/<model_config>/<dataset>/`; PNG reports remain under the matching
+`output/visualization_output/<model_config>/<dataset>/`. Profiling fields
+distinguish collection modes inside JSON; collection modes do not create
+additional directory levels. Profiling runs are diagnostic and are not passed
+through `run_score.py`.
+
 ## Curated and dataset-level visualization
 
 Dataset-level Task 4 summaries always use every available trace in the selected row. `--sample-ids` and `--n-representative` control only the additional single-sample evidence.

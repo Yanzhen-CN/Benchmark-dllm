@@ -20,6 +20,14 @@ from dataclasses import dataclass
 class ComputeHandle:
     tflops: float | None = None
     available: bool = True
+    forward_tflops: list[float] | None = None
+    forward_phases: list[str] | None = None
+    _counter: object | None = None
+
+    def snapshot_tflops(self) -> float | None:
+        if self._counter is None:
+            return None
+        return float(self._counter.get_total_flops()) / 1e12
 
 
 def gqa_sdpa_flop_count(
@@ -81,9 +89,11 @@ def measure_compute_tflops() -> Iterator[ComputeHandle]:
         display=False,
         custom_mapping=_sdpa_custom_mapping(),
     )
+    handle._counter = counter
     try:
         with counter:
             yield handle
     finally:
         total_flops = counter.get_total_flops()
         handle.tflops = total_flops / 1e12
+        handle._counter = None

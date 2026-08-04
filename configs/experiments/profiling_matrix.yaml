@@ -1,6 +1,8 @@
 # Minimal profiling matrix: 3 model operating points x 3 representative tasks.
-# Use a separate output root (for example output/profiling) and opt in to
-# --measure-compute. With the pinned dataset revisions and seed 42, n_samples=1
+# Use the separate output/model_profiling root and opt in to
+# --measure-compute. That opt-in also captures GPU-synchronized top-level
+# forward timing and per-forward FLOPs; formal full_matrix runs are unaffected.
+# With the pinned dataset revisions and seed 42, n_samples=1
 # selects the expected IDs below. Confirm each generated _meta.json before use.
 
 base_dir: ../..
@@ -28,4 +30,5 @@ datasets:
     max_new_tokens: 512
 
 seed: 42
-trace_scope: all_samples
+capture_trace: false
+profiling_output: true

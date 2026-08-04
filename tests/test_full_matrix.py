@@ -122,6 +122,22 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
     assert all(job.max_new_tokens == 64 for job in probe_jobs)
 
 
+def test_profiling_matrix_is_trace_free_and_uses_profiling_output():
+    jobs, seed = load_matrix_jobs(
+        ROOT / "configs" / "experiments" / "profiling_matrix.yaml"
+    )
+
+    assert seed == 42
+    assert len(jobs) == 9
+    assert all(job.capture_trace is False for job in jobs)
+    assert all(job.profiling_output is True for job in jobs)
+    assert {job.dataset_config.stem for job in jobs} == {
+        "mbpp",
+        "gsm8k",
+        "structeval_t",
+    }
+
+
 def test_illada_entropy_matrix_runs_three_full_primary_datasets():
     jobs, seed = load_matrix_jobs(
         ROOT / "configs" / "experiments" / "illada_entropy.yaml"

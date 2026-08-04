@@ -110,7 +110,9 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         of tensor multiplications while allowing a later variant to trigger a
         recompile with its requested intervention.
         """
-        decoder = self._model.model.decoder
+        decoder = getattr(getattr(self._model, "model", None), "decoder", None)
+        if decoder is None:
+            return
         if getattr(decoder, "_dllm_bench_dg_ablation_hooks", False):
             return
 
@@ -142,7 +144,16 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         decoder._dllm_bench_dg_ablation_hooks = True
 
     def _set_ablation_scales(self) -> None:
-        decoder = self._model.model.decoder
+        decoder = getattr(getattr(self._model, "model", None), "decoder", None)
+        if decoder is None:
+            if (
+                self._self_conditioning_scale != 1.0
+                or self._self_conditioning_logit_scale != 1.0
+            ):
+                raise RuntimeError(
+                    "DiffusionGemma ablation requires model.decoder support"
+                )
+            return
         decoder._dllm_bench_sc_scale = self._self_conditioning_scale
         decoder._dllm_bench_sc_logit_scale = self._self_conditioning_logit_scale
 
@@ -199,6 +210,13 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
                 nonlocal forward_count
                 forward_count += 1
                 accepted_canvas = original_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step)
+                accepted_count = int(sampler.accepted_token_mask.sum().item())
+                canvas_tokens = int(sampler.accepted_token_mask.numel())
+                self._annotate_last_forward(
+                    accepted_tokens=accepted_count,
+                    active_tokens=canvas_tokens,
+                    eligible_tokens=canvas_tokens,
+                )
                 if self._trace_instrumentation_enabled():
                     with self._exclude_from_measurement():
                         entropy = torch.distributions.Categorical(logits=logits).entropy()

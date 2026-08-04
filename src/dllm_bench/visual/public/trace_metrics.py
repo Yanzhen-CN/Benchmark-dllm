@@ -1,8 +1,8 @@
 """Canonical model-agnostic trace and profiling metrics.
 
-This module only reports measurements already present in generation artifacts:
-whole-generation time, whole-generation FLOPs, and native model traces. It does
-not distribute aggregate time or FLOPs across denoising steps.
+This module only reports measurements already present in generation artifacts.
+Whole-generation values are never divided across steps. Per-step time and FLOPs
+are emitted only when the profiling run captured real forward boundaries.
 """
 
 from __future__ import annotations
@@ -69,6 +69,30 @@ class AuxiliaryPerformanceRow:
     flops_per_forward: float | None
     flops_per_final_token: float | None
     flops_per_accepted_event: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class StepProfilingRow:
+    model: str
+    config: str
+    dataset: str
+    sample_id: str
+    forward_index: int
+    phase: str
+    time_seconds: float | None
+    compute_tflops: float | None
+    accepted_tokens: int | None
+    active_tokens: int | None
+    eligible_tokens: int | None
+    input_tokens: int | None
+    kv_cache_tokens: int | None
+    attention_tokens: int | None
+    uses_kv_cache: bool | None
+    stores_kv: bool | None
+    cumulative_compute_tflops: float | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -572,4 +596,211 @@ def write_auxiliary_performance_csv(
         writer = csv.DictWriter(handle, fieldnames=list(dictionaries[0]))
         writer.writeheader()
         writer.writerows(dictionaries)
+    return True
+
+
+def build_step_profiling(
+    *,
+    dataset_name: str,
+    sample: Sample,
+    result: GenerationResult,
+    model_name: str | None,
+    config_name: str | None,
+) -> tuple[dict[str, Any], list[StepProfilingRow]]:
+    profiles = result.forward_profiles
+    if not profiles:
+        return {"measurement_status": "unavailable"}, []
+
+    cumulative_compute = 0.0
+    compute_complete = True
+    rows: list[StepProfilingRow] = []
+    for profile in profiles:
+        if profile.compute_tflops is None:
+            compute_complete = False
+        else:
+            cumulative_compute += profile.compute_tflops
+        rows.append(
+            StepProfilingRow(
+                model=model_name or "unknown",
+                config=config_name or "unknown",
+                dataset=dataset_name,
+                sample_id=sample.sample_id,
+                forward_index=profile.forward_index,
+                phase=profile.phase,
+                time_seconds=profile.wall_clock_seconds,
+                compute_tflops=profile.compute_tflops,
+                accepted_tokens=profile.accepted_tokens,
+                active_tokens=profile.active_tokens,
+                eligible_tokens=profile.eligible_tokens,
+                input_tokens=profile.input_tokens,
+                kv_cache_tokens=profile.kv_cache_tokens,
+                attention_tokens=profile.attention_tokens,
+                uses_kv_cache=profile.uses_kv_cache,
+                stores_kv=profile.stores_kv,
+                cumulative_compute_tflops=(
+                    cumulative_compute if compute_complete else None
+                ),
+            )
+        )
+
+    timed = [row for row in rows if row.time_seconds is not None]
+    computed = [row for row in rows if row.compute_tflops is not None]
+    accepted = sum(row.accepted_tokens or 0 for row in rows)
+    total_time = sum(row.time_seconds or 0.0 for row in timed)
+    total_compute = sum(row.compute_tflops or 0.0 for row in computed)
+    phases: dict[str, dict[str, float]] = {}
+    for row in rows:
+        phase = phases.setdefault(row.phase, {"time_seconds": 0.0, "compute_tflops": 0.0})
+        phase["time_seconds"] += row.time_seconds or 0.0
+        phase["compute_tflops"] += row.compute_tflops or 0.0
+    for values in phases.values():
+        values["time_share"] = (
+            values["time_seconds"] / total_time if total_time > 0 else 0.0
+        )
+        values["compute_share"] = (
+            values["compute_tflops"] / total_compute if total_compute > 0 else 0.0
+        )
+
+    return {
+        "measurement_status": "complete",
+        "profiled_forwards": len(rows),
+        "time_per_step": [row.time_seconds for row in rows],
+        "flops_per_step": [row.compute_tflops for row in rows],
+        "accepted_tokens_per_step": [row.accepted_tokens for row in rows],
+        "time_per_accepted_token": (
+            total_time / accepted if accepted > 0 and timed else None
+        ),
+        "compute_per_accepted_token": (
+            total_compute / accepted if accepted > 0 and computed else None
+        ),
+        "cumulative_compute": total_compute if computed else None,
+        "phase_contribution": phases,
+        "compute_scope": "top-level model forwards captured during deterministic FLOP replay",
+        "time_scope": "GPU-synchronized top-level model forwards in the timed profiling run",
+    }, rows
+
+
+def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
+    output = Path(path)
+    if not rows:
+        output.unlink(missing_ok=True)
+        return False
+    import matplotlib.pyplot as plt
+
+    x = [row.forward_index for row in rows]
+    fig, axes = plt.subplots(3, 2, figsize=(13, 11), constrained_layout=True)
+    axes[0, 0].plot(x, [row.time_seconds for row in rows], marker="o", ms=3)
+    axes[0, 0].set(title="Time per forward", xlabel="Forward", ylabel="Seconds")
+    axes[0, 1].plot(
+        x,
+        [row.compute_tflops for row in rows],
+        marker="o",
+        ms=3,
+        label="Per forward",
+    )
+    cumulative_axis = axes[0, 1].twinx()
+    cumulative_axis.plot(
+        x,
+        [row.cumulative_compute_tflops for row in rows],
+        color="tab:orange",
+        label="Cumulative",
+    )
+    axes[0, 1].set(title="Compute", xlabel="Forward", ylabel="TFLOP / forward")
+    cumulative_axis.set_ylabel("Cumulative TFLOP")
+    handles, labels = axes[0, 1].get_legend_handles_labels()
+    extra_handles, extra_labels = cumulative_axis.get_legend_handles_labels()
+    axes[0, 1].legend(
+        handles + extra_handles,
+        labels + extra_labels,
+        frameon=False,
+        loc="best",
+    )
+    axes[1, 0].plot(x, [row.accepted_tokens or 0 for row in rows])
+    axes[1, 0].set(title="Accepted tokens per forward", xlabel="Forward", ylabel="Tokens")
+
+    accepted = [row.accepted_tokens or 0 for row in rows]
+    time_cost = [
+        row.time_seconds / count
+        if row.time_seconds is not None and count > 0
+        else None
+        for row, count in zip(rows, accepted)
+    ]
+    compute_cost = [
+        row.compute_tflops / count
+        if row.compute_tflops is not None and count > 0
+        else None
+        for row, count in zip(rows, accepted)
+    ]
+    axes[1, 1].plot(x, time_cost, label="Seconds / accepted token")
+    cost_axis = axes[1, 1].twinx()
+    cost_axis.plot(
+        x,
+        compute_cost,
+        color="tab:orange",
+        label="TFLOP / accepted token",
+    )
+    axes[1, 1].set(
+        title="Cost per accepted token",
+        xlabel="Forward",
+        ylabel="Seconds",
+    )
+    cost_axis.set_ylabel("TFLOP")
+    handles, labels = axes[1, 1].get_legend_handles_labels()
+    extra_handles, extra_labels = cost_axis.get_legend_handles_labels()
+    axes[1, 1].legend(
+        handles + extra_handles,
+        labels + extra_labels,
+        frameon=False,
+        loc="best",
+    )
+
+    axes[2, 0].plot(x, [row.input_tokens for row in rows], label="Forward input")
+    axes[2, 0].plot(x, [row.kv_cache_tokens for row in rows], label="KV cache")
+    axes[2, 0].plot(x, [row.attention_tokens for row in rows], label="Attention span")
+    axes[2, 0].set(
+        title="Input and KV-cache lengths",
+        xlabel="Forward",
+        ylabel="Tokens",
+    )
+    axes[2, 0].legend(frameon=False, loc="best")
+
+    phases = list(dict.fromkeys(row.phase for row in rows))
+    phase_time = [
+        sum(row.time_seconds or 0.0 for row in rows if row.phase == phase)
+        for phase in phases
+    ]
+    phase_compute = [
+        sum(row.compute_tflops or 0.0 for row in rows if row.phase == phase)
+        for phase in phases
+    ]
+    total_time = sum(phase_time)
+    total_compute = sum(phase_compute)
+    positions = list(range(len(phases)))
+    width = 0.38
+    axes[2, 1].bar(
+        [position - width / 2 for position in positions],
+        [value / total_time if total_time > 0 else 0.0 for value in phase_time],
+        width,
+        label="Time share",
+    )
+    axes[2, 1].bar(
+        [position + width / 2 for position in positions],
+        [
+            value / total_compute if total_compute > 0 else 0.0
+            for value in phase_compute
+        ],
+        width,
+        label="Compute share",
+    )
+    axes[2, 1].set(
+        title="Phase contribution",
+        ylabel="Share",
+        xticks=positions,
+        xticklabels=phases,
+    )
+    axes[2, 1].legend(frameon=False, loc="best")
+    fig.suptitle(f"{rows[0].model} / {rows[0].config} / {rows[0].dataset}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=180)
+    plt.close(fig)
     return True

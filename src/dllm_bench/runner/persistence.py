@@ -26,6 +26,7 @@ from ..datasets.base import ScoreResult
 from ..interfaces import (
     GenerationRequest,
     GenerationResult,
+    ForwardProfile,
     PositionState,
     RunStatus,
     TimingResult,
@@ -202,6 +203,7 @@ def generation_result_to_dict(generation: GenerationResult) -> dict[str, Any]:
             }
             for step in generation.trace
         ],
+        "forward_profiles": [dataclasses.asdict(profile) for profile in generation.forward_profiles],
     }
 
 
@@ -228,11 +230,15 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         for step in data.get("trace", [])
     ]
     timing = TimingResult(**data["timing"]) if data.get("timing") else None
+    forward_profiles = [
+        ForwardProfile(**profile) for profile in data.get("forward_profiles", [])
+    ]
     generation = GenerationResult(
         request=request,
         output_text=data["output_text"],
         status=RunStatus(data["status"]),
         trace=trace,
+        forward_profiles=forward_profiles,
         num_forward_passes=data["num_forward_passes"],
         final_valid_length=data["final_valid_length"],
         timing=timing,

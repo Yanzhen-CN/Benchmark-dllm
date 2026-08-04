@@ -220,15 +220,16 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         past_key_values = DynamicCache()
 
         if prefill_length > 0:
-            with torch.no_grad():
-                self._model(
-                    x[:, :prefill_length],
-                    attention_mask=attention_mask[:, :prefill_length, :prefill_length],
-                    position_ids=position_ids[:, :prefill_length],
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    store_kv=True,
-                )
+            with self._forward_phase("prefill"):
+                with torch.no_grad():
+                    self._model(
+                        x[:, :prefill_length],
+                        attention_mask=attention_mask[:, :prefill_length, :prefill_length],
+                        position_ids=position_ids[:, :prefill_length],
+                        past_key_values=past_key_values,
+                        use_cache=True,
+                        store_kv=True,
+                    )
 
         num_transfer_tokens = _get_num_transfer_tokens(block_length, denoising_steps)
         trace: list[TraceStep] = []
@@ -248,15 +249,16 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     # force_accept) — one clean forward to push its final
                     # tokens into the KV cache before the next block attends
                     # to them. No positions change, so no TraceStep.
-                    with torch.no_grad():
-                        self._model(
-                            cur_x,
-                            attention_mask=cur_attn,
-                            position_ids=cur_pos,
-                            past_key_values=past_key_values,
-                            use_cache=True,
-                            store_kv=True,
-                        )
+                    with self._forward_phase("finalization"):
+                        with torch.no_grad():
+                            self._model(
+                                cur_x,
+                                attention_mask=cur_attn,
+                                position_ids=cur_pos,
+                                past_key_values=past_key_values,
+                                use_cache=True,
+                                store_kv=True,
+                            )
                     break
 
                 force_accept = step == denoising_steps - 1
@@ -285,6 +287,11 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                 )
                 cur_x[transfer_index] = x0[transfer_index]
                 x[:, block_start:block_end] = cur_x
+                self._annotate_last_forward(
+                    accepted_tokens=int(transfer_index.sum().item()),
+                    active_tokens=block_end - block_start,
+                    eligible_tokens=int(mask_index.sum().item()),
+                )
 
                 if self._trace_instrumentation_enabled():
                     with self._exclude_from_measurement():

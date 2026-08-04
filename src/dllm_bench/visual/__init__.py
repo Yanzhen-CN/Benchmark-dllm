@@ -8,6 +8,7 @@ from ..datasets.base import Sample
 from ..interfaces import GenerationResult, TraceStep
 from .models import load_model_visual
 from .public.dataset_trace_report import render_dataset_trace_report
+from .public.profiling_report import render_dataset_profiling_report
 from .public.trace_report import render_sample_report
 
 
@@ -69,12 +70,22 @@ def render_dataset_visualization(
     visual = load_model_visual(model_name)
     written: dict[str, str] = {}
     if visual.public_dataset:
+        if any(result.trace for _, result in records):
+            written.update(
+                render_dataset_trace_report(
+                    dataset_name,
+                    records,
+                    out_dir,
+                    seed=seed,
+                    model_name=model_name,
+                    config_name=config_name,
+                )
+            )
         written.update(
-            render_dataset_trace_report(
+            render_dataset_profiling_report(
                 dataset_name,
                 records,
                 out_dir,
-                seed=seed,
                 model_name=model_name,
                 config_name=config_name,
             )

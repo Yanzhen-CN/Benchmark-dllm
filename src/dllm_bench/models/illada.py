@@ -122,6 +122,11 @@ class IlladaAdapter(HFDiffusionAdapter):
                     transfer_index[0, select_index] = True
 
                 x[transfer_index] = x0[transfer_index]
+                self._annotate_last_forward(
+                    accepted_tokens=k,
+                    active_tokens=block_end - block_start,
+                    eligible_tokens=remaining_in_block,
+                )
 
                 if self._trace_instrumentation_enabled():
                     with self._exclude_from_measurement():

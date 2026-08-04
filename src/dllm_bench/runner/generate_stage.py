@@ -422,6 +422,7 @@ def run_generation(
 
         request_config = dict(extra_config or {})
         request_config["capture_trace"] = capture_trace
+        request_config["step_profiling"] = bool(measure_compute)
         if "target_input_tokens" in sample.meta:
             request_config["target_input_tokens"] = int(
                 sample.meta["target_input_tokens"]
@@ -485,6 +486,22 @@ def run_generation(
             generation.compute_tflops = (
                 compute_handle.tflops if compute_handle.available else None
             )
+            replay_flops = getattr(compute_handle, "forward_tflops", None) or []
+            replay_phases = getattr(compute_handle, "forward_phases", None) or []
+            measured_phases = [profile.phase for profile in generation.forward_profiles]
+            if (
+                generation.forward_profiles
+                and len(replay_flops) == len(generation.forward_profiles)
+                and replay_phases == measured_phases
+            ):
+                for profile, step_tflops in zip(
+                    generation.forward_profiles, replay_flops
+                ):
+                    profile.compute_tflops = step_tflops
+                generation.extra["step_compute_status"] = "complete"
+            elif generation.forward_profiles:
+                generation.extra["step_compute_status"] = "replay_mismatch"
+                generation.extra["step_compute_replay_forwards"] = len(replay_flops)
         if require_all_metrics:
             _validate_required_metrics(
                 adapter,

@@ -1,6 +1,8 @@
 from dllm_bench.runner.output_layout import (
     model_output_dir,
+    model_profiling_dir,
     resolve_model_output_dir,
+    resolve_model_profiling_dir,
     run_id,
 )
 
@@ -17,6 +19,19 @@ def test_qwen_model_output_uses_unsuffixed_canonical_directory(tmp_path):
 
     path_8b = model_output_dir(tmp_path, "qwen3_8b", "ar-baseline", "gsm8k")
     assert path_8b == tmp_path / "model_output" / "qwen3_8b" / "gsm8k"
+
+
+def test_profiling_is_parallel_to_model_output(tmp_path):
+    path = model_profiling_dir(
+        tmp_path, "diffusiongemma", "official", "mbpp"
+    )
+    assert path == (
+        tmp_path / "model_profiling" / "diffusiongemma_official" / "mbpp"
+    )
+    path.mkdir(parents=True)
+    assert resolve_model_profiling_dir(
+        tmp_path, "diffusiongemma", "official", "mbpp"
+    ) == path
 
 
 def test_dllm_architecture_and_sampling_axes_are_both_in_the_run_id():

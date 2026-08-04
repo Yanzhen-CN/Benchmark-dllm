@@ -41,6 +41,8 @@ class MatrixJob:
     max_new_tokens: int = 256
     n_samples: int | None = None
     hellobench_lengths: tuple[str, ...] = ()
+    capture_trace: bool | None = None
+    profiling_output: bool = False
 
 
 def _resolve(base: Path, value: str) -> Path:
@@ -145,6 +147,16 @@ def load_matrix_jobs(
                             dataset_entry.get("hellobench_lengths", ()),
                         )
                     ),
+                    capture_trace=(
+                        bool(override.get("capture_trace", dataset_entry.get(
+                            "capture_trace", config.get("capture_trace")
+                        )))
+                        if override.get("capture_trace", dataset_entry.get(
+                            "capture_trace", config.get("capture_trace")
+                        )) is not None
+                        else None
+                    ),
+                    profiling_output=bool(config.get("profiling_output", False)),
                 )
             )
     return jobs, int(config.get("seed", 42))

@@ -77,6 +77,24 @@ class TraceStep:
 
 
 @dataclass
+class ForwardProfile:
+    """One actual top-level model forward in a profiling run."""
+
+    forward_index: int
+    phase: str
+    wall_clock_seconds: float | None = None
+    compute_tflops: float | None = None
+    accepted_tokens: int | None = None
+    active_tokens: int | None = None
+    eligible_tokens: int | None = None
+    input_tokens: int | None = None
+    kv_cache_tokens: int | None = None
+    attention_tokens: int | None = None
+    uses_kv_cache: bool | None = None
+    stores_kv: bool | None = None
+
+
+@dataclass
 class TimingResult:
     """Appendix B timing protocol: GPU-synced wall-clock around one sample."""
 
@@ -93,6 +111,7 @@ class GenerationResult:
     output_text: str
     status: RunStatus
     trace: list[TraceStep] = field(default_factory=list)
+    forward_profiles: list[ForwardProfile] = field(default_factory=list)
     num_forward_passes: int = 0
     final_valid_length: int = 0
     timing: TimingResult | None = None

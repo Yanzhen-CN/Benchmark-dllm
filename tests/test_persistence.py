@@ -10,6 +10,7 @@ from dllm_bench.datasets.base import ScoreResult
 from dllm_bench.interfaces import (
     GenerationRequest,
     GenerationResult,
+    ForwardProfile,
     PositionState,
     RunStatus,
     TraceStep,
@@ -37,6 +38,15 @@ def _sample_generation():
 
 def test_generation_result_round_trips_through_dict():
     original = _sample_generation()
+    original.forward_profiles = [
+        ForwardProfile(
+            forward_index=0,
+            phase="denoise",
+            wall_clock_seconds=0.01,
+            compute_tflops=0.5,
+            accepted_tokens=2,
+        )
+    ]
     restored = generation_result_from_dict(generation_result_to_dict(original))
 
     assert restored.output_text == original.output_text
@@ -48,6 +58,7 @@ def test_generation_result_round_trips_through_dict():
     assert restored.request.prompt == original.request.prompt
     assert restored.request.sample_id == original.request.sample_id
     assert len(restored.trace) == len(original.trace)
+    assert restored.forward_profiles == original.forward_profiles
     for restored_step, original_step in zip(restored.trace, original.trace):
         assert restored_step.forward_index == original_step.forward_index
         assert restored_step.token_ids == original_step.token_ids

@@ -78,7 +78,9 @@ from .runner.generate_stage import (
 )
 from .runner.output_layout import (
     model_output_dir,
+    model_profiling_dir,
     resolve_model_output_dir,
+    resolve_model_profiling_dir,
     resolve_score_output_dir,
     score_output_dir,
     visualization_output_dir,
@@ -232,6 +234,8 @@ def prepare_data_command(dataset_config: str, samples_file: str | None, force: b
 @_common_options
 @click.option("--max-new-tokens", required=True, type=int)
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
+@click.option("--profiling-output/--standard-output", default=False, show_default=True)
+@click.option("--capture-trace/--no-capture-trace", "capture_trace_override", default=None)
 @click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
 @click.option("--resume/--no-resume", default=True, show_default=True, help="Skip samples that already have a model_output file")
 def generate(
@@ -247,8 +251,10 @@ def generate(
     output_root: str,
     max_new_tokens: int,
     measure_compute: bool,
+    profiling_output: bool,
     require_all_metrics: bool,
     resume: bool,
+    capture_trace_override: bool | None = None,
     force_max_new_tokens: bool = False,
     adapter_cache: dict[tuple[str, str], ModelAdapter] | None = None,
 ) -> None:
@@ -260,7 +266,15 @@ def generate(
             f"unsupported trace_scope={trace_scope!r} in {dataset_config}; "
             "use 'all_samples' or 'none'"
         )
-    capture_trace = trace_scope == "all_samples"
+    capture_trace = (
+        trace_scope == "all_samples"
+        if capture_trace_override is None
+        else capture_trace_override
+    )
+    if profiling_output and not measure_compute:
+        raise click.UsageError(
+            "profiling_output requires --measure-compute; no files were generated"
+        )
     dataset = build_dataset(dataset_config)
     samples, resolved_seed = _resolve_samples(dataset_config, model_config, dataset, demo, samples_file, n_samples, seed, hellobench_lengths)
 
@@ -273,7 +287,15 @@ def generate(
             adapter = build_model_adapter(model_config, variant=v)
             if adapter_cache is not None:
                 adapter_cache[adapter_key] = adapter
-        out_dir = model_output_dir(output_root, adapter.name, adapter.config_name, dataset.name)
+        out_dir = (
+            model_profiling_dir(
+                output_root, adapter.name, adapter.config_name, dataset.name
+            )
+            if profiling_output
+            else model_output_dir(
+                output_root, adapter.name, adapter.config_name, dataset.name
+            )
+        )
         meta_path = out_dir / "_meta.json"
         if (
             resume
@@ -600,6 +622,7 @@ def score(
     default=None,
     help="Comma-separated model comparison figures: all,trace,state,convergence,yield,forward",
 )
+@click.option("--profiling-output/--standard-output", default=False, show_default=True)
 def visualize(
     model_config: str,
     variant: str | None,
@@ -614,6 +637,7 @@ def visualize(
     n_representative: int | None,
     sample_ids: str | None,
     figures: str | None,
+    profiling_output: bool,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
@@ -643,9 +667,24 @@ def visualize(
             variant_config.get("step_config", {}).get("block_length")
             or model_settings.get("trace_block_length")
         )
-        model_out = resolve_model_output_dir(output_root, configured_model, v, dataset.name)
-        score_out = resolve_score_output_dir(output_root, configured_model, v, dataset.name)
-        viz_out = visualization_output_dir(output_root, configured_model, v, dataset.name)
+        if profiling_output:
+            model_out = resolve_model_profiling_dir(
+                output_root, configured_model, v, dataset.name
+            )
+            score_out = model_out / "_score_output"
+            viz_out = visualization_output_dir(
+                output_root, configured_model, v, dataset.name
+            )
+        else:
+            model_out = resolve_model_output_dir(
+                output_root, configured_model, v, dataset.name
+            )
+            score_out = resolve_score_output_dir(
+                output_root, configured_model, v, dataset.name
+            )
+            viz_out = visualization_output_dir(
+                output_root, configured_model, v, dataset.name
+            )
 
         if not (model_out / "_meta.json").exists():
             raise click.UsageError(f"no _meta.json under {model_out} — run `dllm-bench generate` first")
@@ -982,6 +1021,20 @@ def matrix_command(
     except ValueError as exc:
         raise click.UsageError(str(exc)) from exc
     click.echo(f"Matrix contains {len(jobs)} model x dataset jobs")
+    profiling_jobs = [job for job in jobs if job.profiling_output]
+    if profiling_jobs and len(profiling_jobs) != len(jobs):
+        raise click.UsageError(
+            "one matrix cannot mix profiling_output and standard-output jobs"
+        )
+    profiling_matrix = bool(profiling_jobs)
+    if profiling_matrix and stage in {"generate", "all"} and not measure_compute:
+        raise click.UsageError(
+            "this profiling matrix requires --measure-compute; nothing was run"
+        )
+    if profiling_matrix and stage == "score":
+        raise click.UsageError(
+            "profiling JSON is not scored; use --stage generate or visualize"
+        )
     valid_jobs = 0
     invalid_jobs = 0
     incomplete_jobs = 0
@@ -1055,10 +1108,12 @@ def matrix_command(
                     ),
                     force_max_new_tokens=length_override is not None,
                     measure_compute=measure_compute,
+                    profiling_output=job.profiling_output,
                     require_all_metrics=require_all_metrics, resume=resume,
+                    capture_trace_override=job.capture_trace,
                     adapter_cache=adapter_cache,
                 )
-            if stage in {"score", "all"}:
+            if stage in {"score", "all"} and not job.profiling_output:
                 ctx.invoke(score, **common, resume=resume)
             if stage in {"visualize", "all"}:
                 ctx.invoke(
@@ -1067,6 +1122,7 @@ def matrix_command(
                     n_representative=n_representative,
                     sample_ids=sample_ids,
                     figures=figures,
+                    profiling_output=job.profiling_output,
                 )
         except (IncompleteTestError, FileNotFoundError) as exc:
             incomplete_jobs += 1
@@ -1086,7 +1142,7 @@ def matrix_command(
             continue
         valid_jobs += 1
         valid_output_roots.add(case_output_root)
-    if stage == "all":
+    if stage == "all" and not profiling_matrix:
         if valid_jobs:
             for report_root in sorted(valid_output_roots):
                 ctx.invoke(

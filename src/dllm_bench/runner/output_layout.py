@@ -5,6 +5,9 @@
         _meta.json          # model/config/dataset name + run_metadata (section 6)
         oom_info.json       # present only when OOM invalidates the complete test
         <sample_id>.json    # full GenerationResult, including trace
+      model_profiling/<run-id>/<dataset>/
+        _meta.json          # profiling protocol and run metadata
+        <sample_id>.json    # GenerationResult plus per-forward profiles
       score_output/<model>_<config>/<dataset>/
         <sample_id>.json    # ScoreResult for that sample
         summary.json        # RunSummary (section 3.4 raw-results-table row)
@@ -28,6 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 
 MODEL_OUTPUT = "model_output"
+MODEL_PROFILING = "model_profiling"
 SCORE_OUTPUT = "score_output"
 VISUALIZATION_OUTPUT = "visualization_output"
 
@@ -58,6 +62,10 @@ def _stage_dir(output_root: str | Path, stage: str, model_name: str, config_name
 
 def model_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
     return _stage_dir(output_root, MODEL_OUTPUT, model_name, config_name, dataset_name)
+
+
+def model_profiling_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
+    return _stage_dir(output_root, MODEL_PROFILING, model_name, config_name, dataset_name)
 
 
 def _resolve_existing_stage_dir(
@@ -111,4 +119,10 @@ def model_comparison_visualization_output_dir(
         / model_name
         / "model_comparison"
         / dataset_name
+    )
+
+
+def resolve_model_profiling_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
+    return _resolve_existing_stage_dir(
+        output_root, MODEL_PROFILING, model_name, config_name, dataset_name
     )
