@@ -323,11 +323,20 @@ class BaseModelAdapter(ABC):
                     with self._capture_model_forwards(request, compute_handle=handle):
                         self._generate_core(request)
 
-                handle.torch_profile = run_torch_profile(
-                    self._model,
-                    execute,
-                    request.config.get("profiling_artifact_dir"),
-                )
+                if request.config.get("deep_torch_profile", False):
+                    handle.torch_profile = run_torch_profile(
+                        self._model,
+                        execute,
+                        request.config.get("profiling_artifact_dir"),
+                    )
+                else:
+                    # The public profiling matrix needs one full deterministic
+                    # FLOP replay, not an all-operator Torch trace over every
+                    # generation step. Deep operator/module tracing remains a
+                    # separate explicit diagnostic because its event capture
+                    # and Chrome trace export can dominate runtime and memory.
+                    execute()
+                    handle.torch_profile = {"status": "not_requested"}
         finally:
             self._profiling_compute_handle = None
             self._suppress_trace_instrumentation = previous
