@@ -6,6 +6,7 @@ venv path, dependency versions, installation and validation.
 
     python setup_venv.py
     python setup_venv.py -m illada
+    python setup_venv.py -m llada2_1
     python setup_venv.py -m illada_vargen
     python setup_venv.py -m qwen3_8b
     python setup_venv.py -m dreamreasoner -m diffusiongemma
@@ -27,6 +28,7 @@ from run_bench import (
     matrix_model_names,
     normalize_model_names,
 )
+from venv_scripts._model_script import PROFILES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,12 +46,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     matrix_path = Path(args.matrix).resolve()
-    available = matrix_model_names(matrix_path)
+    matrix_models = matrix_model_names(matrix_path)
+    available = list(dict.fromkeys([*matrix_models, *PROFILES]))
     if args.list_models:
         print("\n".join(available))
         return 0
     try:
-        selected = normalize_model_names(args.model, available)
+        selected = (
+            normalize_model_names(args.model, available)
+            if args.model
+            else matrix_models
+        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
