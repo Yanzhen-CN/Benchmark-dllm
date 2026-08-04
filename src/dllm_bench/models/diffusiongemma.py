@@ -209,7 +209,8 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
             def wrapped_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step):
                 nonlocal forward_count
                 forward_count += 1
-                accepted_canvas = original_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step)
+                with self._profile_stage("token_selection_and_canvas_update"):
+                    accepted_canvas = original_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step)
                 accepted_count = int(sampler.accepted_token_mask.sum().item())
                 canvas_tokens = int(sampler.accepted_token_mask.numel())
                 self._annotate_last_forward(
@@ -244,12 +245,13 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         try:
             # The official checkpoint uses AutoProcessor.apply_chat_template;
             # the shared helper also applies RULER's post-template token cap.
-            encoded = tokenize_instruction_prompt(
-                self._processor,
-                request.prompt,
-                device=self._device,
-                target_input_tokens=request.config.get("target_input_tokens"),
-            )
+            with self._profile_stage("input_preparation"):
+                encoded = tokenize_instruction_prompt(
+                    self._processor,
+                    request.prompt,
+                    device=self._device,
+                    target_input_tokens=request.config.get("target_input_tokens"),
+                )
             prompt_len = encoded["input_ids"].shape[1]
             self._start_measurement()
             generation_overrides = {}
@@ -269,7 +271,8 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
 
         sequences = getattr(output, "sequences", output)
         generated_ids = sequences[0][prompt_len:].tolist()
-        output_text = self._processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        with self._profile_stage("output_decode"):
+            output_text = self._processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
         pad_token_id = getattr(
             getattr(self._model, "generation_config", None),
             "pad_token_id",

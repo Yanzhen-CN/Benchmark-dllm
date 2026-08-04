@@ -68,19 +68,21 @@ class IlladaAdapter(HFDiffusionAdapter):
         padded_gen_length = num_blocks * block_length
 
         device = self._device
-        input_ids = tokenize_instruction_prompt(
-            self._tokenizer,
-            prompt,
-            device=device,
-            target_input_tokens=target_input_tokens,
-        )["input_ids"]
+        with self._profile_stage("input_preparation"):
+            input_ids = tokenize_instruction_prompt(
+                self._tokenizer,
+                prompt,
+                device=device,
+                target_input_tokens=target_input_tokens,
+            )["input_ids"]
         prompt_len = input_ids.shape[1]
         self._last_input_tokens = int(prompt_len)
         self._start_measurement()
 
-        x = torch.full((1, prompt_len + padded_gen_length), MASK_ID, dtype=torch.long, device=device)
-        x[:, :prompt_len] = input_ids
-        attention_mask = torch.ones_like(x)
+        with self._profile_stage("canvas_initialization"):
+            x = torch.full((1, prompt_len + padded_gen_length), MASK_ID, dtype=torch.long, device=device)
+            x[:, :prompt_len] = input_ids
+            attention_mask = torch.ones_like(x)
 
         trace: list[TraceStep] = []
         global_step = 0
@@ -96,12 +98,14 @@ class IlladaAdapter(HFDiffusionAdapter):
                 if not mask_index[:, block_start:block_end].any():
                     break  # block already fully committed (schedule exhausted early)
 
-                with torch.no_grad():
-                    logits = self._model(x, attention_mask=attention_mask).logits
+                with self._profile_stage("denoise_forward"):
+                    with torch.no_grad():
+                        logits = self._model(x, attention_mask=attention_mask).logits
 
-                logits_for_pick = _add_gumbel_noise(logits, temperature)
-                x0 = torch.argmax(logits_for_pick, dim=-1)
-                probs, argmax_prob = _selected_token_probabilities(logits, x0)
+                with self._profile_stage("token_selection"):
+                    logits_for_pick = _add_gumbel_noise(logits, temperature)
+                    x0 = torch.argmax(logits_for_pick, dim=-1)
+                    probs, argmax_prob = _selected_token_probabilities(logits, x0)
                 # Real predicted probability of the picked token — used for the
                 # trace's certainty data regardless of remasking mode.
 
@@ -121,7 +125,8 @@ class IlladaAdapter(HFDiffusionAdapter):
                     _, select_index = torch.topk(confidence[0], k=k)
                     transfer_index[0, select_index] = True
 
-                x[transfer_index] = x0[transfer_index]
+                with self._profile_stage("canvas_update"):
+                    x[transfer_index] = x0[transfer_index]
                 self._annotate_last_forward(
                     accepted_tokens=k,
                     active_tokens=block_end - block_start,
@@ -147,9 +152,10 @@ class IlladaAdapter(HFDiffusionAdapter):
         self._stop_measurement()
         self._last_num_forward_passes = global_step
         final_ids = x[0, prompt_len : prompt_len + gen_length].tolist()
-        output_text, final_valid_length, eos_token_id = (
-            decode_generated_ids_until_eos(self._tokenizer, final_ids)
-        )
+        with self._profile_stage("output_decode"):
+            output_text, final_valid_length, eos_token_id = (
+                decode_generated_ids_until_eos(self._tokenizer, final_ids)
+            )
         if eos_token_id is not None:
             self._last_stop_metadata = {
                 "stop_reason": "eos",

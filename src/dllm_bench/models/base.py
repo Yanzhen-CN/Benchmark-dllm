@@ -19,6 +19,7 @@ from time import perf_counter
 
 from ..interfaces import ForwardProfile, GenerationRequest, GenerationResult, RunStatus, TimingResult
 from ..resource.compute import ComputeHandle, measure_compute_tflops
+from ..resource.deep_profile import run_torch_profile
 from ..resource.energy import measure_energy_joules
 from ..resource.timing import measure_wall_clock
 from ..resource.vram import measure_peak_vram_gb
@@ -46,12 +47,53 @@ class BaseModelAdapter(ABC):
 
     @contextmanager
     def _forward_phase(self, phase: str):
-        previous = getattr(self, "_active_forward_phase", "denoise")
+        previous = getattr(self, "_active_forward_phase", None)
         self._active_forward_phase = phase
         try:
             yield
         finally:
             self._active_forward_phase = previous
+
+    @contextmanager
+    def _profile_stage(self, stage: str):
+        """Measure one real generation stage and emit the same NVTX label."""
+        if not getattr(self, "_step_profiling_enabled", False):
+            yield
+            return
+        import torch
+
+        compute_handle = getattr(self, "_profiling_compute_handle", None)
+        self._synchronize_forward_device()
+        started = perf_counter() if compute_handle is None else None
+        flops_before = compute_handle.snapshot_flops() if compute_handle else None
+        marker = torch.autograd.profiler.record_function(f"dllm::stage::{stage}")
+        marker.__enter__()
+        use_nvtx = bool(torch.cuda.is_available())
+        if use_nvtx:
+            torch.cuda.nvtx.range_push(f"dllm::stage::{stage}")
+        try:
+            yield
+        finally:
+            if use_nvtx:
+                torch.cuda.nvtx.range_pop()
+            marker.__exit__(None, None, None)
+            self._synchronize_forward_device()
+            elapsed = perf_counter() - started if started is not None else None
+            flops_after = compute_handle.snapshot_flops() if compute_handle else None
+            raw_flops = (
+                flops_after - flops_before
+                if flops_after is not None and flops_before is not None
+                else None
+            )
+            self._stage_profiles.append(
+                {
+                    "stage_index": len(self._stage_profiles),
+                    "stage": stage,
+                    "wall_clock_seconds": elapsed,
+                    "compute_flops": raw_flops,
+                    "compute_tflops": raw_flops / 1e12 if raw_flops is not None else None,
+                }
+            )
 
     @staticmethod
     def _synchronize_forward_device() -> None:
@@ -75,11 +117,11 @@ class BaseModelAdapter(ABC):
             yield
             return
 
-        pending: list[tuple[str, float | None, float | None, dict]] = []
+        pending: list[tuple[str, float | None, int | None, dict, object, bool]] = []
         capture_time = compute_handle is None
 
         def before_forward(_module, args, kwargs):
-            phase = str(getattr(self, "_active_forward_phase", "denoise"))
+            explicit_phase = getattr(self, "_active_forward_phase", None)
             input_ids = kwargs.get("input_ids")
             if input_ids is None and args:
                 input_ids = args[0]
@@ -121,24 +163,36 @@ class BaseModelAdapter(ABC):
                     )
                 ),
             }
+            phase = str(
+                explicit_phase
+                or ("decode_cached" if metadata["uses_kv_cache"] else None)
+                or ("prefill_or_cache_build" if metadata["stores_kv"] else None)
+                or "denoise"
+            )
             if capture_time:
                 self._synchronize_forward_device()
             started = perf_counter() if capture_time else None
-            flops_before = (
-                compute_handle.snapshot_tflops() if compute_handle is not None else None
+            flops_before = compute_handle.snapshot_flops() if compute_handle else None
+            marker = __import__("torch").autograd.profiler.record_function(
+                f"dllm::forward::{phase}"
             )
-            pending.append((phase, started, flops_before, metadata))
+            marker.__enter__()
+            use_nvtx = bool(__import__("torch").cuda.is_available())
+            if use_nvtx:
+                __import__("torch").cuda.nvtx.range_push(f"dllm::forward::{phase}")
+            pending.append((phase, started, flops_before, metadata, marker, use_nvtx))
 
         def after_forward(_module, _args, _kwargs, _output):
-            phase, started, flops_before, metadata = pending.pop()
+            phase, started, flops_before, metadata, marker, use_nvtx = pending.pop()
+            if use_nvtx:
+                __import__("torch").cuda.nvtx.range_pop()
+            marker.__exit__(None, None, None)
             elapsed = None
             if started is not None:
                 self._synchronize_forward_device()
                 elapsed = perf_counter() - started
-            flops_after = (
-                compute_handle.snapshot_tflops() if compute_handle is not None else None
-            )
-            step_tflops = (
+            flops_after = compute_handle.snapshot_flops() if compute_handle else None
+            step_flops = (
                 flops_after - flops_before
                 if flops_after is not None and flops_before is not None
                 else None
@@ -148,7 +202,8 @@ class BaseModelAdapter(ABC):
                     forward_index=len(self._forward_profiles),
                     phase=phase,
                     wall_clock_seconds=elapsed,
-                    compute_tflops=step_tflops,
+                    compute_flops=step_flops,
+                    compute_tflops=step_flops / 1e12 if step_flops is not None else None,
                     **metadata,
                 )
             )
@@ -205,6 +260,9 @@ class BaseModelAdapter(ABC):
             if callable(ensure_loaded):
                 ensure_loaded()
         self._forward_profiles: list[ForwardProfile] = []
+        self._stage_profiles: list[dict] = []
+        self._step_profiling_enabled = bool(request.config.get("step_profiling"))
+        self._profiling_compute_handle = None
         measurement = _SampleMeasurement()
         self._active_measurement = measurement
         result: GenerationResult
@@ -240,6 +298,8 @@ class BaseModelAdapter(ABC):
         result.energy_joules = measurement.energy_joules
         result.peak_vram_gb = measurement.peak_vram_gb
         result.forward_profiles = list(self._forward_profiles)
+        if self._stage_profiles:
+            result.extra["stage_profiles"] = list(self._stage_profiles)
         if result.forward_profiles:
             result.extra["profiled_model_forwards"] = len(result.forward_profiles)
         return result
@@ -250,21 +310,39 @@ class BaseModelAdapter(ABC):
         window, since FLOP counting overhead would otherwise contaminate
         Time per Sample."""
         _seed_everything(request.seed)
+        self._step_profiling_enabled = True
         previous = getattr(self, "_suppress_trace_instrumentation", False)
         self._suppress_trace_instrumentation = True
         self._forward_profiles = []
+        self._stage_profiles = []
         try:
             with measure_compute_tflops() as handle:
-                with self._capture_model_forwards(request, compute_handle=handle):
-                    self._generate_core(request)
+                self._profiling_compute_handle = handle
+
+                def execute() -> None:
+                    with self._capture_model_forwards(request, compute_handle=handle):
+                        self._generate_core(request)
+
+                handle.torch_profile = run_torch_profile(
+                    self._model,
+                    execute,
+                    request.config.get("profiling_artifact_dir"),
+                )
         finally:
+            self._profiling_compute_handle = None
             self._suppress_trace_instrumentation = previous
         handle.forward_tflops = [
             float(profile.compute_tflops)
             for profile in self._forward_profiles
             if profile.compute_tflops is not None
         ]
+        handle.forward_flops = [
+            int(profile.compute_flops)
+            for profile in self._forward_profiles
+            if profile.compute_flops is not None
+        ]
         handle.forward_phases = [profile.phase for profile in self._forward_profiles]
+        handle.stage_profiles = list(self._stage_profiles)
         return handle
 
     def warmup_generation(self, request: GenerationRequest) -> None:

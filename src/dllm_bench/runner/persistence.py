@@ -180,6 +180,7 @@ def generation_result_to_dict(generation: GenerationResult) -> dict[str, Any]:
             else None
         ),
         "energy_joules": generation.energy_joules,
+        "compute_flops": generation.compute_flops,
         "compute_tflops": generation.compute_tflops,
         "peak_vram_gb": generation.peak_vram_gb,
         "error_message": generation.error_message,
@@ -249,6 +250,7 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         final_valid_length=data["final_valid_length"],
         timing=timing,
         energy_joules=data.get("energy_joules"),
+        compute_flops=data.get("compute_flops"),
         compute_tflops=data.get("compute_tflops"),
         peak_vram_gb=data.get("peak_vram_gb"),
         error_message=data.get("error_message"),

@@ -45,6 +45,24 @@ def _profiled_result() -> GenerationResult:
                 stores_kv=False,
             ),
         ],
+        extra={
+            "stage_profiles": [
+                {
+                    "stage_index": 0,
+                    "stage": "prefill",
+                    "wall_clock_seconds": 0.1,
+                    "compute_flops": 1_000_000_000_000,
+                    "compute_tflops": 1.0,
+                },
+                {
+                    "stage_index": 1,
+                    "stage": "token_selection",
+                    "wall_clock_seconds": 0.05,
+                    "compute_flops": 10_000_000,
+                    "compute_tflops": 0.00001,
+                },
+            ]
+        },
     )
 
 
@@ -61,6 +79,7 @@ def test_profiling_summary_uses_forward_profiles_without_trace():
     assert summary["compute_tflops"] == 3.0
     assert summary["accepted_tokens"] == 4
     assert summary["phase_contribution"]["prefill"]["forwards"] == 1
+    assert summary["stage_contribution"]["prefill"]["calls"] == 1
     assert rows[-1].cumulative_compute_tflops == 3.0
 
 
@@ -74,5 +93,6 @@ def test_profiling_visualization_writes_only_png(tmp_path):
         config_name="p2",
     )
 
-    assert set(written) == {"step_profiling_plot"}
+    assert set(written) == {"step_profiling_plot", "stage_profiling_plot"}
     assert (tmp_path / "dataset_step_profiling.png").is_file()
+    assert (tmp_path / "dataset_stage_profiling.png").is_file()

@@ -18,16 +18,24 @@ from dataclasses import dataclass
 
 @dataclass
 class ComputeHandle:
+    flops: int | None = None
     tflops: float | None = None
     available: bool = True
     forward_tflops: list[float] | None = None
+    forward_flops: list[int] | None = None
     forward_phases: list[str] | None = None
+    stage_profiles: list[dict] | None = None
+    torch_profile: dict | None = None
     _counter: object | None = None
 
     def snapshot_tflops(self) -> float | None:
+        flops = self.snapshot_flops()
+        return None if flops is None else float(flops) / 1e12
+
+    def snapshot_flops(self) -> int | None:
         if self._counter is None:
             return None
-        return float(self._counter.get_total_flops()) / 1e12
+        return int(self._counter.get_total_flops())
 
 
 def gqa_sdpa_flop_count(
@@ -95,5 +103,6 @@ def measure_compute_tflops() -> Iterator[ComputeHandle]:
             yield handle
     finally:
         total_flops = counter.get_total_flops()
+        handle.flops = int(total_flops)
         handle.tflops = total_flops / 1e12
         handle._counter = None

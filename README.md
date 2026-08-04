@@ -177,35 +177,42 @@ format. Both trees use the identical
 per-sample JSON, completion state, and OOM records. Profiling sample JSON only
 adds the profiling measurements collected by this protocol.
 
-The profiling matrix reduces the experiment to ten fixed samples from each of
-MBPP, GSM8K, and StructEval-T for DiffusionGemma official, iLLaDA P2, and
-DreamReasoner P2: 3 model operating points x 3 representative tasks x 10
-samples. The shared seed and pinned datasets give every model the same sample
-set. Keep all three datasets in one command so each model is loaded once.
-`--measure-compute` enables GPU-synchronized per-forward timing and a separate
-deterministic FLOP replay. Token trace capture is disabled by this matrix:
-profiling records forward time, FLOPs, accepted-token count, input length,
-KV-cache length, attention span, and cache read/write phase. Results go to
-`model_profiling` so the instrumented run does not overwrite the corresponding
-formal generation in `model_output`.
+The deep profiling matrix runs one fixed sample from MBPP, GSM8K, and
+StructEval-T for DiffusionGemma official, iLLaDA P2, iLLaDA-VARGEN P2, and
+DreamReasoner P2: 4 model execution paths x 3 tasks x 1 sample. One sample is
+intentional because each row performs a deterministic Torch operator/module
+replay in addition to the timed generation. Token identity trace capture is
+disabled; it is unrelated to systems profiling.
+
+Every adapter uses the same in-repository protocol and persists raw integer
+FLOPs plus TFLOPs. Shared stage names cover input preparation, prefill/cache
+build when present, denoise forwards, token selection, canvas/cache updates,
+and output decoding. Torch Profiler writes `torch_trace.json` and
+`torch_summary.json` under each sample's `_profiling/` directory. The summary
+groups CUDA/CPU time, calls, and FLOPs by attention, linear, MLP/MoE,
+normalization, embedding, sampling, and KV-cache categories, while module
+ranges retain per-layer names. A stage that a model does not execute is absent,
+not recorded as zero.
 
 ```bash
 python run_model.py --matrix configs/experiments/profiling_matrix.yaml \
-  -m diffusiongemma illada dreamreasoner \
+  -m diffusiongemma illada illada_vargen dreamreasoner \
   -d mbpp gsm8k structeval_t --measure-compute --no-resume \
   --output-root output
 
 python run_visualization.py --matrix configs/experiments/profiling_matrix.yaml \
-  -m diffusiongemma illada dreamreasoner \
+  -m diffusiongemma illada illada_vargen dreamreasoner \
   -d mbpp gsm8k structeval_t --output-root output
 ```
 
-Each dataset visualization directory contains `dataset_step_profiling.png`.
-The plot is derived directly from per-sample profiling JSON and does not create
-a duplicate CSV or summary JSON. Per-step compute covers captured top-level
-model forwards; total replay FLOPs remain separately available as
-`compute_tflops`, so unattributed sampler-side tensor work is not silently
-assigned to a forward.
+Each dataset visualization directory contains `dataset_step_profiling.png`
+and `dataset_stage_profiling.png`.
+The plot is derived directly from per-sample profiling JSON. Per-forward and
+per-stage compute comes from the same deterministic replay; the sample also
+retains total `compute_flops` and `compute_tflops`. Optional Nsight runs may
+consume the emitted `dllm::stage::*` and `dllm::forward::*` NVTX ranges for
+kernel-level diagnosis, but Nsight is not a formal cross-model metric because
+its output depends on the installed driver and profiler build.
 
 The profiling matrix declares `profiling_output: true`. Raw `_meta.json` and
 per-sample JSON files are written under

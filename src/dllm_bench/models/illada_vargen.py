@@ -72,12 +72,13 @@ class IlladaVarGenAdapter(HFDiffusionAdapter):
                 "divisible by block_length"
             )
 
-        input_ids = tokenize_instruction_prompt(
-            self._tokenizer,
-            prompt,
-            device=self._device,
-            target_input_tokens=target_input_tokens,
-        )["input_ids"]
+        with self._profile_stage("input_preparation"):
+            input_ids = tokenize_instruction_prompt(
+                self._tokenizer,
+                prompt,
+                device=self._device,
+                target_input_tokens=target_input_tokens,
+            )["input_ids"]
         initial_prompt_len = int(input_ids.shape[1])
         self._last_input_tokens = initial_prompt_len
         trace: list[TraceStep] = []
@@ -104,14 +105,16 @@ class IlladaVarGenAdapter(HFDiffusionAdapter):
                 if not mask_index[:, block_start:block_end].any():
                     break
 
-                with torch.no_grad():
-                    # Official var_generate calls generate() without an
-                    # attention mask for its single, unpadded prompt.
-                    logits = self._model(x).logits
+                with self._profile_stage("denoise_forward"):
+                    with torch.no_grad():
+                        # Official var_generate calls generate() without an
+                        # attention mask for its single, unpadded prompt.
+                        logits = self._model(x).logits
 
-                logits_for_pick = _add_gumbel_noise(logits, temperature)
-                x0 = torch.argmax(logits_for_pick, dim=-1)
-                probs, argmax_prob = _selected_token_probabilities(logits, x0)
+                with self._profile_stage("token_selection"):
+                    logits_for_pick = _add_gumbel_noise(logits, temperature)
+                    x0 = torch.argmax(logits_for_pick, dim=-1)
+                    probs, argmax_prob = _selected_token_probabilities(logits, x0)
                 if remasking == "low_confidence":
                     selection_score = argmax_prob
                 elif remasking == "random":
@@ -132,7 +135,8 @@ class IlladaVarGenAdapter(HFDiffusionAdapter):
                 if k > 0:
                     _, selected = torch.topk(confidence[0], k=k)
                     transfer_index[0, selected] = True
-                x[transfer_index] = x0[transfer_index]
+                with self._profile_stage("canvas_update"):
+                    x[transfer_index] = x0[transfer_index]
 
                 if self._trace_instrumentation_enabled():
                     with self._exclude_from_measurement():
@@ -161,9 +165,10 @@ class IlladaVarGenAdapter(HFDiffusionAdapter):
         self._stop_measurement()
         self._last_num_forward_passes = global_step
         final_ids = x[0, initial_prompt_len:].tolist()
-        output_text, final_valid_length, eos_token_id = (
-            decode_generated_ids_until_eos(self._tokenizer, final_ids)
-        )
+        with self._profile_stage("output_decode"):
+            output_text, final_valid_length, eos_token_id = (
+                decode_generated_ids_until_eos(self._tokenizer, final_ids)
+            )
         if eos_token_id is not None:
             self._last_stop_metadata = {
                 "stop_reason": "eos",

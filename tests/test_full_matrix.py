@@ -119,7 +119,7 @@ def test_full_matrix_contains_every_model_group_and_target_dataset():
         job for job in jobs
         if job.dataset_config.stem == "ruler_context_probe"
     ]
-    assert len(probe_jobs) == 10
+    assert len(probe_jobs) == 11
     assert all(job.max_new_tokens == 64 for job in probe_jobs)
 
 
@@ -129,13 +129,20 @@ def test_profiling_matrix_is_trace_free_and_uses_profiling_output():
     )
 
     assert seed == 42
-    assert len(jobs) == 9
+    assert len(jobs) == 12
+    assert all(job.n_samples == 1 for job in jobs)
     assert all(job.capture_trace is False for job in jobs)
     assert all(job.profiling_output is True for job in jobs)
     assert {job.dataset_config.stem for job in jobs} == {
         "mbpp",
         "gsm8k",
         "structeval_t",
+    }
+    assert {job.model_name for job in jobs} == {
+        "diffusiongemma",
+        "illada",
+        "illada_vargen",
+        "dreamreasoner",
     }
 
 

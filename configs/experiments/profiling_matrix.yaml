@@ -1,11 +1,6 @@
-# Profiling is a second model-output tree with the same artifacts and directory
-# structure as model_output. The only protocol differences are the reduced
-# 4 model operating points x 3 representative tasks matrix and the additional
-# profiling metrics enabled by --measure-compute. Formal full_matrix runs are
-# unaffected.
-# With the pinned dataset revisions and seed 42, n_samples=10 selects the same
-# fixed samples for every model so timing, energy, and forward metrics can be
-# summarized over a less noisy set. Confirm each generated _meta.json before use.
+# Deep profiling uses one fixed sample per row because Torch operator/module
+# tracing is intentionally expensive. It compares four model execution paths
+# on the same three tasks with one unified in-repository measurement protocol.
 
 base_dir: ../..
 # Concrete root of the parallel model-output tree.
@@ -24,13 +19,13 @@ models:
 
 datasets:
   - config: configs/datasets/mbpp.yaml
-    n_samples: 10
+    n_samples: 1
     max_new_tokens: 512
   - config: configs/datasets/gsm8k.yaml
-    n_samples: 10
+    n_samples: 1
     max_new_tokens: 512
   - config: configs/datasets/structeval_t.yaml
-    n_samples: 10
+    n_samples: 1
     max_new_tokens: 512
 
 seed: 42

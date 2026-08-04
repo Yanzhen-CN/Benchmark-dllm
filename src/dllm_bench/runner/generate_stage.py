@@ -423,6 +423,10 @@ def run_generation(
         request_config = dict(extra_config or {})
         request_config["capture_trace"] = capture_trace
         request_config["step_profiling"] = bool(measure_compute)
+        if measure_compute:
+            request_config["profiling_artifact_dir"] = str(
+                out_dir / "_profiling" / sample.sample_id
+            )
         if "editable_sudoku" in sample.meta:
             request_config["editable_sudoku"] = dict(sample.meta["editable_sudoku"])
         if "target_input_tokens" in sample.meta:
@@ -485,10 +489,14 @@ def run_generation(
         profile_compute = getattr(adapter, "profile_compute", None)
         if callable(profile_compute):
             compute_handle = profile_compute(generation.request)
+            generation.compute_flops = (
+                compute_handle.flops if compute_handle.available else None
+            )
             generation.compute_tflops = (
                 compute_handle.tflops if compute_handle.available else None
             )
             replay_flops = getattr(compute_handle, "forward_tflops", None) or []
+            replay_raw_flops = getattr(compute_handle, "forward_flops", None) or []
             replay_phases = getattr(compute_handle, "forward_phases", None) or []
             measured_phases = [profile.phase for profile in generation.forward_profiles]
             if (
@@ -500,10 +508,27 @@ def run_generation(
                     generation.forward_profiles, replay_flops
                 ):
                     profile.compute_tflops = step_tflops
+                if len(replay_raw_flops) == len(generation.forward_profiles):
+                    for profile, step_flops in zip(
+                        generation.forward_profiles, replay_raw_flops
+                    ):
+                        profile.compute_flops = step_flops
                 generation.extra["step_compute_status"] = "complete"
             elif generation.forward_profiles:
                 generation.extra["step_compute_status"] = "replay_mismatch"
                 generation.extra["step_compute_replay_forwards"] = len(replay_flops)
+            timed_stages = generation.extra.get("stage_profiles", [])
+            replay_stages = getattr(compute_handle, "stage_profiles", None) or []
+            if [item.get("stage") for item in timed_stages] == [
+                item.get("stage") for item in replay_stages
+            ]:
+                for timed, replay in zip(timed_stages, replay_stages):
+                    timed["compute_flops"] = replay.get("compute_flops")
+                    timed["compute_tflops"] = replay.get("compute_tflops")
+                generation.extra["stage_compute_status"] = "complete"
+            elif timed_stages:
+                generation.extra["stage_compute_status"] = "replay_mismatch"
+            generation.extra["torch_profiler"] = compute_handle.torch_profile
         if require_all_metrics:
             _validate_required_metrics(
                 adapter,

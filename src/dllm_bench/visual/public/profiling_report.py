@@ -1,4 +1,4 @@
-"""Dataset-level reports for public per-forward profiling metrics."""
+"""Dataset-level reports for per-forward and real-stage profiling metrics."""
 
 from __future__ import annotations
 
@@ -12,6 +12,58 @@ from .trace_metrics import (
     build_step_profiling,
     plot_step_profiling,
 )
+
+
+def build_stage_profiling_summary(
+    records: list[tuple[Sample, GenerationResult]],
+) -> dict[str, dict[str, float | int | None]]:
+    stages: dict[str, dict[str, float | int | None]] = {}
+    for _, result in records:
+        for profile in result.extra.get("stage_profiles", []):
+            name = str(profile["stage"])
+            stage = stages.setdefault(
+                name,
+                {"calls": 0, "time_seconds": 0.0, "compute_flops": 0},
+            )
+            stage["calls"] = int(stage["calls"] or 0) + 1
+            elapsed = profile.get("wall_clock_seconds")
+            if elapsed is not None:
+                stage["time_seconds"] = float(stage["time_seconds"] or 0.0) + float(elapsed)
+            raw_flops = profile.get("compute_flops")
+            if raw_flops is None:
+                stage["compute_flops"] = None
+            elif stage["compute_flops"] is not None:
+                stage["compute_flops"] = int(stage["compute_flops"] or 0) + int(raw_flops)
+    for stage in stages.values():
+        raw_flops = stage["compute_flops"]
+        stage["compute_tflops"] = (
+            int(raw_flops) / 1e12 if raw_flops is not None else None
+        )
+    return stages
+
+
+def plot_stage_profiling(
+    stages: dict[str, dict[str, float | int | None]], path: str | Path
+) -> bool:
+    output = Path(path)
+    if not stages:
+        output.unlink(missing_ok=True)
+        return False
+    import matplotlib.pyplot as plt
+
+    names = list(stages)
+    times = [float(stages[name]["time_seconds"] or 0.0) for name in names]
+    compute = [float(stages[name].get("compute_tflops") or 0.0) for name in names]
+    figure, axes = plt.subplots(1, 2, figsize=(14, max(4, len(names) * 0.42)))
+    axes[0].barh(names, times)
+    axes[0].set(title="Measured time by generation stage", xlabel="Seconds")
+    axes[1].barh(names, compute)
+    axes[1].set(title="Compute by generation stage", xlabel="TFLOP")
+    figure.tight_layout()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output, dpi=180, bbox_inches="tight")
+    plt.close(figure)
+    return True
 
 
 def build_dataset_profiling_summary(
@@ -95,6 +147,7 @@ def build_dataset_profiling_summary(
             else None
         ),
         "phase_contribution": phases,
+        "stage_contribution": build_stage_profiling_summary(records),
         "samples": samples,
     }
     return summary, rows
@@ -111,6 +164,7 @@ def render_dataset_profiling_report(
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     plot_path = out / "dataset_step_profiling.png"
+    stage_plot_path = out / "dataset_stage_profiling.png"
 
     _, rows = build_dataset_profiling_summary(
         dataset_name,
@@ -124,4 +178,6 @@ def render_dataset_profiling_report(
     written: dict[str, str] = {}
     if plot_step_profiling(rows, plot_path):
         written["step_profiling_plot"] = str(plot_path)
+    if plot_stage_profiling(build_stage_profiling_summary(records), stage_plot_path):
+        written["stage_profiling_plot"] = str(stage_plot_path)
     return written

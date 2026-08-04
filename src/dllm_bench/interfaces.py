@@ -83,6 +83,7 @@ class ForwardProfile:
     forward_index: int
     phase: str
     wall_clock_seconds: float | None = None
+    compute_flops: int | None = None
     compute_tflops: float | None = None
     accepted_tokens: int | None = None
     active_tokens: int | None = None
@@ -142,6 +143,7 @@ class GenerationResult:
     final_valid_length: int = 0
     timing: TimingResult | None = None
     energy_joules: float | None = None
+    compute_flops: int | None = None
     compute_tflops: float | None = None
     peak_vram_gb: float | None = None
     error_message: str | None = None

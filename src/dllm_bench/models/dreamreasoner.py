@@ -195,13 +195,14 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         mask_token_id = self._resolve_mask_token_id(step_config)
 
         device = self._device
-        input_ids = tokenize_instruction_prompt(
-            self._tokenizer,
-            prompt,
-            device=device,
-            chat_template_kwargs={"enable_thinking": self._enable_thinking},
-            target_input_tokens=target_input_tokens,
-        )["input_ids"]
+        with self._profile_stage("input_preparation"):
+            input_ids = tokenize_instruction_prompt(
+                self._tokenizer,
+                prompt,
+                device=device,
+                chat_template_kwargs={"enable_thinking": self._enable_thinking},
+                target_input_tokens=target_input_tokens,
+            )["input_ids"]
         prompt_len = input_ids.shape[1]
         self._last_input_tokens = int(prompt_len)
         self._start_measurement()
@@ -220,9 +221,10 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         past_key_values = DynamicCache()
 
         if prefill_length > 0:
-            with self._forward_phase("prefill"):
-                with torch.no_grad():
-                    self._model(
+            with self._profile_stage("prefill"):
+                with self._forward_phase("prefill"):
+                    with torch.no_grad():
+                        self._model(
                         x[:, :prefill_length],
                         attention_mask=attention_mask[:, :prefill_length, :prefill_length],
                         position_ids=position_ids[:, :prefill_length],
@@ -249,9 +251,10 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     # force_accept) — one clean forward to push its final
                     # tokens into the KV cache before the next block attends
                     # to them. No positions change, so no TraceStep.
-                    with self._forward_phase("finalization"):
-                        with torch.no_grad():
-                            self._model(
+                    with self._profile_stage("cache_finalization"):
+                        with self._forward_phase("finalization"):
+                            with torch.no_grad():
+                                self._model(
                                 cur_x,
                                 attention_mask=cur_attn,
                                 position_ids=cur_pos,
@@ -262,8 +265,9 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     break
 
                 force_accept = step == denoising_steps - 1
-                with torch.no_grad():
-                    logits = self._model(
+                with self._profile_stage("denoise_forward"):
+                    with torch.no_grad():
+                        logits = self._model(
                         cur_x,
                         attention_mask=cur_attn,
                         position_ids=cur_pos,
@@ -272,21 +276,23 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                         store_kv=False,
                     ).logits
 
-                x0, x0_p = _sample_with_temperature_topk_topp(logits, temperature, top_k, top_p)
-                x0 = torch.where(mask_index, x0, cur_x)
-                transfer_index = _select_transfer_index(
-                    remasking_strategy,
-                    mask_index,
-                    x0,
-                    x0_p,
-                    num_transfer_tokens,
-                    step,
-                    confidence_threshold,
-                    eb_threshold,
-                    force_accept=force_accept,
-                )
-                cur_x[transfer_index] = x0[transfer_index]
-                x[:, block_start:block_end] = cur_x
+                with self._profile_stage("token_selection"):
+                    x0, x0_p = _sample_with_temperature_topk_topp(logits, temperature, top_k, top_p)
+                    x0 = torch.where(mask_index, x0, cur_x)
+                    transfer_index = _select_transfer_index(
+                        remasking_strategy,
+                        mask_index,
+                        x0,
+                        x0_p,
+                        num_transfer_tokens,
+                        step,
+                        confidence_threshold,
+                        eb_threshold,
+                        force_accept=force_accept,
+                    )
+                with self._profile_stage("canvas_update"):
+                    cur_x[transfer_index] = x0[transfer_index]
+                    x[:, block_start:block_end] = cur_x
                 self._annotate_last_forward(
                     accepted_tokens=int(transfer_index.sum().item()),
                     active_tokens=block_end - block_start,
@@ -320,7 +326,8 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         self._last_num_forward_passes = global_step
         output_length = min(total_length, prompt_len + gen_length)
         final_ids = x[0, prompt_len:output_length].tolist()
-        output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
+        with self._profile_stage("output_decode"):
+            output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
         return output_text, trace, len(final_ids)
 
 
