@@ -444,9 +444,9 @@ def generate(
                 )
             else:
                 average = elapsed
-            timing = f"{elapsed:.1f}s / avg {average:.1f}s"
+            timing = f"{elapsed:.1f}/{average:.1f}s"
             if not completed_generation_seconds:
-                return f"{prefix}: {state} ({timing}) | ETA calculating"
+                return f"{prefix} {state} {timing} ETA -- TOT --"
             remaining_current = 0.0 if finished else max(0.0, average - elapsed)
             eta = remaining_current + average * max(0, total - index)
             run_elapsed = (
@@ -455,8 +455,8 @@ def generate(
                 else elapsed
             )
             return (
-                f"{prefix}: {state} ({timing}) | ETA {format_duration(eta)}"
-                f" | total ~{format_duration(run_elapsed + eta)}"
+                f"{prefix} {state} {timing} ETA {format_duration(eta)}"
+                f" TOT {format_duration(run_elapsed + eta)}"
             )
 
         def render_generation_progress(text: str, *, final: bool = False) -> None:
@@ -489,8 +489,8 @@ def generate(
                         while True:
                             render_generation_progress(
                                 generation_progress_text(
-                                    prefix,
-                                    "generating ...",
+                                    f"[{v}] {index}/{total} {sample.sample_id}",
+                                    "generating",
                                     perf_counter() - started,
                                     index,
                                     total,
@@ -568,7 +568,7 @@ def generate(
                 completed_generation_seconds.append(elapsed)
                 render_generation_progress(
                     generation_progress_text(
-                        prefix,
+                        f"[{v}] {index}/{total} {sample.sample_id}",
                         status,
                         elapsed,
                         index,
