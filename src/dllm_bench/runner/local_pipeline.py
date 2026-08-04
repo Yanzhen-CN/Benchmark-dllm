@@ -9,12 +9,29 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from run_bench import (
-    DEFAULT_MATRIX,
-    PROJECT_ROOT,
-    matrix_model_names,
-    normalize_model_names,
-)
+from .matrix import available_matrix_models
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_MATRIX = PROJECT_ROOT / "configs" / "experiments" / "full_matrix.yaml"
+
+
+def normalize_model_names(values: Sequence[str], available: Sequence[str]) -> list[str]:
+    requested = list(
+        dict.fromkeys(
+            part.strip()
+            for value in values
+            for part in value.split(",")
+            if part.strip()
+        )
+    )
+    unknown = set(requested).difference(available)
+    if unknown:
+        raise ValueError(
+            f"unknown model(s): {', '.join(sorted(unknown))}; "
+            f"available: {', '.join(available)}"
+        )
+    return requested or list(available)
 
 
 def build_parser(stage: str) -> argparse.ArgumentParser:
@@ -111,7 +128,7 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
     args = build_parser(stage).parse_args(argv)
     matrix_path = Path(args.matrix).resolve()
     try:
-        models = normalize_model_names(args.model, matrix_model_names(matrix_path))
+        models = normalize_model_names(args.model, available_matrix_models(matrix_path))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     max_new_tokens = list(dict.fromkeys(args.max_new_tokens))

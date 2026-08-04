@@ -33,8 +33,6 @@ run_model.py  ----------> output/model_output/       (GPU server)
                                 +--> run_score.py     (local CPU)
                                 |
                                 +--> run_visualization.py
-                                |
-                                +--> run_check.py     (read-only audit)
 ```
 
 The normal workflow has three user-facing execution stages:
@@ -42,8 +40,6 @@ The normal workflow has three user-facing execution stages:
 1. `run_model.py` generates model output and trace on the GPU server.
 2. `run_score.py` evaluates transferred JSON locally without loading model weights.
 3. `run_visualization.py` builds trace artifacts and measured-only reports locally.
-
-`run_check.py` can audit any stage without changing artifacts.
 
 ## Quick start
 
@@ -55,23 +51,20 @@ The top-level scripts may be launched with the server's system Python. They crea
 git clone <repository-url> dllm
 cd dllm
 
-# Prepare root/model environments, all selected data, and model snapshots.
-# This does not load a model or execute a forward pass.
-python run_prepare.py
-
-# Or prepare selected models/datasets only.
-python run_prepare.py -m qwen3_8b illada dreamreasoner \
-  -d gsm8k mbpp structeval_t
+# Prepare environments, data, and model snapshots explicitly.
+python setup_venv.py --cuda-index cu124 --check
+python prepare_data.py --experiment-config configs/experiments/full_matrix.yaml
+python prepare_model.py --matrix configs/experiments/full_matrix.yaml
 ```
 
-Useful preparation controls:
+Selected models or datasets use the same selectors:
 
 ```bash
-python run_prepare.py --dry-run
-python run_prepare.py --cuda-index cu124
-python run_prepare.py -d sudoku --force-data
-python run_prepare.py --skip-data
-python run_prepare.py --skip-models
+python setup_venv.py -m qwen3_8b illada dreamreasoner --cuda-index cu124 --check
+python prepare_data.py --experiment-config configs/experiments/full_matrix.yaml \
+  -d gsm8k mbpp structeval_t
+python prepare_model.py --matrix configs/experiments/full_matrix.yaml \
+  -m qwen3_8b illada dreamreasoner
 ```
 
 Large caches default to the project volume:
@@ -120,7 +113,6 @@ Do not copy model environments or checkpoints for local scoring.
 ```bash
 python run_score.py --real-data
 python run_visualization.py --real-data
-python run_check.py --stage all
 ```
 
 The selectors are parallel across stages:
@@ -128,7 +120,6 @@ The selectors are parallel across stages:
 ```bash
 python run_score.py -m illada dreamreasoner -d gsm8k mbpp -v p1 p2
 python run_visualization.py -m illada dreamreasoner -d gsm8k mbpp -v p1 p2
-python run_check.py -m illada dreamreasoner -d gsm8k mbpp -v p1 p2
 ```
 
 Re-scoring never regenerates model output:
@@ -253,10 +244,10 @@ python -m dllm_bench.visual.models.diffusiongemma \
 
 ## Optional pairwise conversion
 
-Measured results are the default report. Pairwise ideal-retry sensitivity is isolated in `run_conversion.py`:
+Measured results are the default report. The optional pairwise ideal-retry sensitivity analysis remains an advanced CLI command:
 
 ```bash
-python run_conversion.py \
+python -m dllm_bench.cli pairwise-report \
   -m illada dreamreasoner \
   --base-model qwen3_8b \
   --base-config ar-baseline \
@@ -344,15 +335,7 @@ Score reuse is guarded by fingerprints over the generation text, dataset revisio
 - The runner writes `oom_info.json`, stops later samples in that row, and continues with later datasets.
 - Scoring and visualization refuse to aggregate an invalid row.
 - An interrupted incomplete row may retain per-sample JSON for diagnosis, but it cannot produce a formal `summary.json`.
-- Resume reuses only compatible sample artifacts; `run_check.py` verifies completeness against the current matrix.
-
-Audit before reporting:
-
-```bash
-python run_check.py --stage generate
-python run_check.py --stage all
-python run_check.py --require-diagnostics
-```
+- Resume reuses only sample artifacts compatible with the current matrix. Score and visualization reject incomplete or incompatible rows.
 
 ## Core implementation contracts
 
@@ -497,7 +480,6 @@ python prepare_model.py -m <name>
 python run_model.py -m <name> -d gsm8k --n-samples 1 --output-root output/smoke
 python run_score.py -m <name> -d gsm8k --n-samples 1 --output-root output/smoke
 python run_visualization.py -m <name> -d gsm8k --n-samples 1 --output-root output/smoke
-python run_check.py -m <name> -d gsm8k --output-root output/smoke --stage all
 ```
 
 ## Adding a new dataset
@@ -532,8 +514,8 @@ The registry tests should also construct every shipped YAML.
 ## Project layout
 
 ```text
-run_prepare.py / prepare_data.py / prepare_model.py
-run_model.py / run_score.py / run_visualization.py / run_check.py
+setup_venv.py / prepare_data.py / prepare_model.py
+run_bench.py / run_model.py / run_score.py / run_visualization.py
 configs/
   models/
   datasets/
@@ -555,10 +537,10 @@ tests/
 
 ## Testing
 
-Run the suite through the managed root environment:
+Run the suite from an activated development/root environment:
 
 ```bash
-python run_tests.py
+python -m pytest -q --import-mode=importlib
 ```
 
 Useful focused checks:
@@ -584,4 +566,4 @@ Before treating a row as reportable, confirm:
 - score fingerprints match current generation and scorer revisions
 - cross-model resource charts use the same hardware and sample-set hash
 
-The definitive machine-readable audit is `run_check.py`; this list is for human review.
+Score and visualization perform the definitive artifact compatibility checks; this list is for human review.

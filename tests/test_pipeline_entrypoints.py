@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import local_pipeline
-import run_conversion
 import run_model
+from dllm_bench.runner import local_pipeline
 
 
 def test_run_model_forces_generate_and_real_data(monkeypatch):
@@ -117,23 +116,3 @@ def test_local_visualization_forwards_curated_sample_ids(capsys):
     assert f"--sample-ids {sample_ids}" in output
 
 
-def test_conversion_entrypoint_accepts_parallel_model_selector(capsys):
-    assert run_conversion.main(
-        [
-            "--dry-run",
-            "-m",
-            "illada",
-            "dreamreasoner",
-            "--base-model",
-            "qwen3_8b",
-            "--base-config",
-            "ar-baseline",
-            "--beta",
-            "40",
-            "--gamma",
-            "25",
-        ]
-    ) == 0
-    output = capsys.readouterr().out
-    assert "--model illada --model dreamreasoner" in output
-    assert "--base-model qwen3_8b" in output
