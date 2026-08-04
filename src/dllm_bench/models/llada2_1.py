@@ -5,6 +5,8 @@ from contextlib import contextmanager, nullcontext
 from typing import Any
 
 from .base import BaseModelAdapter
+from .device_transfer import move_model_to_device
+from .model_cache import get_or_load
 from ..interfaces import (
     EditingTraceStep,
     GenerationRequest,
@@ -54,14 +56,21 @@ class Llada21Adapter(BaseModelAdapter):
 
         common = {"revision": self.revision, "trust_remote_code": self.trust_remote_code}
         common = {key: value for key, value in common.items() if value is not None}
-        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, **common)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            self.model_name_or_path,
-            torch_dtype=getattr(torch, self.torch_dtype),
-            low_cpu_mem_usage=True,
-            **common,
-        ).to(self.device)
-        self._model.eval()
+
+        def _load():
+            tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path, **common)
+            model = AutoModelForCausalLM.from_pretrained(
+                self.model_name_or_path,
+                torch_dtype=getattr(torch, self.torch_dtype),
+                low_cpu_mem_usage=True,
+                **common,
+            )
+            move_model_to_device(model, self.device, model_name=self.model_name_or_path)
+            model.eval()
+            return tokenizer, model
+
+        cache_key = f"{self.model_name_or_path}@{self.revision or 'main'}:{self.torch_dtype}"
+        self._tokenizer, self._model = get_or_load(cache_key, self.device, _load)
 
     @contextmanager
     def _capture_model_forwards(self, request, compute_handle=None):

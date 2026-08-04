@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
+import sys
 from threading import Event, Thread
 from time import perf_counter
+from typing import TextIO
 
 
 _TRANSFER_HEARTBEAT_SECONDS = 1.0
@@ -20,16 +23,34 @@ def _vram_bar(percent: float) -> str:
 class _TransferDisplay:
     """Render transfer status by replacing one terminal line in place."""
 
-    def __init__(self) -> None:
-        self._width = 0
+    def __init__(
+        self,
+        stream: TextIO | None = None,
+        terminal_columns: int | None = None,
+    ) -> None:
+        self._stream = stream or sys.stdout
+        self._interactive = bool(self._stream.isatty())
+        self._terminal_columns = terminal_columns
+
+    def _fit_terminal(self, message: str) -> str:
+        columns = self._terminal_columns or shutil.get_terminal_size((120, 20)).columns
+        width = max(20, columns - 1)
+        if len(message) <= width:
+            return message
+        return message[: max(1, width - 3)] + "..."
 
     def update(self, message: str) -> None:
-        self._width = max(self._width, len(message))
-        print(f"\r{message.ljust(self._width)}", end="", flush=True)
+        if not self._interactive:
+            return
+        self._stream.write(f"\r\x1b[2K{self._fit_terminal(message)}")
+        self._stream.flush()
 
     def finish(self, message: str) -> None:
-        self._width = max(self._width, len(message))
-        print(f"\r{message.ljust(self._width)}", flush=True)
+        if self._interactive:
+            self._stream.write(f"\r\x1b[2K{self._fit_terminal(message)}\n")
+        else:
+            self._stream.write(f"{message}\n")
+        self._stream.flush()
 
 
 class _GpuVramMonitor:

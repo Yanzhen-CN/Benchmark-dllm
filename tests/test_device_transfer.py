@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import StringIO
 from threading import Event
 
 import pytest
@@ -47,9 +48,8 @@ def test_cuda_transfer_reports_phase_and_real_elapsed_time(monkeypatch, capsys):
     assert model.devices == [device]
     assert monitor.closed
     output = capsys.readouterr().out
-    assert output.count("\r") == 2
+    assert output.count("\r") == 0
     assert output.count("\n") == 1
-    assert "Moving checkpoint to GPU ... 0.0s elapsed" in output
     assert "GPU 0 VRAM [#####---------------]  25.0% (20.0/80.0 GiB)" in output
     assert "Moved checkpoint to GPU in 2.2s" in output
 
@@ -98,11 +98,28 @@ def test_slow_cuda_transfer_reports_elapsed_heartbeat(monkeypatch, capsys):
     assert release_transfer.is_set()
     assert monitor.closed
     output = capsys.readouterr().out
-    assert output.count("\r") == 3
+    assert output.count("\r") == 0
     assert output.count("\n") == 1
-    assert "Moving Qwen3-8B to GPU ... 0.0s elapsed" in output
-    assert "Moving Qwen3-8B to GPU ... 5.0s elapsed" in output
     assert "Moved Qwen3-8B to GPU in 5.2s" in output
+
+
+def test_interactive_display_clears_and_reuses_one_bounded_terminal_line():
+    class _InteractiveStream(StringIO):
+        def isatty(self):
+            return True
+
+    stream = _InteractiveStream()
+    display = device_transfer._TransferDisplay(stream, terminal_columns=40)
+    display.update("Moving a-very-long-checkpoint-name to GPU with VRAM details")
+    display.update("Moving checkpoint to GPU ... 5.0s")
+    display.finish("Moved checkpoint to GPU in 6.0s")
+
+    output = stream.getvalue()
+    assert output.count("\r\x1b[2K") == 3
+    assert output.count("\n") == 1
+    rendered = [part.split("\n", 1)[0] for part in output.split("\r\x1b[2K") if part]
+    assert all(len(line) <= 39 for line in rendered)
+    assert "..." in rendered[0]
 
 
 def test_failed_cuda_transfer_still_closes_vram_monitor(monkeypatch):
