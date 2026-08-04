@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 
-from ..base import ModelVisual
+from ..base import ModelVisual, public_model_visual
 
 
 def load_model_visual(model_name: str) -> ModelVisual:
@@ -15,10 +15,7 @@ def load_model_visual(model_name: str) -> ModelVisual:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name == module_name:
-            raise RuntimeError(
-                f"model {model_name!r} must own "
-                f"src/dllm_bench/visual/models/{module_key}.py"
-            ) from exc
+            return public_model_visual(model_name)
         raise
 
     visual = getattr(module, "MODEL_VISUAL", None)
