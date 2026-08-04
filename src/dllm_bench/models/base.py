@@ -174,12 +174,12 @@ class BaseModelAdapter(ABC):
             started = perf_counter() if capture_time else None
             flops_before = compute_handle.snapshot_flops() if compute_handle else None
             marker = __import__("torch").autograd.profiler.record_function(
-                f"dllm::forward::{phase}"
+                f"dllm::step::{phase}"
             )
             marker.__enter__()
             use_nvtx = bool(__import__("torch").cuda.is_available())
             if use_nvtx:
-                __import__("torch").cuda.nvtx.range_push(f"dllm::forward::{phase}")
+                __import__("torch").cuda.nvtx.range_push(f"dllm::step::{phase}")
             pending.append((phase, started, flops_before, metadata, marker, use_nvtx))
 
         def after_forward(_module, _args, _kwargs, _output):
@@ -301,7 +301,7 @@ class BaseModelAdapter(ABC):
         if self._stage_profiles:
             result.extra["stage_profiles"] = list(self._stage_profiles)
         if result.forward_profiles:
-            result.extra["profiled_model_forwards"] = len(result.forward_profiles)
+            result.extra["profiled_model_steps"] = len(result.forward_profiles)
         return result
 
     def profile_compute(self, request: GenerationRequest) -> ComputeHandle:

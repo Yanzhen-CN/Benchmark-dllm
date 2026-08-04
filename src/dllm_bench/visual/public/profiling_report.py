@@ -1,4 +1,4 @@
-"""Dataset-level reports for per-forward and real-stage profiling metrics."""
+"""Dataset-level reports for per-step and real-stage profiling metrics."""
 
 from __future__ import annotations
 
@@ -101,9 +101,9 @@ def build_dataset_profiling_summary(
     for row in rows:
         phase = phases.setdefault(
             row.phase,
-            {"forwards": 0, "time_seconds": 0.0, "compute_tflops": 0.0},
+            {"steps": 0, "time_seconds": 0.0, "compute_tflops": 0.0},
         )
-        phase["forwards"] = int(phase["forwards"] or 0) + 1
+        phase["steps"] = int(phase["steps"] or 0) + 1
         phase["time_seconds"] = float(phase["time_seconds"] or 0.0) + float(
             row.time_seconds or 0.0
         )
@@ -134,7 +134,7 @@ def build_dataset_profiling_summary(
         "measurement_status": "complete" if rows else "unavailable",
         "selected_samples": len(records),
         "profiled_samples": len(samples),
-        "forward_count": len(rows),
+        "step_count": len(rows),
         "time_seconds": total_time if rows else None,
         "compute_tflops": total_compute,
         "accepted_tokens": total_accepted if rows else None,

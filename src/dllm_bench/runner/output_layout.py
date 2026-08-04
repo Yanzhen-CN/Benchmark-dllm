@@ -7,7 +7,7 @@
         <sample_id>.json    # full GenerationResult, including trace
       model_profiling/<run-id>/<dataset>/
         _meta.json          # profiling protocol and run metadata
-        <sample_id>.json    # GenerationResult plus per-forward profiles
+        <sample_id>.json    # GenerationResult plus per-step profiles
       score_output/<model>_<config>/<dataset>/
         <sample_id>.json    # ScoreResult for that sample
         summary.json        # RunSummary (section 3.4 raw-results-table row)

@@ -75,10 +75,10 @@ def test_profiling_summary_uses_forward_profiles_without_trace():
         config_name="p2",
     )
 
-    assert summary["forward_count"] == 2
+    assert summary["step_count"] == 2
     assert summary["compute_tflops"] == 3.0
     assert summary["accepted_tokens"] == 4
-    assert summary["phase_contribution"]["prefill"]["forwards"] == 1
+    assert summary["phase_contribution"]["prefill"]["steps"] == 1
     assert summary["stage_contribution"]["prefill"]["calls"] == 1
     assert rows[-1].cumulative_compute_tflops == 3.0
 

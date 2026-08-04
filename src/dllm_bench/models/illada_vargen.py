@@ -105,7 +105,7 @@ class IlladaVarGenAdapter(HFDiffusionAdapter):
                 if not mask_index[:, block_start:block_end].any():
                     break
 
-                with self._profile_stage("denoise_forward"):
+                with self._profile_stage("denoise_step"):
                     with torch.no_grad():
                         # Official var_generate calls generate() without an
                         # attention mask for its single, unpadded prompt.

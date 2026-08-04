@@ -172,7 +172,7 @@ def generation_result_to_dict(generation: GenerationResult) -> dict[str, Any]:
     return {
         "output_text": generation.output_text,
         "status": generation.status.value,
-        "num_forward_passes": generation.num_forward_passes,
+        "num_steps": generation.num_forward_passes,
         "final_valid_length": generation.final_valid_length,
         "timing": (
             {"wall_clock_seconds": generation.timing.wall_clock_seconds, "source": generation.timing.source}
@@ -206,7 +206,17 @@ def generation_result_to_dict(generation: GenerationResult) -> dict[str, Any]:
             for step in generation.trace
         ],
         "editing_trace": [dataclasses.asdict(step) for step in generation.editing_trace],
-        "forward_profiles": [dataclasses.asdict(profile) for profile in generation.forward_profiles],
+        "step_profiles": [
+            {
+                **{
+                    key: value
+                    for key, value in dataclasses.asdict(profile).items()
+                    if key != "forward_index"
+                },
+                "step_index": profile.forward_index,
+            }
+            for profile in generation.forward_profiles
+        ],
     }
 
 
@@ -236,9 +246,13 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         EditingTraceStep(**step) for step in data.get("editing_trace", [])
     ]
     timing = TimingResult(**data["timing"]) if data.get("timing") else None
-    forward_profiles = [
-        ForwardProfile(**profile) for profile in data.get("forward_profiles", [])
-    ]
+    raw_profiles = data.get("step_profiles", data.get("forward_profiles", []))
+    forward_profiles = []
+    for profile in raw_profiles:
+        normalized = dict(profile)
+        if "step_index" in normalized:
+            normalized["forward_index"] = normalized.pop("step_index")
+        forward_profiles.append(ForwardProfile(**normalized))
     generation = GenerationResult(
         request=request,
         output_text=data["output_text"],
@@ -246,7 +260,7 @@ def generation_result_from_dict(data: dict[str, Any]) -> GenerationResult:
         trace=trace,
         editing_trace=editing_trace,
         forward_profiles=forward_profiles,
-        num_forward_passes=data["num_forward_passes"],
+        num_forward_passes=data.get("num_steps", data.get("num_forward_passes", 0)),
         final_valid_length=data["final_valid_length"],
         timing=timing,
         energy_joules=data.get("energy_joules"),

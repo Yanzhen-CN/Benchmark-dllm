@@ -2,7 +2,7 @@
 
 This module only reports measurements already present in generation artifacts.
 Whole-generation values are never divided across steps. Per-step time and FLOPs
-are emitted only when the profiling run captured real forward boundaries.
+are emitted only when the profiling run captured real inference-step boundaries.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class StepProfilingRow:
     config: str
     dataset: str
     sample_id: str
-    forward_index: int
+    step_index: int
     phase: str
     time_seconds: float | None
     compute_tflops: float | None
@@ -625,7 +625,7 @@ def build_step_profiling(
                 config=config_name or "unknown",
                 dataset=dataset_name,
                 sample_id=sample.sample_id,
-                forward_index=profile.forward_index,
+                step_index=profile.forward_index,
                 phase=profile.phase,
                 time_seconds=profile.wall_clock_seconds,
                 compute_tflops=profile.compute_tflops,
@@ -663,7 +663,7 @@ def build_step_profiling(
 
     return {
         "measurement_status": "complete",
-        "profiled_forwards": len(rows),
+        "profiled_steps": len(rows),
         "time_per_step": [row.time_seconds for row in rows],
         "flops_per_step": [row.compute_tflops for row in rows],
         "accepted_tokens_per_step": [row.accepted_tokens for row in rows],
@@ -675,8 +675,8 @@ def build_step_profiling(
         ),
         "cumulative_compute": total_compute if computed else None,
         "phase_contribution": phases,
-        "compute_scope": "top-level model forwards captured during deterministic FLOP replay",
-        "time_scope": "GPU-synchronized top-level model forwards in the timed profiling run",
+        "compute_scope": "model inference steps captured during deterministic FLOP replay",
+        "time_scope": "GPU-synchronized model inference steps in the timed profiling run",
     }, rows
 
 
@@ -687,16 +687,16 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
         return False
     import matplotlib.pyplot as plt
 
-    x = [row.forward_index for row in rows]
+    x = [row.step_index for row in rows]
     fig, axes = plt.subplots(3, 2, figsize=(13, 11), constrained_layout=True)
     axes[0, 0].plot(x, [row.time_seconds for row in rows], marker="o", ms=3)
-    axes[0, 0].set(title="Time per forward", xlabel="Forward", ylabel="Seconds")
+    axes[0, 0].set(title="Time per step", xlabel="Step", ylabel="Seconds")
     axes[0, 1].plot(
         x,
         [row.compute_tflops for row in rows],
         marker="o",
         ms=3,
-        label="Per forward",
+        label="Per step",
     )
     cumulative_axis = axes[0, 1].twinx()
     cumulative_axis.plot(
@@ -705,7 +705,7 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
         color="tab:orange",
         label="Cumulative",
     )
-    axes[0, 1].set(title="Compute", xlabel="Forward", ylabel="TFLOP / forward")
+    axes[0, 1].set(title="Compute", xlabel="Step", ylabel="TFLOP / step")
     cumulative_axis.set_ylabel("Cumulative TFLOP")
     handles, labels = axes[0, 1].get_legend_handles_labels()
     extra_handles, extra_labels = cumulative_axis.get_legend_handles_labels()
@@ -716,7 +716,7 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
         loc="best",
     )
     axes[1, 0].plot(x, [row.accepted_tokens or 0 for row in rows])
-    axes[1, 0].set(title="Accepted tokens per forward", xlabel="Forward", ylabel="Tokens")
+    axes[1, 0].set(title="Accepted tokens per step", xlabel="Step", ylabel="Tokens")
 
     accepted = [row.accepted_tokens or 0 for row in rows]
     time_cost = [
@@ -741,7 +741,7 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
     )
     axes[1, 1].set(
         title="Cost per accepted token",
-        xlabel="Forward",
+        xlabel="Step",
         ylabel="Seconds",
     )
     cost_axis.set_ylabel("TFLOP")
@@ -754,12 +754,12 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
         loc="best",
     )
 
-    axes[2, 0].plot(x, [row.input_tokens for row in rows], label="Forward input")
+    axes[2, 0].plot(x, [row.input_tokens for row in rows], label="Step input")
     axes[2, 0].plot(x, [row.kv_cache_tokens for row in rows], label="KV cache")
     axes[2, 0].plot(x, [row.attention_tokens for row in rows], label="Attention span")
     axes[2, 0].set(
         title="Input and KV-cache lengths",
-        xlabel="Forward",
+        xlabel="Step",
         ylabel="Tokens",
     )
     axes[2, 0].legend(frameon=False, loc="best")

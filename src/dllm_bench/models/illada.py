@@ -98,7 +98,7 @@ class IlladaAdapter(HFDiffusionAdapter):
                 if not mask_index[:, block_start:block_end].any():
                     break  # block already fully committed (schedule exhausted early)
 
-                with self._profile_stage("denoise_forward"):
+                with self._profile_stage("denoise_step"):
                     with torch.no_grad():
                         logits = self._model(x, attention_mask=attention_mask).logits
 

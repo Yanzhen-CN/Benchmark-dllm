@@ -78,7 +78,7 @@ class TraceStep:
 
 @dataclass
 class ForwardProfile:
-    """One actual top-level model forward in a profiling run."""
+    """One measured inference step, usually bounded by one model forward."""
 
     forward_index: int
     phase: str

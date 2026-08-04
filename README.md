@@ -18,7 +18,7 @@ Experimental results and temporary progress do not belong in the repository docu
 | Task quality | Dataset primary score, official auxiliary metrics, completion/truncation |
 | Long input/output | Controlled RULER diagnostics, capacity probe, HelloBench reference cases |
 | Resource cost | Tps, Seconds/Sample, Energy/Sample, Average Power, Peak VRAM |
-| Generation process | Tpf, forward count, commit order, finalization geometry, certainty and Draft Volatility when observable |
+| Generation process | time per step, step count, commit order, finalization geometry, certainty and Draft Volatility when observable |
 
 Results are compared only inside compatible dataset, sample-set, prompt/output-budget, hardware, and measurement-protocol groups. Missing or unobservable metrics are `N/A`, never zero-filled.
 
@@ -186,7 +186,7 @@ disabled; it is unrelated to systems profiling.
 
 Every adapter uses the same in-repository protocol and persists raw integer
 FLOPs plus TFLOPs. Shared stage names cover input preparation, prefill/cache
-build when present, denoise forwards, token selection, canvas/cache updates,
+build when present, denoise steps, token selection, canvas/cache updates,
 and output decoding. Torch Profiler writes `torch_trace.json` and
 `torch_summary.json` under each sample's `_profiling/` directory. The summary
 groups CUDA/CPU time, calls, and FLOPs by attention, linear, MLP/MoE,
@@ -207,10 +207,10 @@ python run_visualization.py --matrix configs/experiments/profiling_matrix.yaml \
 
 Each dataset visualization directory contains `dataset_step_profiling.png`
 and `dataset_stage_profiling.png`.
-The plot is derived directly from per-sample profiling JSON. Per-forward and
+The plot is derived directly from per-sample profiling JSON. Per-step and
 per-stage compute comes from the same deterministic replay; the sample also
 retains total `compute_flops` and `compute_tflops`. Optional Nsight runs may
-consume the emitted `dllm::stage::*` and `dllm::forward::*` NVTX ranges for
+consume the emitted `dllm::stage::*` and `dllm::step::*` NVTX ranges for
 kernel-level diagnosis, but Nsight is not a formal cross-model metric because
 its output depends on the installed driver and profiler build.
 
@@ -411,7 +411,7 @@ The adapter must return a standard `GenerationResult` containing:
 - the original `GenerationRequest`
 - output text and `RunStatus`
 - measured timing/resource fields when locally observable
-- forward count and final valid length
+- step count and final valid length
 - optional `TraceStep[]`
 - backend-specific audit fields under `extra`
 
@@ -568,7 +568,7 @@ Before treating a row as reportable, confirm:
 - model/config/checkpoint and code commit are recorded
 - prompt, output ceiling, request config, and seed match the intended protocol
 - hardware and measurement protocol are present
-- timing, energy, VRAM, output length, forward count, and required trace policy are satisfied
+- timing, energy, VRAM, output length, step count, and required trace policy are satisfied
 - no `oom_info.json` invalidates the row
 - score fingerprints match current generation and scorer revisions
 - cross-model resource charts use the same hardware and sample-set hash

@@ -516,7 +516,7 @@ def run_generation(
                 generation.extra["step_compute_status"] = "complete"
             elif generation.forward_profiles:
                 generation.extra["step_compute_status"] = "replay_mismatch"
-                generation.extra["step_compute_replay_forwards"] = len(replay_flops)
+                generation.extra["step_compute_replay_steps"] = len(replay_flops)
             timed_stages = generation.extra.get("stage_profiles", [])
             replay_stages = getattr(compute_handle, "stage_profiles", None) or []
             if [item.get("stage") for item in timed_stages] == [

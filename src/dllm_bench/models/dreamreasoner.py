@@ -265,7 +265,7 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                     break
 
                 force_accept = step == denoising_steps - 1
-                with self._profile_stage("denoise_forward"):
+                with self._profile_stage("denoise_step"):
                     with torch.no_grad():
                         logits = self._model(
                         cur_x,
