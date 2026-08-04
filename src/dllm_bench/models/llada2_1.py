@@ -29,7 +29,8 @@ class Llada21Adapter(BaseModelAdapter):
                  device: str = "cuda", torch_dtype: str = "bfloat16", block_length: int = 32,
                  threshold: float = 0.7, editing_threshold: float = 0.5, max_post_steps: int = 16,
                  editing_enabled: bool = True, temperature: float = 0.0, mask_id: int = 156895,
-                 eos_id: int = 156892, trust_remote_code: bool = True, **_: Any) -> None:
+                 eos_id: int = 156892, trust_remote_code: bool = True,
+                 official_generation: bool = False, **_: Any) -> None:
         super().__init__()
         self.config_name = config_name
         self.model_name_or_path = model_name_or_path
@@ -45,6 +46,8 @@ class Llada21Adapter(BaseModelAdapter):
         self.mask_id = int(mask_id)
         self.eos_id = int(eos_id)
         self.trust_remote_code = bool(trust_remote_code)
+        self.official_generation = bool(official_generation)
+        self.supports_trace = not self.official_generation
         self._model = None
         self._tokenizer = None
 
@@ -113,11 +116,64 @@ class Llada21Adapter(BaseModelAdapter):
             raise RuntimeError("The remote LLaDA2.1 model does not expose its official sampler helper.")
         return sampler(logits, self.temperature, 0, 1.0)
 
+    def _generate_official(self, request: GenerationRequest) -> GenerationResult:
+        """Use the checkpoint's public Transformers generation entrypoint."""
+        import torch
+
+        prompt_ids = self._prompt_ids(request.prompt)
+        attention_mask = torch.ones_like(prompt_ids)
+        generation_kwargs = {
+            "input_ids": prompt_ids,
+            "attention_mask": attention_mask,
+            "max_new_tokens": int(request.max_new_tokens),
+            "return_dict_in_generate": True,
+            "pad_token_id": self.eos_id,
+            "eos_token_id": self.eos_id,
+        }
+        if self.temperature > 0:
+            generation_kwargs.update(
+                {"do_sample": True, "temperature": self.temperature}
+            )
+        else:
+            generation_kwargs["do_sample"] = False
+
+        self._start_measurement()
+        with self._forward_phase("generation_step"), torch.inference_mode():
+            generated = self._model.generate(**generation_kwargs)
+        self._stop_measurement()
+
+        sequences = getattr(generated, "sequences", generated)
+        token_ids = [int(value) for value in sequences[0, prompt_ids.shape[1] :].tolist()]
+        valid_ids = []
+        for token_id in token_ids:
+            if token_id == self.eos_id:
+                break
+            valid_ids.append(token_id)
+        output_text = self._tokenizer.decode(valid_ids, skip_special_tokens=True)
+        reported_steps = getattr(generated, "nfe", None)
+        if hasattr(reported_steps, "item"):
+            reported_steps = reported_steps.item()
+        num_steps = int(reported_steps) if reported_steps is not None else len(token_ids)
+        return GenerationResult(
+            request=request,
+            output_text=output_text,
+            status=RunStatus.SUCCESS,
+            num_forward_passes=num_steps,
+            final_valid_length=len(valid_ids),
+            extra={
+                "execution_path": "official-transformers-generate",
+                "model_revision": self.revision,
+                "input_tokens": int(prompt_ids.shape[1]),
+            },
+        )
+
     def _generate_core(self, request: GenerationRequest) -> GenerationResult:
         import torch
 
         self._ensure_loaded()
         spec = dict(request.config.get("editable_sudoku") or {})
+        if self.official_generation:
+            return self._generate_official(request)
         answer_cells = int(spec.get("answer_cells", request.max_new_tokens))
         size = int(round(math.sqrt(answer_cells)))
         if size * size != answer_cells:

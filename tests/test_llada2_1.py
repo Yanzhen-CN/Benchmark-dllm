@@ -94,6 +94,9 @@ def test_llada21_controlled_repair_changes_editable_but_not_immutable_cells():
 
 
 def test_llada21_registry_matrix_and_editable_dataset_are_buildable():
+    official = build_model_adapter("configs/models/llada2_1.yaml", "official")
+    assert official.config_name == "official"
+    assert official.supports_trace is False
     adapter = build_model_adapter("configs/models/llada2_1.yaml", "qmode")
     assert adapter.config_name == "qmode"
     dataset = build_dataset("configs/datasets/editable_sudoku4.yaml")

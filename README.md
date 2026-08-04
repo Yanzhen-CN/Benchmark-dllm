@@ -398,6 +398,12 @@ dataset_kwargs: {}
 
 `configs/experiments/full_matrix.yaml` selects formal models, variants, datasets, output ceilings, and per-model overrides. Change the matrix to change a run; do not edit runner code for experiment selection.
 
+LLaDA2.1-mini uses only its `official` Transformers generation path in the
+formal matrix and receives the same standard datasets, prompts, selected
+samples, and output ceilings as the other models. Its `qmode`/`smode`
+editable-canvas Sudoku matrix is diagnostic-only and is never included in
+cross-model benchmark results.
+
 ## Adding a new model
 
 The pipeline is model-agnostic after a model is registered. A new backend normally requires the following bounded changes.

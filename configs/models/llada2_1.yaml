@@ -1,6 +1,13 @@
 model: llada2_1
 max_context_tokens: 32768
 configs:
+  official:
+    adapter: dllm_bench.models.llada2_1.Llada21Adapter
+    init_kwargs:
+      model_name_or_path: inclusionAI/LLaDA2.1-mini
+      revision: 20e64e2
+      official_generation: true
+      temperature: 0.0
   qmode:
     adapter: dllm_bench.models.llada2_1.Llada21Adapter
     init_kwargs:
@@ -12,6 +19,7 @@ configs:
       max_post_steps: 16
       editing_enabled: true
       temperature: 0.0
+      official_generation: false
   smode:
     adapter: dllm_bench.models.llada2_1.Llada21Adapter
     init_kwargs:
@@ -23,3 +31,4 @@ configs:
       max_post_steps: 16
       editing_enabled: true
       temperature: 0.0
+      official_generation: false
