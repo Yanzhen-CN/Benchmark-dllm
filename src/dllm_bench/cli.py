@@ -1146,11 +1146,6 @@ def matrix_command(
                 )
             )
         )
-        if configured_output_dir.name != expected_output_stage:
-            raise click.UsageError(
-                f"experiment output_root={str(configured_output_dir)!r} must end "
-                f"with output_stage={expected_output_stage!r}"
-            )
         output_root = str(configured_output_dir)
     else:
         output_root = str(output_root)

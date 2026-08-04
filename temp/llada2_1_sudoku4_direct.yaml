@@ -1,6 +1,6 @@
 # Isolated prompt diagnostic. Data and outputs stay under temp/.
 base_dir: ..
-output_root: temp/model_output
+output_root: temp/output
 output_stage: model_output
 
 models:
