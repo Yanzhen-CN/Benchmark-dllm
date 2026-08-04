@@ -283,6 +283,7 @@ def render_model_comparison_visualization(
                 dataset_name=dataset_name,
                 records_by_variant=records_by_variant,
                 out_dir=out_dir,
+                block_length=block_length,
                 figures=public_figures,
             )
         )

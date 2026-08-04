@@ -11,6 +11,7 @@ from typing import Any
 from ...runner.output_layout import run_id
 from .tables import RAW_COLUMNS, raw_results_row, render_raw_results_table
 from .paper_assets import render_paper_assets
+from .plots import plot_task4_block_local_tau
 
 
 def _slug(value: str) -> str:
@@ -219,6 +220,10 @@ def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -
             trace_metrics_path.unlink(missing_ok=True)
             if _write_trace_metrics(group_rows, trace_metrics_path):
                 written.append(trace_metrics_path)
+            block_tau_path = out_dir / "block_local_tau_comparison.png"
+            plot_task4_block_local_tau(group_rows, str(block_tau_path))
+            if block_tau_path.exists():
+                written.append(block_tau_path)
             (out_dir / "task4_tpf_vs_tps.csv").unlink(missing_ok=True)
     written.extend(render_paper_assets(summaries, report_root))
     return written

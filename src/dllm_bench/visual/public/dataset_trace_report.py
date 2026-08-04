@@ -795,6 +795,7 @@ def render_dataset_trace_report(
         "dataset_structure_content_progress.png",
         "dataset_finalization_map.png",
         "dataset_commit_order_tau.png",
+        "dataset_block_local_tau.png",
         "dataset_finalization_share.png",
         "dataset_parallelism_signature.png",
         "dataset_final_stable_progress.png",
@@ -805,6 +806,23 @@ def render_dataset_trace_report(
     ):
         (out / filename).unlink(missing_ok=True)
     written = {"summary": str(summary_path)}
+
+    from .plots import plot_task4_block_local_tau
+
+    block_tau_path = out / "dataset_block_local_tau.png"
+    plot_task4_block_local_tau(
+        [
+            {
+                "Model": model_name or "unknown",
+                "Config": config_name or "unknown",
+                "N": len(records),
+                "Trace Summary": summary,
+            }
+        ],
+        str(block_tau_path),
+    )
+    if block_tau_path.exists():
+        written["block_local_tau"] = str(block_tau_path)
 
     _, auxiliary_rows = build_auxiliary_performance_summary(
         dataset_name=dataset_name,

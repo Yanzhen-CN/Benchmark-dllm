@@ -584,6 +584,7 @@ def render_trace_comparison(
     dataset_name: str,
     records_by_variant: dict[str, list[Record]],
     out_dir: str | Path,
+    block_length: int | None = None,
     figures: set[str] | None = None,
 ) -> dict[str, str]:
     """Render every benchmark-common cross-variant trace artifact."""
@@ -621,6 +622,7 @@ def render_trace_comparison(
         "entropy_by_real_forward_step.png",
         "entropy_by_real_forward_step.csv",
         "position_step_entropy.png",
+        "block_local_tau_comparison.png",
     ):
         (out / stale).unlink(missing_ok=True)
 
@@ -637,6 +639,29 @@ def render_trace_comparison(
     step_events_path = out / "trace_step_events.png"
     csv_path = out / "trace_stepwise.csv"
     metadata_path = out / "trace_metadata.json"
+    block_tau_path = out / "block_local_tau_comparison.png"
+    if render_trace and block_length:
+        from .dataset_trace_report import build_dataset_trace_summary
+        from .plots import plot_task4_block_local_tau
+
+        tau_rows: list[dict[str, Any]] = []
+        for variant, records in records_by_variant.items():
+            trace_summary, _ = build_dataset_trace_summary(
+                dataset_name,
+                records,
+                model_name=model_name,
+                config_name=variant,
+                block_length=block_length,
+            )
+            tau_rows.append(
+                {
+                    "Model": model_name,
+                    "Config": variant,
+                    "N": len(records),
+                    "Trace Summary": trace_summary,
+                }
+            )
+        plot_task4_block_local_tau(tau_rows, str(block_tau_path))
     if render_trace or "state" in figures:
         _plot_position_state(
             dataset_name=dataset_name,
@@ -735,4 +760,6 @@ def render_trace_comparison(
         written["answer_trace"] = str(answer_path)
     if step_events_path.exists() and (render_trace or "yield" in figures):
         written["trace_step_events"] = str(step_events_path)
+    if block_tau_path.exists() and render_trace:
+        written["block_local_tau_comparison"] = str(block_tau_path)
     return written

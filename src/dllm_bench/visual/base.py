@@ -45,7 +45,7 @@ def public_comparison_renderer(model_name: str) -> VisualRenderer:
         block_length: int | None = None,
         figures: set[str] | None = None,
     ) -> dict[str, str]:
-        del seed, block_length
+        del seed
         from .public.trace_comparison import render_trace_comparison
 
         return render_trace_comparison(
@@ -53,6 +53,7 @@ def public_comparison_renderer(model_name: str) -> VisualRenderer:
             dataset_name=dataset_name,
             records_by_variant=records_by_variant,
             out_dir=out_dir,
+            block_length=block_length,
             figures=figures,
         )
 

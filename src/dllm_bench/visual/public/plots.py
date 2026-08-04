@@ -214,6 +214,44 @@ def plot_task4_tau_windows(rows: list[dict[str, Any]], out_path: str) -> None:
     plt.close(fig)
 
 
+def plot_task4_block_local_tau(rows: list[dict[str, Any]], out_path: str) -> None:
+    """Compare within-block acceptance order without global block scheduling."""
+    fig, ax = plt.subplots(figsize=(8.2, 5.0))
+    plotted = False
+    for row in rows:
+        metric = (row.get("Trace Summary") or {}).get(
+            "block_local_commit_order_tau", {}
+        )
+        by_block = metric.get("by_block", {})
+        if not by_block:
+            continue
+        blocks = sorted(int(value) for value in by_block)
+        means = [by_block[str(block)]["mean"] for block in blocks]
+        lows = [by_block[str(block)]["ci_low"] for block in blocks]
+        highs = [by_block[str(block)]["ci_high"] for block in blocks]
+        line = ax.plot(blocks, means, marker="o", markersize=3, label=_label(row))[0]
+        ax.fill_between(
+            blocks,
+            lows,
+            highs,
+            color=line.get_color(),
+            alpha=0.12,
+        )
+        plotted = True
+    if not plotted:
+        plt.close(fig)
+        return
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_ylim(-1, 1)
+    ax.set_xlabel("Block index")
+    ax.set_ylabel("Kendall tau-b within block")
+    ax.set_title("Within-block acceptance order")
+    place_legend(ax)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
 def plot_task4_finalization_share(rows: list[dict[str, Any]], out_path: str) -> None:
     usable = [
         row
