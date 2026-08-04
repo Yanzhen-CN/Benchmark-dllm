@@ -28,15 +28,15 @@ def main() -> int:
                 "prompt": (
                     "Complete the 4x4 Sudoku. 0 is blank; each row, column, and "
                     "2x2 box must contain 1-4 once.\n"
-                    "Example puzzle: 2003032001024001\n"
-                    "Example answer: 2413132431424231\n"
+                    "Example puzzle: 1200430031002010\n"
+                    "Example answer: 1234432131422413\n"
                     f"Puzzle: {puzzle}\n"
                     "Answer only with the final 16 digits:"
                 ),
                 "reference": dataclasses.asdict(sample.reference),
                 "meta": {
                     **sample.meta,
-                    "prompt_protocol": "temporary-one-shot-direct-16-digits-v5",
+                    "prompt_protocol": "temporary-one-shot-direct-16-digits-v6",
                 },
             }
             output.write(json.dumps(record, ensure_ascii=True, separators=(",", ":")))
