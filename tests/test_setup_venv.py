@@ -76,6 +76,35 @@ def test_model_run_uses_the_model_venv_python(monkeypatch):
     assert commands[0][1:4] == ["-m", "dllm_bench.cli", "matrix"]
 
 
+def test_setup_removes_environment_with_missing_python(monkeypatch, tmp_path):
+    profile = _model_script.PROFILES["llada2_1"]
+    model_venv = tmp_path / "llada2_1"
+    stale_file = model_venv / "lib" / "stale.txt"
+    stale_file.parent.mkdir(parents=True)
+    stale_file.write_text("stale", encoding="utf-8")
+    commands = []
+
+    monkeypatch.setattr(_model_script, "venv_dir", lambda selected: model_venv)
+
+    def capture_run(command, **kwargs):
+        commands.append(command)
+        if command[1:3] == ["-m", "venv"]:
+            assert not model_venv.exists()
+            python = _model_script.venv_python(model_venv)
+            python.parent.mkdir(parents=True)
+            python.touch()
+        elif len(commands) == 2:
+            raise RuntimeError("stop after venv recreation")
+
+    monkeypatch.setattr(_model_script, "run", capture_run)
+
+    with pytest.raises(RuntimeError, match="stop after venv recreation"):
+        _model_script.setup_environment(profile, "cu124")
+
+    assert not stale_file.exists()
+    assert commands[0][1:3] == ["-m", "venv"]
+
+
 def test_generate_stage_does_not_receive_visualization_sample_limit(monkeypatch):
     monkeypatch.setenv("STAGE", "generate")
     monkeypatch.setenv("N_REPRESENTATIVE", "3")

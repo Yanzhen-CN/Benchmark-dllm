@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -359,6 +360,13 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
         )
     apply_cuda_compatibility(profile, install_env)
 
+    python = venv_python(directory)
+    if directory.exists() and not python.is_file():
+        print(
+            f"Removing broken {profile.model_id} environment: {directory}",
+            flush=True,
+        )
+        shutil.rmtree(directory)
     run([base_python, "-m", "venv", directory])
     python = venv_python(directory)
     bootstrap_requirements = [
