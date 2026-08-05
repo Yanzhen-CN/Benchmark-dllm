@@ -111,7 +111,7 @@ datasets:
     max_new_tokens: 32
     optional: true
   - config: configs/datasets/sudoku9_1shot.yaml
-    max_new_tokens: 128
+    max_new_tokens: 96
     optional: true
   # Reference-only long-reasoning rows: prepare all 100 prompt variants, then
   # run the same deterministic first sample for every model.
