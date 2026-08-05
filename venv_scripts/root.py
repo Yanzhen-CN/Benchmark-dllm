@@ -29,6 +29,7 @@ def venv_python(directory: Path | None = None) -> Path:
 
 
 def ensure_environment() -> Path:
+    """Create or repair the root environment after explicit confirmation."""
     python = venv_python()
     install_environment = os.environ.copy()
     data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
@@ -69,11 +70,55 @@ def ensure_environment() -> Path:
     return python
 
 
+def require_environment() -> Path:
+    """Return a complete root environment without modifying it."""
+    python = venv_python()
+    if not python.is_file():
+        raise SystemExit(f"root environment is missing or broken: {ROOT_VENV}")
+    import_check = subprocess.run(
+        [str(python), "-c", "import dllm_bench, yaml, matplotlib"],
+        cwd=REPO_ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if import_check.returncode != 0:
+        raise SystemExit(f"root environment is incomplete: {ROOT_VENV}")
+    return python
+
+
+def _confirm_setup(problem: str) -> bool:
+    print(problem, file=sys.stderr, flush=True)
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, OSError):
+        interactive = False
+    if not interactive:
+        return False
+    try:
+        answer = input("Run setup for the root environment now? [y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        print("Setup cancelled.", file=sys.stderr, flush=True)
+        return False
+    return answer.strip().lower() in {"y", "yes"}
+
+
+def data_preparation_environment() -> Path:
+    """Resolve `.venvs/root`, asking before setup during data preparation."""
+    try:
+        return require_environment()
+    except SystemExit as error:
+        problem = str(error)
+        if not _confirm_setup(problem):
+            raise SystemExit(f"{problem}; setup was not run") from None
+        return ensure_environment()
+
+
 def run_in_root_venv(script: str | Path, argv: Sequence[str]) -> None:
     """Replace the current process with ``script`` under `.venvs/root`."""
     if os.environ.get(INSIDE_ROOT_VENV) == "1":
         return
-    python = ensure_environment()
+    python = data_preparation_environment()
     environment = os.environ.copy()
     environment[INSIDE_ROOT_VENV] = "1"
     script = Path(script).resolve()

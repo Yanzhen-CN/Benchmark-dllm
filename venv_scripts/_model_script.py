@@ -544,6 +544,57 @@ def require_environment(profile: ModelProfile) -> Path:
     return python
 
 
+def _confirm_run_setup(profile: ModelProfile, problem: str) -> bool:
+    """Ask before changing a model environment during an interactive run."""
+    print(problem, file=sys.stderr, flush=True)
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, OSError):
+        interactive = False
+    if not interactive:
+        return False
+    try:
+        answer = input(
+            f"Run setup for {profile.model_id} now? [y/N] "
+        )
+    except (EOFError, KeyboardInterrupt):
+        print("Setup cancelled.", file=sys.stderr, flush=True)
+        return False
+    return answer.strip().lower() in {"y", "yes"}
+
+
+def run_environment(profile: ModelProfile, cuda_index: str) -> Path:
+    """Resolve the model interpreter, requiring consent for any repair."""
+    try:
+        python = require_environment(profile)
+    except SystemExit as error:
+        problem = str(error)
+        if not _confirm_run_setup(profile, problem):
+            raise SystemExit(
+                f"{problem}; setup was not run"
+            ) from None
+        return setup_environment(profile, cuda_index)
+
+    if _project_importable(python):
+        return python
+
+    problem = (
+        f"dllm_bench is not installed in {venv_dir(profile)}; "
+        "the model environment is incomplete"
+    )
+    if not _confirm_run_setup(profile, problem):
+        raise SystemExit(f"{problem}; setup was not run")
+
+    # Keep the heavyweight, already-installed model stack intact. This is the
+    # final project-install step from setup and deliberately installs no deps.
+    repair_project_installation(profile, python)
+    if not _project_importable(python):
+        raise SystemExit(
+            f"setup did not make dllm_bench importable in {venv_dir(profile)}"
+        )
+    return python
+
+
 def _installed_distribution_version(python: Path, distribution: str) -> str | None:
     result = subprocess.run(
         [
@@ -771,7 +822,10 @@ def main(model_id: str, argv: Sequence[str] | None = None) -> int:
         setup_environment(profile, args.cuda_index)
         return 0
 
-    python = require_environment(profile)
+    if args.action == "run":
+        python = run_environment(profile, args.cuda_index)
+    else:
+        python = require_environment(profile)
     if args.action == "check":
         check_environment(profile, python)
     elif args.action == "prepare":
@@ -782,10 +836,5 @@ def main(model_id: str, argv: Sequence[str] | None = None) -> int:
             command.extend(["--variants", os.environ["PREPARE_MODEL_VARIANTS"]])
         run(command, env=model_environment(profile))
     else:
-        if not _project_importable(python):
-            raise SystemExit(
-                f"dllm_bench is not installed in {venv_dir(profile)}; "
-                f"run `python setup_venv.py -m {profile.model_id}` explicitly"
-            )
         run([python, *benchmark_arguments(profile)], env=model_environment(profile))
     return 0

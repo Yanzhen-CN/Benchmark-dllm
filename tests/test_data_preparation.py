@@ -214,6 +214,8 @@ def test_prepare_data_creates_and_reexecutes_in_root_venv(tmp_path, monkeypatch)
     commands: list[list[str]] = []
     monkeypatch.setattr(root_venv, "ROOT_VENV", root_directory)
     monkeypatch.delenv(root_venv.INSIDE_ROOT_VENV, raising=False)
+    monkeypatch.setattr(root_venv.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
 
     def fake_run(command, **kwargs):
         command = [str(value) for value in command]
@@ -242,3 +244,40 @@ def test_prepare_data_creates_and_reexecutes_in_root_venv(tmp_path, monkeypatch)
 
     assert any(command[1:3] == ["-m", "venv"] for command in commands)
     assert any(command[-4:] == ["pip", "install", "-e", "."] for command in commands)
+
+
+def test_prepare_data_declines_root_environment_setup(tmp_path, monkeypatch):
+    root_directory = tmp_path / ".venvs" / "root"
+    monkeypatch.setattr(root_venv, "ROOT_VENV", root_directory)
+    monkeypatch.delenv(root_venv.INSIDE_ROOT_VENV, raising=False)
+    monkeypatch.setattr(root_venv.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    monkeypatch.setattr(
+        root_venv,
+        "ensure_environment",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("declined setup must not create the root environment")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="setup was not run"):
+        root_venv.run_in_root_venv(PREPARE_SCRIPT, [])
+
+
+def test_noninteractive_prepare_data_never_sets_up_root_environment(
+    tmp_path, monkeypatch
+):
+    root_directory = tmp_path / ".venvs" / "root"
+    monkeypatch.setattr(root_venv, "ROOT_VENV", root_directory)
+    monkeypatch.delenv(root_venv.INSIDE_ROOT_VENV, raising=False)
+    monkeypatch.setattr(root_venv.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(
+        root_venv,
+        "ensure_environment",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("noninteractive preparation must not mutate environments")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="setup was not run"):
+        root_venv.run_in_root_venv(PREPARE_SCRIPT, [])

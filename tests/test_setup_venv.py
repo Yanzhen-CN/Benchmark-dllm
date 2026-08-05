@@ -125,6 +125,84 @@ def test_model_run_fails_cleanly_when_its_venv_python_is_missing(
         _model_script.main("illada_entropy", ["run"])
 
 
+def test_interactive_model_run_can_setup_a_missing_environment(
+    monkeypatch, tmp_path
+):
+    model_venv = tmp_path / "illada-entropy"
+    model_python = _model_script.venv_python(model_venv)
+    commands = []
+    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setattr(_model_script.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    monkeypatch.setattr(
+        _model_script,
+        "setup_environment",
+        lambda profile, cuda_index: model_python,
+    )
+    monkeypatch.setattr(
+        _model_script, "run", lambda command, **kwargs: commands.append(command)
+    )
+
+    assert _model_script.main("illada_entropy", ["run"]) == 0
+    assert commands[0][0] == model_python
+
+
+def test_interactive_model_run_declines_missing_environment_setup(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("DLLM_VENV_DIR", str(tmp_path / "missing"))
+    monkeypatch.setattr(_model_script.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    monkeypatch.setattr(
+        _model_script,
+        "setup_environment",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("declined setup must not change the environment")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="setup was not run"):
+        _model_script.main("illada_entropy", ["run"])
+
+
+def test_interactive_model_run_can_repair_only_missing_project_install(
+    monkeypatch, tmp_path
+):
+    model_venv = tmp_path / "illada-entropy"
+    model_python = _model_script.venv_python(model_venv)
+    model_python.parent.mkdir(parents=True)
+    model_python.touch()
+    commands = []
+    importable = False
+    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setattr(_model_script.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "yes")
+    monkeypatch.setattr(
+        _model_script,
+        "_project_importable",
+        lambda python: importable,
+    )
+
+    def repair(profile, python):
+        nonlocal importable
+        importable = True
+
+    monkeypatch.setattr(_model_script, "repair_project_installation", repair)
+    monkeypatch.setattr(
+        _model_script,
+        "setup_environment",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("an intact venv must not be fully rebuilt")
+        ),
+    )
+    monkeypatch.setattr(
+        _model_script, "run", lambda command, **kwargs: commands.append(command)
+    )
+
+    assert _model_script.main("illada_entropy", ["run"]) == 0
+    assert commands[0][0] == model_python
+
+
 def test_setup_removes_environment_with_missing_python(monkeypatch, tmp_path):
     profile = _model_script.PROFILES["llada2_1"]
     model_venv = tmp_path / "llada2_1"
