@@ -43,7 +43,14 @@ def _maybe_render_sudoku_gif(
     out_dir: Path,
     sample_id: str,
 ) -> str | None:
-    if dataset_name not in {"sudoku4", "sudoku4_thinking", "sudoku9", "sudoku_trace"} or sample is None or not trace:
+    if dataset_name not in {
+        "sudoku4",
+        "sudoku4_1shot",
+        "sudoku4_thinking",
+        "sudoku9",
+        "sudoku9_1shot",
+        "sudoku_trace",
+    } or sample is None or not trace:
         return None
 
     from .sudoku_trace_viz import (

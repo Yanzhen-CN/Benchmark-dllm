@@ -138,11 +138,14 @@ def format_sudoku4_prompt(
         )
     if shot_count == 1:
         return (
-            "0 represents a blank cell. "
+            "Fill a 4x4 Sudoku. 0 represents a blank cell. "
+            "Keep every non-zero clue unchanged. Each row, column, and 2x2 box "
+            "must contain each digit 1-4 exactly once. Grids are written in "
+            "row-major order. "
             f"Example input: {SUDOKU4_ONE_SHOT_EXAMPLE_PUZZLE} "
             f"Example output: {SUDOKU4_ONE_SHOT_EXAMPLE_ANSWER} "
-            f"Fill in this Sudoku: {puzzle} "
-            "Directly return your 16-digit answer using only 1-4."
+            f"Puzzle: {puzzle} "
+            "Directly return only the final 16-digit answer using digits 1-4."
         )
     if shot_count != 0:
         raise ValueError(f"Sudoku4 supports only 0-shot or 1-shot prompts, got {shot_count}")

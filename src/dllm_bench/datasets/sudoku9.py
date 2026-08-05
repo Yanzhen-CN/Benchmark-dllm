@@ -149,11 +149,14 @@ def format_sudoku_trace_prompt(puzzle_digits: str) -> str:
 
 def format_sudoku_one_shot_prompt(puzzle_digits: str) -> str:
     return (
-        "0 represents a blank cell. "
+        "Fill a 9x9 Sudoku. 0 represents a blank cell. "
+        "Keep every non-zero clue unchanged. Each row, column, and 3x3 box "
+        "must contain each digit 1-9 exactly once. Grids are written in "
+        "row-major order. "
         f"Example input: {SUDOKU_ONE_SHOT_EXAMPLE_PUZZLE} "
         f"Example output: {SUDOKU_ONE_SHOT_EXAMPLE_ANSWER} "
-        f"Fill in this Sudoku: {puzzle_digits} "
-        "Directly return your 81-digit answer using only 1-9."
+        f"Puzzle: {puzzle_digits} "
+        "Directly return only the final 81-digit answer using digits 1-9."
     )
 
 
