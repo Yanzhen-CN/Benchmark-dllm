@@ -556,7 +556,7 @@ class Sudoku9Dataset(Dataset):
 class Sudoku9OneShotDataset(Sudoku9Dataset):
     """The formal Sudoku9 subset with a fixed, non-overlapping example."""
 
-    name = "sudoku9_one_shot"
+    name = "sudoku9"
 
     def __init__(self, *args, **kwargs) -> None:
         kwargs["enable_reasoning"] = False

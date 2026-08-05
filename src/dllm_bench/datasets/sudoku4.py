@@ -437,7 +437,7 @@ class Sudoku4Dataset(Dataset):
 class Sudoku4OneShotDataset(Sudoku4Dataset):
     """The formal Sudoku4 subset with a fixed, non-overlapping example."""
 
-    name = "sudoku4_one_shot"
+    name = "sudoku4"
 
     def __init__(self, *args, **kwargs) -> None:
         kwargs["enable_reasoning"] = False
