@@ -149,11 +149,11 @@ def format_sudoku_trace_prompt(puzzle_digits: str) -> str:
 
 def format_sudoku_one_shot_prompt(puzzle_digits: str) -> str:
     return (
-        "0 represents a blank cell.\n"
-        f"Example input: {SUDOKU_ONE_SHOT_EXAMPLE_PUZZLE}\n"
-        f"Example output: {SUDOKU_ONE_SHOT_EXAMPLE_ANSWER}\n"
-        f"Fill in this Sudoku: {puzzle_digits}\n"
-        "Directly return your answer with only 81 digits."
+        "0 represents a blank cell. "
+        f"Example input: {SUDOKU_ONE_SHOT_EXAMPLE_PUZZLE} "
+        f"Example output: {SUDOKU_ONE_SHOT_EXAMPLE_ANSWER} "
+        f"Fill in this Sudoku: {puzzle_digits} "
+        "Directly return your 81-digit answer using only 1-9."
     )
 
 
