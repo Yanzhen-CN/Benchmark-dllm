@@ -1,7 +1,7 @@
 """Stage 2: scoring only. Reads generations back from ``model_output/`` (no
 model adapter, no GPU, no torch needed — see ``persistence.generation_result_from_dict``),
 writes one `ScoreResult` JSON per sample plus an aggregate ``summary.json``
-under ``output/score_output/<model>_<config>/<dataset>/``, and skips
+under ``output/score_output/<model>/<config>/<dataset>/``, and skips
 re-scoring samples that already have a score file — the same per-sample
 resume behavior as ``generate_stage``, useful since some scorers (MBPP's code
 execution) aren't free.

@@ -25,10 +25,19 @@ def _trace_summary(summary: dict[str, Any], output_root: Path) -> dict[str, Any]
     path = (
         output_root
         / "visualization_output"
-        / run_id(summary["model_name"], summary["config_name"])
+        / summary["model_name"]
+        / summary["config_name"]
         / summary["dataset_name"]
         / "dataset_trace_summary.json"
     )
+    if not path.exists():
+        path = (
+            output_root
+            / "visualization_output"
+            / run_id(summary["model_name"], summary["config_name"])
+            / summary["dataset_name"]
+            / "dataset_trace_summary.json"
+        )
     if not path.exists():
         return {}
     try:

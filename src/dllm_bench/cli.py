@@ -867,11 +867,25 @@ def _valid_summary_paths(paths: list[str]) -> list[str]:
     valid_paths = []
     for raw_path in dict.fromkeys(paths):
         summary_path = Path(raw_path)
-        dataset_dir = summary_path.parent
-        run_dir = dataset_dir.parent
-        score_root = run_dir.parent
-        model_out = score_root.parent / "model_output" / run_dir.name / dataset_dir.name
-        if score_root.name == "score_output" and (model_out / "_meta.json").exists():
+        try:
+            summary = load_run_summary_dict(summary_path)
+        except (OSError, ValueError):
+            valid_paths.append(str(summary_path))
+            continue
+
+        score_root = next(
+            (parent for parent in summary_path.parents if parent.name == "score_output"),
+            None,
+        )
+        model_out = None
+        if score_root is not None:
+            model_out = resolve_model_output_dir(
+                score_root.parent / "model_output",
+                str(summary.get("model_name", "")),
+                str(summary.get("config_name", "")),
+                str(summary.get("dataset_name", summary_path.parent.name)),
+            )
+        if model_out is not None and (model_out / "_meta.json").exists():
             try:
                 ensure_test_valid(model_out)
             except InvalidTestError as exc:
@@ -890,7 +904,7 @@ def _valid_summary_paths(paths: list[str]) -> list[str]:
 
 @main.command()
 @click.option("--run", "run_paths", multiple=True, type=click.Path(exists=True), help="One or more summary.json files from `dllm-bench score`")
-@click.option("--output-root", default=None, type=click.Path(), help="Auto-discover summary.json files under output_root/score_output/*/<dataset>/")
+@click.option("--output-root", default=None, type=click.Path(), help="Auto-discover summary.json files under output_root/score_output/<model>/<config>/<dataset>/")
 @click.option("--model", "model_names", multiple=True, help="Only include these model names")
 @click.option("--dataset", "dataset_names", multiple=True, help="Only include these datasets")
 def report(
@@ -903,7 +917,7 @@ def report(
     paths = list(run_paths)
     if output_root:
         score_root = Path(output_root) / "score_output"
-        paths.extend(str(p) for p in sorted(score_root.glob("*/*/summary.json")))
+        paths.extend(str(p) for p in sorted(score_root.rglob("summary.json")))
 
     if not paths:
         raise click.UsageError("no summary.json files found (pass --run, or --output-root [--dataset])")
@@ -959,7 +973,7 @@ def pairwise_report(
     """Write isolated A-relative-to-B sensitivity artifacts; never a leaderboard."""
     score_root = Path(output_root) / "score_output"
     paths = _valid_summary_paths(
-        [str(path) for path in sorted(score_root.glob("*/*/summary.json"))]
+        [str(path) for path in sorted(score_root.rglob("summary.json"))]
     )
     summaries = [load_run_summary_dict(path) for path in paths]
     if dataset_names:

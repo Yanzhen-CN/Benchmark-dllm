@@ -1,5 +1,5 @@
 """Stage 1: generation only. Writes one JSON per sample under
-``output/model_output/<model>_<config>/<dataset>/`` (see ``output_layout.py``)
+``output/model_output/<model>/<config>/<dataset>/`` (see ``output_layout.py``)
 and skips samples that already have a file there — the resume behavior that
 lets a half-finished dataset run continue without redoing already-generated
 samples, and lets generation happen entirely separately from scoring (e.g.

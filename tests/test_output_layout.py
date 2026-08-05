@@ -20,10 +20,10 @@ def test_qwen_ar_baseline_does_not_repeat_variant_in_run_id():
 def test_qwen_model_output_uses_unsuffixed_canonical_directory(tmp_path):
     output_root = tmp_path / "model_output"
     path = model_output_dir(output_root, "qwen3_4b", "ar-baseline", "gsm8k")
-    assert path == tmp_path / "model_output" / "qwen3_4b" / "gsm8k"
+    assert path == tmp_path / "model_output" / "qwen3_4b" / "ar-baseline" / "gsm8k"
 
     path_8b = model_output_dir(output_root, "qwen3_8b", "ar-baseline", "gsm8k")
-    assert path_8b == tmp_path / "model_output" / "qwen3_8b" / "gsm8k"
+    assert path_8b == tmp_path / "model_output" / "qwen3_8b" / "ar-baseline" / "gsm8k"
 
 
 def test_profiling_is_parallel_to_model_output(tmp_path):
@@ -31,7 +31,7 @@ def test_profiling_is_parallel_to_model_output(tmp_path):
         tmp_path / "model_profiling", "diffusiongemma", "official", "mbpp"
     )
     assert path == (
-        tmp_path / "model_profiling" / "diffusiongemma_official" / "mbpp"
+        tmp_path / "model_profiling" / "diffusiongemma" / "official" / "mbpp"
     )
     path.mkdir(parents=True)
     assert resolve_model_profiling_dir(
@@ -58,10 +58,10 @@ def test_dllm_architecture_and_sampling_axes_are_both_in_the_run_id():
 
 def test_dflash_generation_and_scoring_use_the_same_run_directory(tmp_path):
     output_root = tmp_path / "model_output"
-    generated = model_output_dir(output_root, "gemma", "dflash", "gsm8k")
+    generated = model_output_dir(output_root, "gemma_dflash", "dflash", "gsm8k")
     generated.mkdir(parents=True)
 
-    assert generated == tmp_path / "model_output" / "gemma_dflash" / "gsm8k"
+    assert generated == tmp_path / "model_output" / "gemma_dflash" / "dflash" / "gsm8k"
     assert (
         resolve_model_output_dir(
             output_root, "gemma_dflash", "dflash", "gsm8k"
@@ -86,7 +86,7 @@ def test_output_suffix_is_parallel_across_artifact_stages(tmp_path, monkeypatch)
     output_root = tmp_path / "model_output"
     monkeypatch.setenv("DLLM_BENCH_OUTPUT_SUFFIX", "l128")
 
-    expected_tail = Path("diffusiongemma_official") / "sudoku9_1shot_l128"
+    expected_tail = Path("diffusiongemma") / "official" / "sudoku9_1shot_l128"
     assert model_output_dir(
         output_root, "diffusiongemma", "official", "sudoku9_1shot"
     ) == output_root / expected_tail

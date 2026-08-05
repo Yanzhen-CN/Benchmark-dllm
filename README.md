@@ -46,10 +46,12 @@ The normal workflow has three user-facing execution stages:
 ### 1. Prepare a server
 
 The top-level scripts may be launched with any available system Python, which
-acts only as a dispatcher. It never receives model dependencies and does not
-create, repair, upgrade, or delete model environments during a benchmark run.
-Each model command executes with `.venvs/<model>/bin/python`. Environment
-mutation is allowed only through the explicit `setup_venv.py` command below.
+acts only as a dispatcher and never receives model dependencies. Each model
+command executes with `.venvs/<model>/bin/python`, while data preparation uses
+`.venvs/root/bin/python`. If an interactive command finds its environment
+missing or incomplete, it offers to run setup and changes the environment only
+after a `y` confirmation; non-interactive commands exit instead. The explicit
+setup commands below remain the normal setup path.
 
 ```bash
 git clone <repository-url> dllm
@@ -177,7 +179,7 @@ When multiple lengths are selected, each length is isolated under `len<tokens>/`
 
 `model_profiling` is a second `model_output` tree, not a separate artifact
 format. Both trees use the identical
-`<model_config>/<dataset>/` structure and contain the same `_meta.json`,
+`<model>/<config>/<dataset>/` structure and contain the same `_meta.json`,
 per-sample JSON, completion state, and OOM records. Profiling sample JSON only
 adds the profiling measurements collected by this protocol.
 
@@ -220,9 +222,9 @@ its output depends on the installed driver and profiler build.
 
 The profiling matrix declares `profiling_output: true`. Raw `_meta.json` and
 per-sample JSON files are written under
-`output/model_profiling/<model_config>/<dataset>/`, exactly parallel to
-`output/model_output/<model_config>/<dataset>/`. PNG reports remain under the
-matching `output/visualization_output/<model_config>/<dataset>/`. Profiling
+`output/model_profiling/<model>/<config>/<dataset>/`, exactly parallel to
+`output/model_output/<model>/<config>/<dataset>/`. PNG reports remain under the
+matching `output/visualization_output/<model>/<config>/<dataset>/`. Profiling
 fields distinguish collection modes inside JSON; they do not change the output
 layout. Profiling runs are diagnostic and are not passed through
 `run_score.py`.
@@ -322,21 +324,40 @@ For reproducible server runs, prepare data explicitly before generation so netwo
 
 ```text
 output/
-  model_output/<run_id>/<dataset>/
+  model_output/<model>/<config>/<dataset>/
     _meta.json
     <sample_id>.json
     oom_info.json              # only when the complete row is invalid
-  score_output/<run_id>/<dataset>/
+  score_output/<model>/<config>/<dataset>/
     <sample_id>.json
     summary.json
+  model_profiling/<model>/<config>/<dataset>/
+    _meta.json
+    <sample_id>.json
   visualization_output/
-    <run_id>/<dataset>/...
+    <model>/<config>/<dataset>/...
     <model>/model_comparison/<dataset>/...
+    profiling_comparison/...
   report/...
   conversion_output/...
 ```
 
 `model_output` is the raw source of truth. A generation row is reportable only when `_meta.json` marks it complete and valid and every selected sample exists.
+
+Legacy flat directories (`<model_config>/<dataset>`) remain readable. Preview and apply the one-time migration from the repository root:
+
+```bash
+python migrate_output_layout.py --output-root output
+python migrate_output_layout.py --output-root output --apply
+```
+
+The first command is dry-run only. The applied migration never merges into an existing destination and writes a rollback manifest under `output/_layout_migrations/`. To undo one migration:
+
+```bash
+python migrate_output_layout.py --rollback output/_layout_migrations/migration_<timestamp>.json
+```
+
+Run the migration independently on each local or server copy of `output`. Comparison directories under `visualization_output` are intentionally left unchanged.
 
 Score reuse is guarded by fingerprints over the generation text, dataset revision, prompt protocol, scorer revision, ordered sample-set hash, and primary metric. Changing a scorer triggers re-scoring without requiring a new GPU run.
 

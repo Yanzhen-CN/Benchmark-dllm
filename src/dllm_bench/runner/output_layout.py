@@ -1,24 +1,23 @@
 """The output directory convention every stage writes into and reads from:
 
     output/
-      model_output/<run-id>/<dataset>/
+      model_output/<model>/<config>/<dataset>/
         _meta.json          # model/config/dataset name + run_metadata (section 6)
         oom_info.json       # present only when OOM invalidates the complete test
         <sample_id>.json    # full GenerationResult, including trace
-      model_profiling/<run-id>/<dataset>/
+      model_profiling/<model>/<config>/<dataset>/
         _meta.json          # profiling protocol and run metadata
         <sample_id>.json    # GenerationResult plus per-step profiles
-      score_output/<model>_<config>/<dataset>/
+      score_output/<model>/<config>/<dataset>/
         <sample_id>.json    # ScoreResult for that sample
         summary.json        # RunSummary (section 3.4 raw-results-table row)
-      visualization_output/<model>_<config>/<dataset>/
+      visualization_output/<model>/<config>/<dataset>/
         <sample_id>_*.png / .gif
 
-The run ID is normally ``<model>_<config>``. Each Qwen model's sole
-``ar-baseline`` configuration uses just its model name because the suffix is
-redundant. DFlash's model config is already named ``gemma_dflash``, so its
-``dflash`` variant is not appended a second time.
-Splitting by run ID first, ``<dataset>`` second is what lets
+The old layout encoded both axes into a flat ``<model>_<config>`` run ID.
+``run_id`` is retained only for locating those legacy artifacts. New writes
+always keep model, config, and dataset as separate directory levels.
+Splitting by model first, config second, and dataset third is what lets
 each model run independently (skip W1 entirely, run iLLaDA without touching
 DreamReasoner's output), lets a dataset resume mid-way (each stage checks per-sample
 files before redoing work — see ``runner/generate_stage.py``/``score_stage.py``),
@@ -89,10 +88,11 @@ def _dataset_output_name(dataset_name: str) -> str:
 
 
 def _stage_dir(output_root: str | Path, stage: str, model_name: str, config_name: str, dataset_name: str) -> Path:
-    """Use the same <model_config>/<dataset> layout for every artifact stage."""
+    """Use the same <model>/<config>/<dataset> layout for every artifact stage."""
     return (
         _stage_root(output_root, stage)
-        / run_id(model_name, config_name)
+        / model_name
+        / config_name
         / _dataset_output_name(dataset_name)
     )
 
@@ -115,8 +115,11 @@ def _resolve_existing_stage_dir(
     canonical = _stage_dir(output_root, stage, model_name, config_name, dataset_name)
     if canonical.exists():
         return canonical
-    legacy = legacy_run_id(model_name, config_name)
-    if legacy is not None:
+    legacy_ids = [run_id(model_name, config_name)]
+    fully_suffixed = f"{model_name}_{config_name}"
+    if fully_suffixed not in legacy_ids:
+        legacy_ids.append(fully_suffixed)
+    for legacy in legacy_ids:
         legacy_path = (
             _stage_root(output_root, stage)
             / legacy
@@ -128,7 +131,7 @@ def _resolve_existing_stage_dir(
 
 
 def resolve_model_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
-    """Read canonical output, falling back to the pre-rename Qwen directory."""
+    """Read canonical output, falling back to any legacy flat run directory."""
     return _resolve_existing_stage_dir(
         output_root, MODEL_OUTPUT, model_name, config_name, dataset_name
     )
@@ -146,6 +149,17 @@ def resolve_score_output_dir(output_root: str | Path, model_name: str, config_na
 
 def visualization_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
     return _stage_dir(output_root, VISUALIZATION_OUTPUT, model_name, config_name, dataset_name)
+
+
+def resolve_visualization_output_dir(
+    output_root: str | Path,
+    model_name: str,
+    config_name: str,
+    dataset_name: str,
+) -> Path:
+    return _resolve_existing_stage_dir(
+        output_root, VISUALIZATION_OUTPUT, model_name, config_name, dataset_name
+    )
 
 
 def model_comparison_visualization_output_dir(

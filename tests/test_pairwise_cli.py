@@ -29,8 +29,14 @@ def _summary(model: str, config: str, *, seconds: float, energy: float, q: float
 
 
 def _write_summary(output_root: Path, summary: dict) -> None:
-    run = f"{summary['model_name']}_{summary['config_name']}"
-    path = output_root / "score_output" / run / summary["dataset_name"] / "summary.json"
+    path = (
+        output_root
+        / "score_output"
+        / summary["model_name"]
+        / summary["config_name"]
+        / summary["dataset_name"]
+        / "summary.json"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(summary), encoding="utf-8")
 
