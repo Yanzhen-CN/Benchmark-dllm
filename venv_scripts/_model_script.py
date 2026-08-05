@@ -527,6 +527,23 @@ def ensure_environment(profile: ModelProfile, cuda_index: str) -> Path:
     return python
 
 
+def require_environment(profile: ModelProfile) -> Path:
+    """Return the model interpreter without mutating its environment.
+
+    Top-level benchmark scripts may run under any Python, but model execution
+    must never bootstrap, repair, or upgrade a model venv implicitly. Only the
+    explicit ``setup`` action owns environment mutation.
+    """
+    directory = venv_dir(profile)
+    python = venv_python(directory)
+    if not python.is_file():
+        raise SystemExit(
+            f"model environment is missing or broken: {directory}; "
+            f"run `python setup_venv.py -m {profile.model_id}` explicitly"
+        )
+    return python
+
+
 def _installed_distribution_version(python: Path, distribution: str) -> str | None:
     result = subprocess.run(
         [
@@ -754,15 +771,7 @@ def main(model_id: str, argv: Sequence[str] | None = None) -> int:
         setup_environment(profile, args.cuda_index)
         return 0
 
-    if args.action == "prepare":
-        python = venv_python(venv_dir(profile))
-        if not python.is_file():
-            raise SystemExit(
-                f"model environment is missing: {venv_dir(profile)}; "
-                f"run `python setup_venv.py -m {profile.model_id}` first"
-            )
-    else:
-        python = ensure_environment(profile, args.cuda_index)
+    python = require_environment(profile)
     if args.action == "check":
         check_environment(profile, python)
     elif args.action == "prepare":
@@ -773,6 +782,10 @@ def main(model_id: str, argv: Sequence[str] | None = None) -> int:
             command.extend(["--variants", os.environ["PREPARE_MODEL_VARIANTS"]])
         run(command, env=model_environment(profile))
     else:
-        repair_project_installation(profile, python)
+        if not _project_importable(python):
+            raise SystemExit(
+                f"dllm_bench is not installed in {venv_dir(profile)}; "
+                f"run `python setup_venv.py -m {profile.model_id}` explicitly"
+            )
         run([python, *benchmark_arguments(profile)], env=model_environment(profile))
     return 0

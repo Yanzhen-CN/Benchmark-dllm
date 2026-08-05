@@ -45,7 +45,11 @@ The normal workflow has three user-facing execution stages:
 
 ### 1. Prepare a server
 
-The top-level scripts may be launched with the server's system Python. They create and enter the managed virtual environments themselves.
+The top-level scripts may be launched with any available system Python, which
+acts only as a dispatcher. It never receives model dependencies and does not
+create, repair, upgrade, or delete model environments during a benchmark run.
+Each model command executes with `.venvs/<model>/bin/python`. Environment
+mutation is allowed only through the explicit `setup_venv.py` command below.
 
 ```bash
 git clone <repository-url> dllm

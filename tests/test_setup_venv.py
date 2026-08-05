@@ -67,13 +67,62 @@ def test_every_matrix_model_has_an_environment_profile(matrix):
 def test_model_run_uses_the_model_venv_python(monkeypatch):
     commands = []
     model_python = Path("model-specific-python")
-    monkeypatch.setattr(_model_script, "ensure_environment", lambda profile, cuda: model_python)
-    monkeypatch.setattr(_model_script, "repair_project_installation", lambda profile, python: None)
+    monkeypatch.setattr(_model_script, "require_environment", lambda profile: model_python)
+    monkeypatch.setattr(_model_script, "_project_importable", lambda python: True)
     monkeypatch.setattr(_model_script, "run", lambda command, **kwargs: commands.append(command))
 
     assert _model_script.main("illada", ["run"]) == 0
     assert commands[0][0] == model_python
     assert commands[0][1:4] == ["-m", "dllm_bench.cli", "matrix"]
+
+
+def test_model_run_never_creates_repairs_or_updates_environment(monkeypatch):
+    model_python = Path("model-specific-python")
+    commands = []
+    monkeypatch.setattr(_model_script, "require_environment", lambda profile: model_python)
+    monkeypatch.setattr(_model_script, "_project_importable", lambda python: True)
+    monkeypatch.setattr(
+        _model_script,
+        "ensure_environment",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("run must not ensure or update an environment")
+        ),
+    )
+    monkeypatch.setattr(
+        _model_script,
+        "setup_environment",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("run must not create an environment")
+        ),
+    )
+    monkeypatch.setattr(
+        _model_script,
+        "repair_project_installation",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("run must not repair an environment")
+        ),
+    )
+    monkeypatch.setattr(_model_script, "run", lambda command, **kwargs: commands.append(command))
+
+    assert _model_script.main("illada_entropy", ["run"]) == 0
+    assert commands[0][0] == model_python
+
+
+def test_model_run_fails_cleanly_when_its_venv_python_is_missing(
+    monkeypatch, tmp_path
+):
+    model_venv = tmp_path / "illada-entropy"
+    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setattr(
+        _model_script,
+        "setup_environment",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("missing venv must not be rebuilt during run")
+        ),
+    )
+
+    with pytest.raises(SystemExit, match="missing or broken.*setup_venv.py"):
+        _model_script.main("illada_entropy", ["run"])
 
 
 def test_setup_removes_environment_with_missing_python(monkeypatch, tmp_path):
