@@ -1,0 +1,38 @@
+dataset: sudoku9_1shot
+dataset_class: dllm_bench.datasets.sudoku9.Sudoku9OneShotDataset
+primary_metric: complete_reference_sequence_accuracy
+aux_metrics:
+  - official_score
+  - reference_exact_match
+  - strict_reference_exact_match
+  - strict_81_digit_format_rate
+  - direct_answer_instruction_following_rate
+  - answer_marker_present
+  - answer_marker_complete_rate
+  - answer_region_detected_rate
+  - answer_position_token_mapped_rate
+  - answer_start_ratio
+  - exact_solve_rate
+  - blank_cell_accuracy
+  - blank_cell_accuracy_by_difficulty
+  - exact_solve_rate_by_difficulty
+  - cell_accuracy
+  - given_preservation_rate
+  - given_mismatch_count
+  - constraint_satisfaction_rate
+  - constraint_valid
+  - legal_completion
+  - completion_rate
+  - conflict_rate
+  - accuracy_easy
+  - accuracy_hard
+  - truncated_rate
+sample_size: 100
+difficulty_counts:
+  easy: 50
+  hard: 50
+seed: 42
+dataset_kwargs:
+  easy_count: 50
+  hard_count: 50
+  seed: 42

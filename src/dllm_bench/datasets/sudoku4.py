@@ -142,7 +142,7 @@ def format_sudoku4_prompt(
             f"Example input: {SUDOKU4_ONE_SHOT_EXAMPLE_PUZZLE}\n"
             f"Example output: {SUDOKU4_ONE_SHOT_EXAMPLE_ANSWER}\n"
             f"Fill in this Sudoku: {puzzle}\n"
-            "Directly return your answer with only 16 digits."
+            "Directly return exactly 16 digits using only 1-4."
         )
     if shot_count != 0:
         raise ValueError(f"Sudoku4 supports only 0-shot or 1-shot prompts, got {shot_count}")
@@ -437,7 +437,7 @@ class Sudoku4Dataset(Dataset):
 class Sudoku4OneShotDataset(Sudoku4Dataset):
     """The formal Sudoku4 subset with a fixed, non-overlapping example."""
 
-    name = "sudoku4"
+    name = "sudoku4_1shot"
 
     def __init__(self, *args, **kwargs) -> None:
         kwargs["enable_reasoning"] = False

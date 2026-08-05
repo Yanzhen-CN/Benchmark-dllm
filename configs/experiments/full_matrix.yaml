@@ -67,6 +67,9 @@ models:
         n_samples: 1
   - config: configs/models/llada2_1.yaml # inclusionAI LLaDA2.1-mini
     variants: [qmode, smode] # checkpoint-native official Quality/Speed modes
+    dataset_overrides:
+      sudoku4:
+        n_samples: 100
   - config: configs/models/w1.yaml  # w1-instruct-4B
     variants: [standard, jump, gidd]  # sampler difference
     dataset_overrides:
@@ -76,17 +79,17 @@ models:
     variants: [official]
     dataset_overrides:
       sudoku4:
-        n_samples: 10
+        n_samples: 100
   - config: configs/models/gemma.yaml
     variants: [ar-baseline] # same-scale AR reference for DiffusionGemma
     dataset_overrides:
       sudoku4:
-        n_samples: 10
+        n_samples: 100
   - config: configs/models/gemma_dflash.yaml
     variants: [dflash] # deployment-optimized Gemma; not a native baseline
     dataset_overrides:
       sudoku4:
-        n_samples: 10
+        n_samples: 100
 
 datasets:
   - config: configs/datasets/gsm8k.yaml
@@ -102,6 +105,14 @@ datasets:
     max_new_tokens: 256
   - config: configs/datasets/sudoku9.yaml
     max_new_tokens: 256
+  # Optional prompt-protocol controls. They use the same scorers as the direct
+  # tracks and run only when selected explicitly with -d.
+  - config: configs/datasets/sudoku4_1shot.yaml
+    max_new_tokens: 32
+    optional: true
+  - config: configs/datasets/sudoku9_1shot.yaml
+    max_new_tokens: 128
+    optional: true
   # Reference-only long-reasoning rows: prepare all 100 prompt variants, then
   # run the same deterministic first sample for every model.
   - config: configs/datasets/sudoku4_thinking.yaml

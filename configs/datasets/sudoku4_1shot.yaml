@@ -1,0 +1,26 @@
+dataset: sudoku4_1shot
+dataset_class: dllm_bench.datasets.sudoku4.Sudoku4OneShotDataset
+primary_metric: blank_cell_accuracy_any_legal_solution
+aux_metrics:
+  - official_score
+  - blank_cell_accuracy
+  - d1_blank_cell_accuracy
+  - puzzle_success_rate
+  - legal_completion
+  - reference_exact_match
+  - given_preservation_rate
+  - given_mismatch_count
+  - constraint_valid
+  - strict_16_digit_format_rate
+  - direct_answer_instruction_following_rate
+  - answer_marker_present_rate
+  - answer_marker_complete_rate
+  - answer_region_detected_rate
+  - answer_position_token_mapped_rate
+  - answer_start_ratio
+  - truncated_rate
+sample_size: 100
+seed: 42
+dataset_kwargs:
+  sample_count: 100
+  seed: 42

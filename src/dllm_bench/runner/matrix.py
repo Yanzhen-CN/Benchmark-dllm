@@ -107,6 +107,8 @@ def load_matrix_jobs(
             dataset_name = str(
                 dataset_entry.get("name") or Path(dataset_entry["config"]).stem
             )
+            if dataset_entry.get("optional") and dataset_name not in requested_datasets:
+                continue
             if not dataset_selector_matches(dataset_name, requested_datasets):
                 continue
             override = dataset_overrides.get(dataset_name, {})

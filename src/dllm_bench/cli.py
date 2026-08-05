@@ -39,7 +39,6 @@ so pass matching source/count/seed values to every stage.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from time import perf_counter
 
@@ -1049,7 +1048,6 @@ def pairwise_report(
 @click.option("--stage", type=click.Choice(["generate", "score", "visualize", "all"]), default="all", show_default=True)
 @click.option("--demo/--no-demo", default=False, show_default=True, help="Use demo data for every matrix row")
 @click.option("--n-samples", default=None, type=int)
-@click.option("-shot", "--shot", type=click.IntRange(0, 1), default=0, show_default=True)
 @click.option(
     "--max-new-tokens",
     "max_new_tokens_values",
@@ -1100,7 +1098,6 @@ def matrix_command(
     stage: str,
     demo: bool,
     n_samples: int | None,
-    shot: int,
     max_new_tokens_values: tuple[int, ...],
     output_root: str | None,
     measure_compute: bool,
@@ -1111,7 +1108,6 @@ def matrix_command(
     figures: str | None,
 ) -> None:
     """Run every model-variant x dataset row declared in an experiment YAML."""
-    os.environ["DLLM_BENCH_SUDOKU_SHOT"] = str(shot)
     experiment_settings = load_yaml(experiment_config)
     if len(model_names) != 1:
         raise click.UsageError(
