@@ -713,6 +713,8 @@ def benchmark_arguments(profile: ModelProfile) -> list[str]:
     ]
     if os.environ.get("OUTPUT_ROOT"):
         arguments.extend(["--output-root", os.environ["OUTPUT_ROOT"]])
+    if os.environ.get("OUTPUT_SUFFIX"):
+        arguments.extend(["--output-suffix", os.environ["OUTPUT_SUFFIX"]])
     if stage in {"visualize", "all"}:
         arguments.extend(
             ["--n-representative", os.environ.get("N_REPRESENTATIVE", "3")]

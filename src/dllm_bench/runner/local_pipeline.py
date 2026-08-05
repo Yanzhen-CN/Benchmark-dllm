@@ -56,6 +56,10 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
     parser.set_defaults(real_data=True)
     parser.add_argument("--n-samples", type=int, default=None)
     parser.add_argument(
+        "-suffix", "--output-suffix", default=None,
+        help="Append a suffix to the final dataset output directory",
+    )
+    parser.add_argument(
         "-max",
         "--max-new-tokens",
         action="extend",
@@ -175,6 +179,8 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             "--output-root",
             args.output_root,
         ]
+        if args.output_suffix:
+            command.extend(["--output-suffix", args.output_suffix])
         if stage == "visualize":
             command.extend(["--n-representative", str(args.n_representative)])
             if args.sample_ids:
@@ -220,6 +226,8 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
                 for dataset_name in value.split(","):
                     if dataset_name.strip():
                         dataset_name = dataset_name.strip()
+                        if args.output_suffix:
+                            dataset_name = f"{dataset_name}_{args.output_suffix}"
                         report_command.extend(["--dataset", dataset_name])
             print(f"Report: {' '.join(report_command)}", flush=True)
             if not args.dry_run:

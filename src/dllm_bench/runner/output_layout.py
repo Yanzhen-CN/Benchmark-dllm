@@ -28,12 +28,15 @@ scoring/visualization without dragging the other two directories along.
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 
 MODEL_OUTPUT = "model_output"
 MODEL_PROFILING = "model_profiling"
 SCORE_OUTPUT = "score_output"
 VISUALIZATION_OUTPUT = "visualization_output"
+_OUTPUT_SUFFIX_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 
 _UNSUFFIXED_CONFIGS = {
@@ -74,9 +77,24 @@ def _stage_root(output_root: str | Path, stage: str) -> Path:
     return root.parent / stage
 
 
+def _dataset_output_name(dataset_name: str) -> str:
+    suffix = os.environ.get("DLLM_BENCH_OUTPUT_SUFFIX", "").strip()
+    if not suffix:
+        return dataset_name
+    if not _OUTPUT_SUFFIX_RE.fullmatch(suffix):
+        raise ValueError(
+            "output suffix must contain only letters, digits, underscores, and hyphens"
+        )
+    return f"{dataset_name}_{suffix}"
+
+
 def _stage_dir(output_root: str | Path, stage: str, model_name: str, config_name: str, dataset_name: str) -> Path:
     """Use the same <model_config>/<dataset> layout for every artifact stage."""
-    return _stage_root(output_root, stage) / run_id(model_name, config_name) / dataset_name
+    return (
+        _stage_root(output_root, stage)
+        / run_id(model_name, config_name)
+        / _dataset_output_name(dataset_name)
+    )
 
 
 def model_output_dir(output_root: str | Path, model_name: str, config_name: str, dataset_name: str) -> Path:
@@ -99,7 +117,11 @@ def _resolve_existing_stage_dir(
         return canonical
     legacy = legacy_run_id(model_name, config_name)
     if legacy is not None:
-        legacy_path = _stage_root(output_root, stage) / legacy / dataset_name
+        legacy_path = (
+            _stage_root(output_root, stage)
+            / legacy
+            / _dataset_output_name(dataset_name)
+        )
         if legacy_path.exists():
             return legacy_path
     return canonical
@@ -136,7 +158,7 @@ def model_comparison_visualization_output_dir(
         _stage_root(output_root, VISUALIZATION_OUTPUT)
         / model_name
         / "model_comparison"
-        / dataset_name
+        / _dataset_output_name(dataset_name)
     )
 
 

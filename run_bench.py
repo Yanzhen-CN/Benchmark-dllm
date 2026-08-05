@@ -157,6 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the experiment YAML output_root (default: use the matrix setting)",
     )
+    parser.add_argument(
+        "-suffix", "--output-suffix", default=None,
+        help="Append a suffix to the final dataset output directory",
+    )
     compute = parser.add_mutually_exclusive_group()
     compute.add_argument("--measure-compute", dest="measure_compute", action="store_true")
     compute.add_argument("--no-measure-compute", dest="measure_compute", action="store_false")
@@ -209,6 +213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     if args.output_root is not None:
         env_updates["OUTPUT_ROOT"] = args.output_root
+    env_updates["OUTPUT_SUFFIX"] = args.output_suffix or ""
     if args.dataset:
         env_updates["DATASETS"] = ",".join(
             dict.fromkeys(

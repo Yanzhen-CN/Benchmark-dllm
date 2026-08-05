@@ -39,6 +39,7 @@ so pass matching source/count/seed values to every stage.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from time import perf_counter
 
@@ -911,7 +912,11 @@ def report(
     if not paths:
         raise click.UsageError("no valid summary.json files remain after exclusions")
 
-    summaries = [load_run_summary_dict(p) for p in paths]
+    summaries = []
+    for path in paths:
+        summary = load_run_summary_dict(path)
+        summary["dataset_name"] = Path(path).parent.name
+        summaries.append(summary)
     if model_names:
         summaries = [s for s in summaries if s.get("model_name") in model_names]
     if dataset_names:
@@ -1067,6 +1072,11 @@ def pairwise_report(
         "directly below this path; defaults to the experiment YAML value."
     ),
 )
+@click.option(
+    "--output-suffix",
+    default=None,
+    help="Append a suffix to the final dataset output directory",
+)
 @click.option("--measure-compute/--no-measure-compute", default=False, show_default=True)
 @click.option("--require-all-metrics/--allow-missing-metrics", default=False, show_default=True)
 @click.option("--resume/--no-resume", default=True, show_default=True)
@@ -1100,6 +1110,7 @@ def matrix_command(
     n_samples: int | None,
     max_new_tokens_values: tuple[int, ...],
     output_root: str | None,
+    output_suffix: str | None,
     measure_compute: bool,
     require_all_metrics: bool,
     resume: bool,
@@ -1108,6 +1119,7 @@ def matrix_command(
     figures: str | None,
 ) -> None:
     """Run every model-variant x dataset row declared in an experiment YAML."""
+    os.environ["DLLM_BENCH_OUTPUT_SUFFIX"] = output_suffix or ""
     experiment_settings = load_yaml(experiment_config)
     if len(model_names) != 1:
         raise click.UsageError(
