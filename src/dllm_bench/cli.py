@@ -99,6 +99,7 @@ from .runner.score_stage import (
     run_scoring,
 )
 from .runner.matrix import load_matrix_jobs
+from .runner.terminal_progress import generation_progress_text
 from .runner.evaluation_sampling import select_configured_samples
 from .runner.data_preparation import (
     DataPreparationError,
@@ -422,42 +423,46 @@ def generate(
             not measure_compute and click.get_text_stream("stdout").isatty()
         )
 
-        def format_duration(seconds: float) -> str:
-            seconds = max(0, int(round(seconds)))
-            hours, remainder = divmod(seconds, 3600)
-            minutes, seconds = divmod(remainder, 60)
-            if hours:
-                return f"{hours:d}:{minutes:02d}:{seconds:02d}"
-            return f"{minutes:02d}:{seconds:02d}"
-
-        def generation_progress_text(
-            prefix: str,
-            state: str,
-            elapsed: float,
+        def current_progress_text(
             index: int,
             total: int,
+            sample_id: str,
+            elapsed: float,
             *,
             finished: bool = False,
+            status: str | None = None,
         ) -> str:
             if completed_generation_seconds:
                 average = sum(completed_generation_seconds) / len(
                     completed_generation_seconds
                 )
             else:
-                average = elapsed
-            timing = f"{elapsed:.1f}/{average:.1f}s"
-            if not completed_generation_seconds:
-                return f"{prefix} {state} {timing} ETA -- TOT --"
-            remaining_current = 0.0 if finished else max(0.0, average - elapsed)
-            eta = remaining_current + average * max(0, total - index)
+                average = None
             run_elapsed = (
                 perf_counter() - generation_run_started[0]
                 if generation_run_started
                 else elapsed
             )
-            return (
-                f"{prefix} {state} {timing} ETA {format_duration(eta)}"
-                f" TOT {format_duration(run_elapsed + eta)}"
+            estimated_total = None
+            if average is not None:
+                remaining_current = (
+                    0.0 if finished else max(0.0, average - elapsed)
+                )
+                estimated_total = (
+                    run_elapsed
+                    + remaining_current
+                    + average * max(0, total - index)
+                )
+            return generation_progress_text(
+                variant=v,
+                index=index,
+                total=total,
+                sample_id=sample_id,
+                run_elapsed=run_elapsed,
+                estimated_total=estimated_total,
+                sample_elapsed=elapsed,
+                expected_sample=average,
+                status=status,
             )
 
         def render_generation_progress(text: str, *, final: bool = False) -> None:
@@ -477,27 +482,26 @@ def generate(
             if event == "start":
                 if measure_compute:
                     click.echo(f"{prefix}: [timing] generating ...")
-                elif not dynamic_generation_progress:
-                    click.echo(f"{prefix}: generating ...")
                 else:
                     started = perf_counter()
                     if not generation_run_started:
                         generation_run_started.append(started)
+                    if not dynamic_generation_progress:
+                        return
                     stop = Event()
                     generation_stops[sample.sample_id] = stop
 
                     def refresh() -> None:
                         while True:
                             render_generation_progress(
-                                generation_progress_text(
-                                    f"[{v}] {index}/{total} {sample.sample_id}",
-                                    "generating",
-                                    perf_counter() - started,
+                                current_progress_text(
                                     index,
                                     total,
+                                    sample.sample_id,
+                                    perf_counter() - started,
                                 )
                             )
-                            if stop.wait(1.0):
+                            if stop.wait(5.0):
                                 return
 
                     thread = Thread(target=refresh, daemon=True)
@@ -564,22 +568,31 @@ def generate(
                 else 0.0
             )
             status = generation.status.value if generation is not None else "unknown"
+            completed_generation_seconds.append(elapsed)
             if dynamic_generation_progress:
                 stop_generation_refresh(sample.sample_id)
-                completed_generation_seconds.append(elapsed)
                 render_generation_progress(
-                    generation_progress_text(
-                        f"[{v}] {index}/{total} {sample.sample_id}",
-                        status,
-                        elapsed,
+                    current_progress_text(
                         index,
                         total,
+                        sample.sample_id,
+                        elapsed,
                         finished=True,
+                        status=status,
                     ),
                     final=index == total,
                 )
             else:
-                click.echo(f"{prefix}: {status} ({elapsed:.2f}s)")
+                click.echo(
+                    current_progress_text(
+                        index,
+                        total,
+                        sample.sample_id,
+                        elapsed,
+                        finished=True,
+                        status=status,
+                    )
+                )
 
         try:
             summary = run_generation(

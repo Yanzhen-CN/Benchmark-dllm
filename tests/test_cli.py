@@ -44,7 +44,7 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     ])
     assert "generated=3 skipped=0" in generate_result.output
     assert "loading model into runtime device (outside sample timing)" in generate_result.output
-    assert "[default] [1/3] gsm8k-demo-0: generating" in generate_result.output
+    assert "[default] [#######-------------] 1/3" in generate_result.output
 
     model_out = output_root / "model_output" / "mock_default" / "gsm8k"
     assert (model_out / "_meta.json").exists()
@@ -135,10 +135,13 @@ def test_generate_reports_durable_sample_counts_without_terminal_controls(tmp_pa
     ])
 
     assert "\r" not in result.output
-    assert "[default] [1/2] gsm8k-demo-0: generating" in result.output
-    assert "[default] [1/2] gsm8k-demo-0: success" in result.output
-    assert "[default] [2/2] gsm8k-demo-1: generating" in result.output
-    assert "[default] [2/2] gsm8k-demo-1: success" in result.output
+    assert result.output.count("gsm8k-demo-0") == 1
+    assert result.output.count("gsm8k-demo-1") == 1
+    assert "[default] [##########----------] 1/2" in result.output
+    assert "[default] [####################] 2/2" in result.output
+    assert "ETA" not in result.output
+    assert "TOT" not in result.output
+    assert "generating" not in result.output
 
 
 def test_long_task_warmup_uses_short_prompt_without_formal_context_budget(
