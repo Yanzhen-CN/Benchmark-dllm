@@ -17,6 +17,7 @@ dependencies = [
 hf = [
     "torch>=2.1",
     "transformers>=4.40",
+    "hf-transfer>=0.1.4",
 ]
 # DiffusionGemma needs DiffusionGemmaForBlockDiffusion, which
 # is only in transformers>=5.13.0 — a much newer floor than the general `hf`
@@ -26,10 +27,12 @@ hf = [
 diffusiongemma = [
     "torch>=2.1",
     "transformers>=5.13.0",
+    "hf-transfer>=0.1.4",
 ]
 gemma4 = [
     "torch>=2.1",
     "transformers>=5.13.0",
+    "hf-transfer>=0.1.4",
 ]
 api = [
     "requests>=2.31",

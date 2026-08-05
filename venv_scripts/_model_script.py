@@ -711,6 +711,21 @@ def repair_profile_dependencies(
 
 def model_environment(profile: ModelProfile) -> dict[str, str]:
     environment = os.environ.copy()
+    transfer_enabled = environment.get("HF_HUB_ENABLE_HF_TRANSFER", "").lower()
+    python = venv_python(venv_dir(profile))
+    if transfer_enabled in {"1", "true", "yes", "on"} and (
+        _installed_distribution_version(python, "hf-transfer") is None
+    ):
+        # This switch is often set globally on GPU images. Hugging Face raises
+        # before loading even cached metadata when its optional accelerator is
+        # absent, so retain the standard downloader for older model venvs.
+        environment["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+        print(
+            f"WARNING: hf_transfer is not installed in {venv_dir(profile)}; "
+            "using the standard Hugging Face downloader",
+            file=sys.stderr,
+            flush=True,
+        )
     environment.update(
         DLLM_MODEL=profile.model_id,
         DLLM_MODEL_CONFIG=profile.model_config,

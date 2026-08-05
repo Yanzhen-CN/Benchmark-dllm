@@ -277,6 +277,36 @@ def test_illada_entropy_has_a_separate_but_version_matched_environment():
     assert entropy.transformers_version == fixed.transformers_version
 
 
+def test_model_environment_disables_unavailable_hf_transfer(monkeypatch):
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    monkeypatch.setattr(
+        _model_script,
+        "_installed_distribution_version",
+        lambda python, distribution: None,
+    )
+
+    environment = _model_script.model_environment(
+        _model_script.PROFILES["illada_entropy"]
+    )
+
+    assert environment["HF_HUB_ENABLE_HF_TRANSFER"] == "0"
+
+
+def test_model_environment_keeps_available_hf_transfer(monkeypatch):
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    monkeypatch.setattr(
+        _model_script,
+        "_installed_distribution_version",
+        lambda python, distribution: "0.1.9",
+    )
+
+    environment = _model_script.model_environment(
+        _model_script.PROFILES["illada_entropy"]
+    )
+
+    assert environment["HF_HUB_ENABLE_HF_TRANSFER"] == "1"
+
+
 def test_gemma_reuses_legacy_environment_after_public_rename(tmp_path, monkeypatch):
     monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
     monkeypatch.setattr(_model_script, "REPO_ROOT", tmp_path)
