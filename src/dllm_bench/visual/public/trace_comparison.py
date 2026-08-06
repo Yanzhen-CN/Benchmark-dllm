@@ -629,11 +629,11 @@ def render_trace_comparison(
     state_path = out / "trace_position_state.png"
     for stale in (
         "trace_first_commit.png",
+        "trace_first_accept.png",
         "trace_updates.png",
         "trace_acceptance_events.png",
     ):
         (out / stale).unlink(missing_ok=True)
-    first_commit_path = out / "trace_first_accept.png"
     updates_path = out / "accept_trace.png"
     answer_path = out / "answer_trace.png"
     step_events_path = out / "trace_step_events.png"
@@ -670,12 +670,6 @@ def render_trace_comparison(
             path=state_path,
         )
     if render_trace or "convergence" in figures:
-        _plot_first_commit(
-            dataset_name=dataset_name,
-            sample_id=sample_id,
-            selected={variant: selected[variant] for variant in rows_by_variant},
-            path=first_commit_path,
-        )
         _plot_updates(
             dataset_name=dataset_name,
             sample_id=sample_id,
@@ -708,7 +702,6 @@ def render_trace_comparison(
         "state_semantics": STATE_COLORS,
         "display_semantics": {
             "trace_position_state": "small multiples of masked, visible, and accepted states by real forward",
-            "trace_first_accept": "token position versus first accepted real forward",
             "accept_trace": "first accepts plus changed-token re-acceptance events; same-token re-acceptance, re-noising, and visible proposal refresh are excluded",
             "answer_trace": "Sudoku-only projection of accept_trace onto final answer cells; long digit runs are clipped to the first size-squared cells",
             "trace_step_events": "absolute accepted-mask and changed-token re-accept counts; no normalized progress axis",
@@ -752,8 +745,6 @@ def render_trace_comparison(
     }
     if state_path.exists() and (render_trace or "state" in figures):
         written["trace_position_state"] = str(state_path)
-    if first_commit_path.exists() and (render_trace or "convergence" in figures):
-        written["trace_first_accept"] = str(first_commit_path)
     if updates_path.exists() and (render_trace or "convergence" in figures):
         written["accept_trace"] = str(updates_path)
     if answer_path.exists() and (render_trace or "convergence" in figures):
