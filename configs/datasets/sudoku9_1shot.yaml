@@ -7,6 +7,9 @@ aux_metrics:
   - strict_reference_exact_match
   - strict_81_digit_format_rate
   - direct_answer_instruction_following_rate
+  - direct_answer_only_score
+  - direct_answer_eligible_count
+  - direct_answer_excluded_count
   - answer_marker_present
   - answer_marker_complete_rate
   - answer_region_detected_rate

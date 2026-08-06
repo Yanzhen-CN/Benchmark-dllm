@@ -14,9 +14,10 @@ once per sample as a building block, then aggregated across the whole
 dataset, never shown redundantly for one sample here. Their dataset-level
 aggregate versions live in `visual/public/dataset_trace_report.py`.
 
-The generic GIF, final-frame, certainty curve, and speed plots are not emitted.
-The separate Sudoku-only board animation remains available for curated Sudoku
-examples.
+The generic GIF is not emitted for ordinary tasks. Curated Sudoku examples do
+emit a model-agnostic token-canvas GIF so traces from models that never form a
+parseable board can still be compared. A Sudoku board/layout GIF is added when
+the decoded trace can be mapped to cells.
 
 :func:`render_sample_report` is what ``dllm-bench visualize`` calls once per
 sample. Sudoku gets one more artifact on top — an animated 9x9 grid walking
@@ -164,10 +165,18 @@ def render_sample_report(
         "sudoku_board_trace.gif",
         "sudoku_layout_trace.gif",
         "sudoku_real_trace.gif",
+        "token_trace.gif",
     ):
         (out_dir_path / f"{sample_id}_{suffix}").unlink(missing_ok=True)
 
     if dataset_name is not None:
+        if dataset_name.startswith("sudoku") and trace:
+            from .token_grid_viz import render_token_grid_gif
+
+            token_gif_path = out_dir_path / f"{sample_id}_token_trace.gif"
+            render_token_grid_gif(trace, token_gif_path, title=title)
+            if token_gif_path.exists():
+                written["token_trace_gif"] = str(token_gif_path)
         sudoku_gif = _maybe_render_sudoku_gif(
             dataset_name,
             sample,

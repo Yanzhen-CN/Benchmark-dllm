@@ -157,6 +157,33 @@ def aggregate_answer_position_metrics(results: list[ScoreResult]) -> dict[str, f
     return metrics
 
 
+def aggregate_direct_answer_only_score(
+    results: list[ScoreResult],
+) -> dict[str, float | None]:
+    """Compute a diagnostic score only over strict direct-answer outputs.
+
+    The benchmark's primary score keeps the full selected-sample denominator.
+    These fields expose the changed denominator explicitly, and use ``None``
+    when no sample followed the direct-answer instruction.
+    """
+    eligible = [
+        result
+        for result in results
+        if float(result.aux.get("direct_answer_instruction_following_rate", 0.0))
+        == 1.0
+    ]
+    count = len(eligible)
+    return {
+        "direct_answer_eligible_count": float(count),
+        "direct_answer_excluded_count": float(len(results) - count),
+        "direct_answer_only_score": (
+            sum(result.primary_score for result in eligible) / count
+            if count
+            else None
+        ),
+    }
+
+
 def _after_thinking(text: str) -> tuple[int, bool]:
     boundary, unclosed = thinking_boundary(text)
     # An unclosed final thinking block has no trustworthy final-answer region.

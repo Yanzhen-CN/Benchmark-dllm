@@ -20,6 +20,7 @@ from pathlib import Path
 from .answer_region import (
     AnswerRegion,
     aggregate_answer_position_metrics,
+    aggregate_direct_answer_only_score,
     empty_answer_region,
     locate_digit_answer,
     position_aux,
@@ -434,6 +435,7 @@ class Sudoku4Dataset(Dataset):
             result.aux["puzzle_success_rate"] for result in results
         ) / len(results)
         summary.update(aggregate_answer_position_metrics(results))
+        summary.update(aggregate_direct_answer_only_score(results))
         return summary
 
 

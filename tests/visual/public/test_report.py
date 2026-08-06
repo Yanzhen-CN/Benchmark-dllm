@@ -282,6 +282,8 @@ def test_render_sample_report_renders_sudoku_gif_for_81_position_trace(tmp_path)
     )
     assert "sudoku_gif" in written
     assert Path(written["sudoku_gif"]).exists()
+    assert "token_trace_gif" in written
+    assert Path(written["token_trace_gif"]).exists()
 
 
 def test_render_sample_report_renders_instructed_sudoku_from_decoded_canvas(tmp_path):

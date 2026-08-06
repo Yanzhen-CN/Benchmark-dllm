@@ -30,6 +30,7 @@ from urllib.request import Request, urlopen
 from .answer_region import (
     AnswerRegion,
     aggregate_answer_position_metrics,
+    aggregate_direct_answer_only_score,
     locate_digit_answer,
     position_aux,
     scored_payload_aux,
@@ -497,6 +498,7 @@ class Sudoku9Dataset(Dataset):
     ) -> dict[str, float]:
         summary = super().aggregate_records(samples, results)
         summary.update(aggregate_answer_position_metrics(results))
+        summary.update(aggregate_direct_answer_only_score(results))
         for difficulty, group in group_by_difficulty(samples, results).items():
             if group:
                 summary[f"blank_cell_accuracy_{difficulty}"] = (

@@ -3,7 +3,8 @@ import zipfile
 
 import pytest
 
-from dllm_bench.datasets.base import Sample
+from dllm_bench.datasets.base import Sample, ScoreResult
+from dllm_bench.datasets.answer_region import aggregate_direct_answer_only_score
 from dllm_bench.datasets.gsm8k import (
     GSM8K_REVISION,
     GSM8KDataset,
@@ -580,6 +581,36 @@ def test_sudoku_score_correct_solution():
     assert result.aux["cell_accuracy"] == 1.0
     assert result.aux["given_preservation_rate"] == 1.0
     assert result.aux["conflict_rate"] == 0.0
+
+
+def test_sudoku_reports_direct_answer_only_score_with_explicit_denominator():
+    compliant = ScoreResult(
+        primary_score=0.75,
+        aux={"direct_answer_instruction_following_rate": 1.0},
+    )
+    noncompliant = ScoreResult(
+        primary_score=0.25,
+        aux={"direct_answer_instruction_following_rate": 0.0},
+    )
+
+    summary = aggregate_direct_answer_only_score([compliant, noncompliant])
+
+    assert summary["direct_answer_only_score"] == 0.75
+    assert summary["direct_answer_eligible_count"] == 1.0
+    assert summary["direct_answer_excluded_count"] == 1.0
+
+
+def test_sudoku9_direct_answer_only_score_is_none_when_cohort_is_empty():
+    result = ScoreResult(
+        primary_score=0.0,
+        aux={"direct_answer_instruction_following_rate": 0.0},
+    )
+
+    summary = aggregate_direct_answer_only_score([result])
+
+    assert summary["direct_answer_only_score"] is None
+    assert summary["direct_answer_eligible_count"] == 0.0
+    assert summary["direct_answer_excluded_count"] == 1.0
 
 
 def test_sudoku_score_tolerates_reasoning_with_marked_final_answer():
