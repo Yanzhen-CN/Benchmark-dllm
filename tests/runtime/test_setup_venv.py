@@ -40,6 +40,20 @@ def test_setup_venv_recreate_is_explicit_for_root_and_selected_model(capsys):
     assert "diffusiongemma.py setup --recreate" in output
 
 
+def test_setup_venv_defaults_to_three_parallel_model_installs(monkeypatch):
+    captured = {}
+
+    def fake_dispatch(model_names, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(setup_venv, "dispatch_model_scripts", fake_dispatch)
+
+    assert setup_venv.main(
+        ["--dry-run", "--no-root", "-m", "illada", "dreamreasoner"]
+    ) == 0
+    assert captured["jobs"] == 3
+
+
 def test_setup_venv_supports_llada2_1(capsys):
     assert setup_venv.main(["--dry-run", "-m", "llada2_1"]) == 0
     output = capsys.readouterr().out
