@@ -35,7 +35,10 @@ from venv_scripts._model_script import PROFILES
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("-m", "--model", action="append", default=[], help="Model name; repeat or comma-separate (default: all matrix models)")
+    parser.add_argument(
+        "-m", "--model", action="extend", nargs="+", default=[],
+        help="Model names; space-separate, repeat, or comma-separate (default: all matrix models)",
+    )
     parser.add_argument("--matrix", default=str(DEFAULT_MATRIX), help="Experiment matrix YAML")
     parser.add_argument("--venv-scripts-dir", dest="scripts_dir", default=str(DEFAULT_VENV_SCRIPTS_DIR), help="Directory containing per-model Python environment scripts")
     parser.add_argument("--cuda-index", default="cu124", choices=("cu118", "cu121", "cu124", "cu126"))
@@ -43,8 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--jobs",
         type=int,
-        default=1,
-        help="Number of selected model environments to install concurrently",
+        default=3,
+        help="Number of selected model environments to install concurrently (default: 3)",
     )
     parser.add_argument(
         "--recreate",

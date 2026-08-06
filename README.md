@@ -94,7 +94,7 @@ To deliberately discard and rebuild selected environments:
 
 ```bash
 python setup_venv.py -m diffusiongemma --recreate --check
-# Independent selected model venvs may be installed concurrently.
+# Independent selected model venvs install three-at-a-time by default.
 python setup_venv.py -m illada dreamreasoner diffusiongemma --jobs 3 --check
 ```
 
