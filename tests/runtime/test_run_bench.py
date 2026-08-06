@@ -1,8 +1,29 @@
 from __future__ import annotations
 
+import subprocess
+import threading
+
 import pytest
 
 import run_bench
+
+
+def test_dispatch_can_install_independent_model_venvs_concurrently(monkeypatch):
+    barrier = threading.Barrier(2)
+    worker_threads: set[int] = set()
+
+    def fake_run(command, **kwargs):
+        worker_threads.add(threading.get_ident())
+        barrier.wait(timeout=5)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(run_bench.subprocess, "run", fake_run)
+
+    run_bench.dispatch_model_scripts(
+        ["illada", "dreamreasoner"], action="setup", jobs=2
+    )
+
+    assert len(worker_threads) == 2
 
 
 def test_default_dry_run_selects_every_matrix_model(capsys):

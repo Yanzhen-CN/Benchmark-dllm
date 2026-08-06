@@ -41,6 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cuda-index", default="cu124", choices=("cu118", "cu121", "cu124", "cu126"))
     parser.add_argument("--check", action="store_true", help="Run each model script's check action after setup")
     parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of selected model environments to install concurrently",
+    )
+    parser.add_argument(
         "--recreate",
         action="store_true",
         help="Delete and rebuild the selected root/model environments",
@@ -57,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.jobs < 1:
+        raise SystemExit("--jobs must be at least 1")
     matrix_path = Path(args.matrix).resolve()
     matrix_models = matrix_model_names(matrix_path)
     available = list(dict.fromkeys([*matrix_models, *PROFILES]))
@@ -82,7 +90,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             subprocess.run(root_command, cwd=Path(__file__).resolve().parent, check=True)
     dispatch_model_scripts(
         selected, action="setup", scripts_dir=args.scripts_dir,
-        env_updates=updates, action_args=action_args, dry_run=args.dry_run,
+        env_updates=updates, action_args=action_args, jobs=args.jobs,
+        dry_run=args.dry_run,
     )
     if args.check:
         dispatch_model_scripts(
