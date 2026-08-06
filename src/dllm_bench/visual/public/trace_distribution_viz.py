@@ -71,6 +71,7 @@ def _draw_block_boundaries(
 
 FIRST_ACCEPTANCE_COLOR = "#2563eb"
 REVISION_COLOR = "#dc2626"
+REVISION_MARKER_SIZE = 82
 
 
 def _acceptance_rank_cmap(
@@ -215,14 +216,13 @@ def plot_accept_revisions(
         revision_scatter = ax.scatter(
             [accept_positions[index] for index in revision_accept_indices],
             [accept_steps[index] for index in revision_accept_indices],
-            c=[accept_ranks[index] for index in revision_accept_indices],
-            cmap="YlOrRd",
-            vmin=2,
-            vmax=max(3, maximum_accept_rank),
-            marker="x",
-            s=46,
-            alpha=0.98,
-            linewidths=1.5,
+            color=REVISION_COLOR,
+            marker="X",
+            s=REVISION_MARKER_SIZE,
+            alpha=1.0,
+            edgecolors="white",
+            linewidths=0.9,
+            zorder=5,
             label="Re-accept, token changed",
         )
     if renoise_positions:
@@ -236,7 +236,10 @@ def plot_accept_revisions(
             linewidths=0,
             label="Re-noise",
         )
-    color_mappable = revision_scatter or reaccept_scatter
+    # The revision marker uses a fixed high-contrast red so even a rank-2
+    # change remains visible on the warm figure background.  Only same-token
+    # re-accepts need the acceptance-rank color scale.
+    color_mappable = reaccept_scatter
     if color_mappable is not None:
         colorbar = fig.colorbar(
             color_mappable,
