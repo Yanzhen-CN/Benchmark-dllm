@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 import setup_venv
 from venv_scripts import _model_script
+
+
+def test_root_script_can_start_directly_from_system_python(tmp_path):
+    script = Path(__file__).resolve().parents[2] / "venv_scripts" / "root.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--recreate" in result.stdout
 
 
 def test_setup_venv_dispatches_selected_model_script(capsys):

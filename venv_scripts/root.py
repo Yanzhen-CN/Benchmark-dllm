@@ -15,10 +15,15 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    # Direct execution sets sys.path[0] to venv_scripts/, while imports and
+    # editable installation are rooted one directory above it.
+    sys.path.insert(0, str(REPO_ROOT))
+
 from venv_scripts._model_script import installation_environment, shared_data_environment
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT_VENV = Path(
     Path(os.environ.get("DLLM_VENV_ROOT", REPO_ROOT / ".venvs")) / "root"
 ).expanduser().resolve()
