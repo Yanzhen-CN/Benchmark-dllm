@@ -116,7 +116,10 @@ def main() -> None:
     parser.add_argument("--model-config", help="Direct mode: path to one configs/models/*.yaml")
     parser.add_argument("--variant", default=None, help="Warm just this one named config")
     parser.add_argument("--variants", default=None, help="Comma-separated named configs to warm (default: every variant in the file)")
-    parser.add_argument("-m", "--model", action="append", default=[], help="Matrix mode: model name; repeat or comma-separate (default: all)")
+    parser.add_argument(
+        "-m", "--model", action="extend", nargs="+", default=[],
+        help="Matrix mode: model names; space-separate, repeat, or comma-separate (default: all)",
+    )
     parser.add_argument("--matrix", default=str(PROJECT_ROOT / "configs" / "experiments" / "full_matrix.yaml"))
     parser.add_argument("--venv-scripts-dir", dest="scripts_dir", default=str(PROJECT_ROOT / "venv_scripts"))
     parser.add_argument("--dry-run", action="store_true", help="Print per-model prepare commands without running them")

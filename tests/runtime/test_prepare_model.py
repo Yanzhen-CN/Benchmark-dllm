@@ -154,6 +154,16 @@ def test_prepare_model_matrix_mode_can_select_models(tmp_path):
     assert "diffusiongemma.py prepare" not in result.stdout
 
 
+def test_prepare_model_accepts_space_separated_models(tmp_path):
+    result = _run(
+        ["-m", "illada", "dreamreasoner", "--dry-run"], cwd=tmp_path
+    )
+    assert result.returncode == 0, result.stderr
+    assert "illada.py prepare" in result.stdout
+    assert "dreamreasoner.py prepare" in result.stdout
+    assert "diffusiongemma.py prepare" not in result.stdout
+
+
 def test_prepare_model_direct_mode_dispatches_when_started_outside_venv(tmp_path):
     env = {
         key: value for key, value in os.environ.items()
