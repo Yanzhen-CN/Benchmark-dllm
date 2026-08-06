@@ -71,7 +71,23 @@ def _draw_block_boundaries(
 
 FIRST_ACCEPTANCE_COLOR = "#2563eb"
 REVISION_COLOR = "#dc2626"
+REVISION_FINAL_COLOR = "#6d28d9"
 REVISION_MARKER_SIZE = 82
+
+
+def _reaccept_rank_cmap(max_rank: int) -> tuple[ListedColormap, BoundaryNorm]:
+    """High-contrast red-to-purple colors for accept ranks 2 and later."""
+    if max_rank < 2:
+        raise ValueError("max_rank must be at least two")
+    start = np.asarray(matplotlib.colors.to_rgb(REVISION_COLOR))
+    end = np.asarray(matplotlib.colors.to_rgb(REVISION_FINAL_COLOR))
+    colors = [
+        tuple(start * (1.0 - amount) + end * amount)
+        for amount in np.linspace(0.0, 1.0, max_rank - 1)
+    ]
+    cmap = ListedColormap(colors, name="dllm_bench_reaccept_rank")
+    boundaries = np.arange(1.5, max_rank + 1.5, 1.0)
+    return cmap, BoundaryNorm(boundaries, cmap.N)
 
 
 def _acceptance_rank_cmap(
@@ -197,18 +213,21 @@ def plot_accept_revisions(
         label="First accept",
     )
     reaccept_scatter = None
+    reaccept_cmap, reaccept_norm = _reaccept_rank_cmap(
+        max(2, maximum_accept_rank)
+    )
     if same_token_reaccept_indices:
         reaccept_scatter = ax.scatter(
             [accept_positions[index] for index in same_token_reaccept_indices],
             [accept_steps[index] for index in same_token_reaccept_indices],
             c=[accept_ranks[index] for index in same_token_reaccept_indices],
-            cmap="YlOrRd",
-            vmin=2,
-            vmax=max(3, maximum_accept_rank),
+            cmap=reaccept_cmap,
+            norm=reaccept_norm,
             marker="o",
-            s=34,
-            alpha=0.95,
-            linewidths=0,
+            s=42,
+            alpha=1.0,
+            edgecolors="white",
+            linewidths=0.7,
             label="Re-accept, same token",
         )
     revision_scatter = None
@@ -216,7 +235,9 @@ def plot_accept_revisions(
         revision_scatter = ax.scatter(
             [accept_positions[index] for index in revision_accept_indices],
             [accept_steps[index] for index in revision_accept_indices],
-            color=REVISION_COLOR,
+            c=[accept_ranks[index] for index in revision_accept_indices],
+            cmap=reaccept_cmap,
+            norm=reaccept_norm,
             marker="X",
             s=REVISION_MARKER_SIZE,
             alpha=1.0,
@@ -236,10 +257,14 @@ def plot_accept_revisions(
             linewidths=0,
             label="Re-noise",
         )
-    # The revision marker uses a fixed high-contrast red so even a rank-2
-    # change remains visible on the warm figure background.  Only same-token
-    # re-accepts need the acceptance-rank color scale.
-    color_mappable = reaccept_scatter
+    # Rank 2 starts at deep red instead of pale yellow; later re-accepts move
+    # toward purple. Marker shape still separates same-token and changed-token
+    # events while color preserves the re-accept number.
+    color_mappable = (
+        revision_scatter
+        if revision_scatter is not None
+        else reaccept_scatter
+    )
     if color_mappable is not None:
         colorbar = fig.colorbar(
             color_mappable,
