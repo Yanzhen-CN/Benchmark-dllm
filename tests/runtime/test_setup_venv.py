@@ -16,6 +16,15 @@ def test_setup_venv_dispatches_selected_model_script(capsys):
     assert "illada.py" not in output
 
 
+def test_setup_venv_recreate_is_explicit_for_root_and_selected_model(capsys):
+    assert setup_venv.main(
+        ["--dry-run", "--recreate", "-m", "diffusiongemma"]
+    ) == 0
+    output = capsys.readouterr().out
+    assert "root.py setup --recreate" in output
+    assert "diffusiongemma.py setup --recreate" in output
+
+
 def test_setup_venv_supports_llada2_1(capsys):
     assert setup_venv.main(["--dry-run", "-m", "llada2_1"]) == 0
     output = capsys.readouterr().out
@@ -108,8 +117,8 @@ def test_model_run_never_creates_repairs_or_updates_environment(monkeypatch):
 def test_model_run_fails_cleanly_when_its_venv_python_is_missing(
     monkeypatch, tmp_path
 ):
-    model_venv = tmp_path / "illada-entropy"
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    model_venv = tmp_path / "venvs" / "illada_entropy"
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
     monkeypatch.setattr(
         _model_script,
         "setup_environment",
@@ -125,10 +134,10 @@ def test_model_run_fails_cleanly_when_its_venv_python_is_missing(
 def test_interactive_model_run_can_setup_a_missing_environment(
     monkeypatch, tmp_path
 ):
-    model_venv = tmp_path / "illada-entropy"
+    model_venv = tmp_path / "venvs" / "illada_entropy"
     model_python = _model_script.venv_python(model_venv)
     commands = []
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
     monkeypatch.setattr(_model_script.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
     monkeypatch.setattr(
@@ -147,7 +156,7 @@ def test_interactive_model_run_can_setup_a_missing_environment(
 def test_interactive_model_run_declines_missing_environment_setup(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("DLLM_VENV_DIR", str(tmp_path / "missing"))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(tmp_path / "missing"))
     monkeypatch.setattr(_model_script.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     monkeypatch.setattr(
@@ -165,13 +174,13 @@ def test_interactive_model_run_declines_missing_environment_setup(
 def test_interactive_model_run_can_repair_only_missing_project_install(
     monkeypatch, tmp_path
 ):
-    model_venv = tmp_path / "illada-entropy"
+    model_venv = tmp_path / "venvs" / "illada_entropy"
     model_python = _model_script.venv_python(model_venv)
     model_python.parent.mkdir(parents=True)
     model_python.touch()
     commands = []
     importable = False
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
     monkeypatch.setattr(_model_script.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt: "yes")
     monkeypatch.setattr(
@@ -208,7 +217,7 @@ def test_setup_removes_environment_with_missing_python(monkeypatch, tmp_path):
     stale_file.write_text("stale", encoding="utf-8")
     commands = []
 
-    monkeypatch.setattr(_model_script, "venv_dir", lambda selected: model_venv)
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(tmp_path))
 
     def capture_run(command, **kwargs):
         commands.append(command)
@@ -249,7 +258,8 @@ def test_visualize_stage_receives_visualization_sample_limit(monkeypatch):
 
 
 def test_model_venvs_share_one_parent_directory(monkeypatch):
-    monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
+    monkeypatch.delenv("DLLM_VENV_ROOT", raising=False)
+    monkeypatch.setenv("DLLM_VENV_DIR", "ignored-legacy-single-model-path")
     profile = _model_script.PROFILES["illada"]
     assert _model_script.venv_dir(profile) == _model_script.REPO_ROOT / ".venvs" / "illada"
 
@@ -305,7 +315,7 @@ def test_model_environment_keeps_available_hf_transfer(monkeypatch):
 
 
 def test_gemma_reuses_legacy_environment_after_public_rename(tmp_path, monkeypatch):
-    monkeypatch.delenv("DLLM_VENV_DIR", raising=False)
+    monkeypatch.delenv("DLLM_VENV_ROOT", raising=False)
     monkeypatch.setattr(_model_script, "REPO_ROOT", tmp_path)
     legacy = tmp_path / ".venvs" / "gemma4_26b_a4b"
     legacy.mkdir(parents=True)
@@ -397,7 +407,7 @@ def test_existing_gemma_dflash_environment_repairs_missing_ninja_in_place(
     monkeypatch, tmp_path
 ):
     profile = _model_script.PROFILES["gemma_dflash"]
-    model_venv = tmp_path / "gemma-dflash"
+    model_venv = tmp_path / "venvs" / "gemma_dflash"
     python = _model_script.venv_python(model_venv)
     python.parent.mkdir(parents=True)
     python.touch()
@@ -415,7 +425,7 @@ def test_existing_gemma_dflash_environment_repairs_missing_ninja_in_place(
         if command[-1] == "ninja>=1.11":
             ninja_installed = True
 
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
     monkeypatch.setattr(
         _model_script,
         "_installed_distribution_version",
@@ -439,11 +449,9 @@ def test_installation_environment_keeps_large_build_files_under_data_root(
 ):
     data_root = tmp_path / "persistent-data"
     monkeypatch.setenv("DLLM_DATA_ROOT", str(data_root))
-    monkeypatch.delenv("DLLM_PIP_CACHE_DIR", raising=False)
-    monkeypatch.delenv("DLLM_UV_CACHE_DIR", raising=False)
-    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
-    monkeypatch.delenv("DLLM_BUILD_TMPDIR", raising=False)
-    monkeypatch.delenv("DLLM_TORCH_EXTENSIONS_DIR", raising=False)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "wrong-hf"))
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "wrong-hub"))
+    monkeypatch.setenv("TRANSFORMERS_CACHE", str(tmp_path / "wrong-transformers"))
     monkeypatch.delenv("VLLM_USE_PRECOMPILED", raising=False)
     monkeypatch.delenv("UV_NO_CACHE", raising=False)
 
@@ -452,8 +460,9 @@ def test_installation_environment_keeps_large_build_files_under_data_root(
         avoid_uv_cache=True,
     )
 
-    assert environment["PIP_CACHE_DIR"] == str(data_root / "pip-cache")
-    assert environment["UV_CACHE_DIR"] == str(data_root / "uv-cache")
+    assert environment["HF_HOME"] == str(data_root / "huggingface")
+    assert environment["HF_HUB_CACHE"] == str(data_root / "huggingface" / "hub")
+    assert environment["HF_XET_CACHE"] == str(data_root / "huggingface" / "xet")
     assert environment["TMPDIR"] == str(data_root / "tmp")
     assert environment["TMP"] == str(data_root / "tmp")
     assert environment["TEMP"] == str(data_root / "tmp")
@@ -462,13 +471,15 @@ def test_installation_environment_keeps_large_build_files_under_data_root(
     )
     assert environment["VLLM_USE_PRECOMPILED"] == "1"
     assert environment["UV_NO_CACHE"] == "1"
+    assert environment["PIP_NO_CACHE_DIR"] == "1"
+    assert "TRANSFORMERS_CACHE" not in environment
     assert all(
         (data_root / name).is_dir()
-        for name in ("pip-cache", "uv-cache", "tmp", "torch-extensions")
+        for name in ("huggingface", "tmp", "torch-extensions")
     )
 
 
-def test_installation_environment_respects_explicit_build_overrides(
+def test_installation_environment_ignores_legacy_per_cache_overrides(
     tmp_path, monkeypatch
 ):
     custom_tmp = tmp_path / "custom-tmp"
@@ -484,10 +495,12 @@ def test_installation_environment_respects_explicit_build_overrides(
         avoid_uv_cache=True,
     )
 
-    assert environment["TMPDIR"] == str(custom_tmp)
-    assert environment["UV_CACHE_DIR"] == str(custom_uv)
+    assert environment["TMPDIR"] == str(tmp_path / "data" / "tmp")
+    assert "UV_CACHE_DIR" not in environment
+    assert "DLLM_BUILD_TMPDIR" not in environment
+    assert "DLLM_UV_CACHE_DIR" not in environment
     assert environment["VLLM_USE_PRECOMPILED"] == "0"
-    assert environment["UV_NO_CACHE"] == "0"
+    assert environment["UV_NO_CACHE"] == "1"
 
 
 def test_gemma_dflash_allows_known_xgrammar_transformers_metadata_conflict(
@@ -656,13 +669,13 @@ def test_different_torch_public_version_is_still_stale(monkeypatch):
 
 
 def test_existing_model_venv_repairs_stale_profile_pins(monkeypatch, tmp_path):
-    model_venv = tmp_path / "dreamreasoner-venv"
+    model_venv = tmp_path / "venvs" / "dreamreasoner"
     python = _model_script.venv_python(model_venv)
     python.parent.mkdir(parents=True)
     python.touch()
     profile = _model_script.PROFILES["dreamreasoner"]
     repaired = []
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
     monkeypatch.setattr(
         _model_script,
         "_profile_version_mismatches",
@@ -683,12 +696,12 @@ def test_existing_model_venv_repairs_stale_profile_pins(monkeypatch, tmp_path):
 
 
 def test_existing_model_venv_keeps_matching_profile_pins(monkeypatch, tmp_path):
-    model_venv = tmp_path / "dreamreasoner-venv"
+    model_venv = tmp_path / "venvs" / "dreamreasoner"
     python = _model_script.venv_python(model_venv)
     python.parent.mkdir(parents=True)
     python.touch()
     profile = _model_script.PROFILES["dreamreasoner"]
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
     monkeypatch.setattr(
         _model_script, "_profile_version_mismatches", lambda selected, executable: {}
     )
@@ -704,12 +717,12 @@ def test_existing_model_venv_keeps_matching_profile_pins(monkeypatch, tmp_path):
 def test_model_run_repair_avoids_reinstalling_dependencies(
     monkeypatch, tmp_path
 ):
-    model_venv = tmp_path / "qwen-venv"
+    model_venv = tmp_path / "venvs" / "qwen3_4b"
     python = _model_script.venv_python(model_venv)
     python.parent.mkdir(parents=True)
     python.touch()
     commands = []
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
     monkeypatch.setattr(_model_script, "_project_importable", lambda executable: False)
     monkeypatch.setattr(
         _model_script,
@@ -728,18 +741,19 @@ def test_model_run_repair_avoids_reinstalling_dependencies(
     assert not any("torch" in str(part) for command in commands for part in command)
 
 
-def test_prepare_does_not_repair_or_install_the_project(monkeypatch, tmp_path):
-    model_venv = tmp_path / "qwen-venv"
+def test_prepare_uses_the_complete_model_environment(monkeypatch, tmp_path):
+    model_venv = tmp_path / "venvs" / "qwen3_4b"
     model_python = _model_script.venv_python(model_venv)
     model_python.parent.mkdir(parents=True)
     model_python.touch()
     commands = []
-    monkeypatch.setenv("DLLM_VENV_DIR", str(model_venv))
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(model_venv.parent))
+    monkeypatch.setattr(_model_script, "_project_importable", lambda python: True)
     monkeypatch.setattr(
         _model_script,
         "repair_project_installation",
         lambda profile, python: (_ for _ in ()).throw(
-            AssertionError("prepare must not repair the venv")
+            AssertionError("complete prepare venv must not be repaired")
         ),
     )
     monkeypatch.setattr(
@@ -762,8 +776,8 @@ def test_prepare_does_not_repair_or_install_the_project(monkeypatch, tmp_path):
 def test_prepare_requires_setup_when_model_environment_is_missing(
     monkeypatch, tmp_path
 ):
-    missing_venv = tmp_path / "missing-qwen-venv"
-    monkeypatch.setenv("DLLM_VENV_DIR", str(missing_venv))
+    missing_venv_root = tmp_path / "missing-venvs"
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(missing_venv_root))
 
     with pytest.raises(SystemExit, match="setup_venv.py -m qwen3_4b"):
         _model_script.main("qwen3_4b", ["prepare"])

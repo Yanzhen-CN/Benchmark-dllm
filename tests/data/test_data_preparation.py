@@ -215,6 +215,7 @@ def test_prepare_data_creates_and_reexecutes_in_root_venv(tmp_path, monkeypatch)
     python = root_venv.venv_python(root_directory)
     commands: list[list[str]] = []
     monkeypatch.setattr(root_venv, "ROOT_VENV", root_directory)
+    monkeypatch.setenv("DLLM_VENV_ROOT", str(root_directory.parent))
     monkeypatch.delenv(root_venv.INSIDE_ROOT_VENV, raising=False)
     monkeypatch.setattr(root_venv.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
