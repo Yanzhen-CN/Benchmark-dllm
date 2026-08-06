@@ -4,6 +4,7 @@ import pytest
 
 from dllm_bench.interfaces import PositionState, TraceStep
 from dllm_bench.visual.public.sudoku_trace_viz import (
+    BOARD_LEGEND_LINES,
     CellState,
     SudokuCell,
     derive_sudoku_frames,
@@ -198,17 +199,17 @@ def test_render_sudoku_gif_writes_file_and_legend_fits_canvas(tmp_path):
 
     with Image.open(out_path) as img:
         assert getattr(img, "n_frames", 1) == len(frames)
-        # the legend text must fit within the rendered canvas width (this
-        # guards the earlier "legend text got cut off" bug).
+        # Each of the two legend rows must fit while the board occupies most
+        # of the canvas width.
         from dllm_bench.visual.public.sudoku_trace_viz import _load_font
 
         meta_font = _load_font(13)
-        legend_text = (
-            "black=original clue | gray <n>=unaligned/noise | "
-            "green=correct | red=wrong"
+        draw = ImageDraw.Draw(img)
+        assert all(
+            draw.textbbox((0, 0), line, font=meta_font)[2] <= img.size[0] - 48
+            for line in BOARD_LEGEND_LINES
         )
-        legend_width = ImageDraw.Draw(img).textbbox((0, 0), legend_text, font=meta_font)[2]
-        assert legend_width <= img.size[0]
+        assert (9 * 58) / img.size[0] > 0.85
 
 
 def test_render_sudoku_gif_is_a_no_op_on_empty_frames(tmp_path):

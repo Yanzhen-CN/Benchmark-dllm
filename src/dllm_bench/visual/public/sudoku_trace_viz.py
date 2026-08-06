@@ -113,6 +113,24 @@ _TOKEN_TEXT = {
     TokenState.ANSWER_WRONG: (135, 24, 24),
 }
 
+TOKEN_LEGEND_LINES = (
+    "gray=noise | black=accepted framework",
+    "green=correct answer | red=wrong answer",
+)
+BOARD_LEGEND_LINES = (
+    "black=original clue | gray <n>=unaligned/noise",
+    "green=correct | red=wrong",
+)
+LAYOUT_LEGEND_LINES = (
+    "black=correct clue | white/red text=wrong clue",
+    "gray <n>=not accepted/re-noised | green=correct answer | red=wrong answer",
+)
+
+
+def _draw_legend_lines(draw, lines, *, x: int, y: int, font) -> None:
+    for index, line in enumerate(lines):
+        draw.text((x, y + index * 17), line, fill=MUTED, font=font)
+
 
 def _parse_digit(text: str | None) -> int | None:
     if text is None:
@@ -524,21 +542,13 @@ def render_sudoku_token_gif(
     token_rows = math.ceil(token_count / token_columns)
     token_cell_px = cell_px
     header_h = 70
-    footer_h = 40
+    footer_h = 58
 
     title_font = _load_font(20)
     meta_font = _load_font(13)
 
-    legend_text = (
-        "gray=noise | black=accepted framework | "
-        "green=correct answer | red=wrong answer"
-    )
-    legend_width = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), legend_text, font=meta_font)[2]
     token_panel_w = token_columns * token_cell_px
-    width = max(
-        token_panel_w + margin * 2,
-        legend_width + margin * 2,
-    )
+    width = max(token_panel_w + margin * 2, 460)
     content_h = token_rows * token_cell_px
     height = header_h + content_h + footer_h
 
@@ -592,10 +602,11 @@ def render_sudoku_token_gif(
                     fill=_TOKEN_TEXT[token.state],
                     font=token_font,
                 )
-            draw.text(
-                (margin, header_h + token_rows * token_cell_px + 10),
-                legend_text,
-                fill=MUTED,
+            _draw_legend_lines(
+                draw,
+                TOKEN_LEGEND_LINES,
+                x=margin,
+                y=header_h + token_rows * token_cell_px + 8,
                 font=meta_font,
             )
             return image
@@ -644,19 +655,18 @@ def render_sudoku_board_gif(
     box_size = math.isqrt(size)
     if box_size * box_size != size:
         box_size = size
-    cell_px = 92 if size == 4 else 54
+    cell_px = 116 if size == 4 else 58
     grid_px = size * cell_px
     margin = 24
     header_h = 74
-    footer_h = 42
-    width = max(grid_px + margin * 2, 620)
+    footer_h = 60
+    width = grid_px + margin * 2
     height = header_h + grid_px + footer_h
 
     title_font = _load_font(20)
     meta_font = _load_font(13)
     digit_font = _load_font(int(cell_px * 0.48), mono=True)
     noise_font = _load_font(max(13, int(cell_px * 0.25)), mono=True)
-    legend = "black=original clue | gray <n>=unaligned/noise | green=correct | red=wrong"
 
     def render(frame_index: int) -> Image.Image:
         frame = frames[min(frame_index, len(frames) - 1)]
@@ -706,10 +716,11 @@ def render_sudoku_board_gif(
             y = grid_y0 + index * cell_px
             draw.line((x, grid_y0, x, grid_y0 + grid_px), fill=TEXT, width=3)
             draw.line((grid_x0, y, grid_x0 + grid_px, y), fill=TEXT, width=3)
-        draw.text(
-            (margin, header_h + grid_px + 12),
-            legend,
-            fill=MUTED,
+        _draw_legend_lines(
+            draw,
+            BOARD_LEGEND_LINES,
+            x=margin,
+            y=header_h + grid_px + 8,
             font=meta_font,
         )
         return image
@@ -779,15 +790,15 @@ def render_sudoku_layout_gif(
     box_size = math.isqrt(size)
     if box_size * box_size != size:
         box_size = size
-    board_cell_px = 88 if size == 4 else 52
+    board_cell_px = 116 if size == 4 else 58
     board_px = size * board_cell_px
     margin = 24
     header_h = 72
     label_h = 20
     context_h = 48
     gap = 18
-    footer_h = 40
-    width = max(620, board_px + margin * 2)
+    footer_h = 60
+    width = board_px + margin * 2
     height = header_h + label_h + board_px + footer_h
     if show_context:
         height += label_h + context_h + gap + gap + label_h + context_h
@@ -796,10 +807,6 @@ def render_sudoku_layout_gif(
     board_font = _load_font(int(board_cell_px * 0.48), mono=True)
     noise_font = _load_font(max(12, int(board_cell_px * 0.24)), mono=True)
     context_font = _load_font(15, mono=True)
-    legend = (
-        "black=correct clue | white/red text=wrong clue | "
-        "gray <n>=not accepted/re-noised | green=correct answer | red=wrong answer"
-    )
 
     def draw_context(
         draw: ImageDraw.ImageDraw,
@@ -885,7 +892,13 @@ def render_sudoku_layout_gif(
             draw.text((margin, y), "final visible text after Sudoku", fill=MUTED, font=meta_font)
             y += label_h
             draw_context(draw, suffix_context, y, "<end>")
-        draw.text((margin, height - footer_h + 12), legend, fill=MUTED, font=meta_font)
+        _draw_legend_lines(
+            draw,
+            LAYOUT_LEGEND_LINES,
+            x=margin,
+            y=height - footer_h + 8,
+            font=meta_font,
+        )
         return image
 
     duration = max(60, int(round(1000 / max(0.1, fps))))
