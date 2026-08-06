@@ -20,6 +20,7 @@ Python. This keeps incompatible torch/transformers versions isolated.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import re
 import subprocess
@@ -74,20 +75,45 @@ def dispatch_model_scripts(
     scripts_dir: str | Path = DEFAULT_VENV_SCRIPTS_DIR,
     env_updates: Mapping[str, str] | None = None,
     action_args: Sequence[str] = (),
+    jobs: int = 1,
     dry_run: bool = False,
 ) -> None:
+    if jobs < 1:
+        raise ValueError("jobs must be at least 1")
     scripts_dir = Path(scripts_dir).resolve()
     environment = os.environ.copy()
     environment.update(env_updates or {})
 
+    commands: list[tuple[str, list[str]]] = []
     for index, model_name in enumerate(model_names, start=1):
         script = scripts_dir / f"{model_name}.py"
         if not script.is_file():
             raise FileNotFoundError(f"model script not found: {script}")
         command = [sys.executable, str(script), action, *action_args]
         print(f"[{index}/{len(model_names)}] {model_name}: {' '.join(command)}", flush=True)
-        if not dry_run:
+        commands.append((model_name, command))
+    if dry_run:
+        return
+    if jobs == 1:
+        for _, command in commands:
             subprocess.run(command, cwd=PROJECT_ROOT, env=environment, check=True)
+        return
+
+    with ThreadPoolExecutor(max_workers=min(jobs, len(commands))) as executor:
+        futures = {
+            executor.submit(
+                subprocess.run,
+                command,
+                cwd=PROJECT_ROOT,
+                env=environment,
+                check=True,
+            ): model_name
+            for model_name, command in commands
+        }
+        for future in as_completed(futures):
+            model_name = futures[future]
+            future.result()
+            print(f"[setup complete] {model_name}", flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
