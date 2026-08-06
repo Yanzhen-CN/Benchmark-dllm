@@ -8,7 +8,7 @@ from dllm_bench.models.illada_entropy import entropy_bound_acceptance_mask
 from dllm_bench.registry import build_model_adapter
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_entropy_bound_matches_diffusiongemma_cumulative_formula():

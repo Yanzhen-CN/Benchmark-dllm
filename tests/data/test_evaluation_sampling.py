@@ -214,22 +214,6 @@ def test_formal_ruler_config_uses_only_shared_4096_input_for_large_models():
     assert {sample.meta["target_input_tokens"] for sample in selected} == {4096}
 
 
-def test_ruler_context_probe_uses_half_declared_model_context():
-    selected = select_configured_samples(
-        _ruler_samples((131136,), per_position=1),
-        load_yaml("configs/datasets/ruler_context_probe.yaml"),
-        {"max_context_tokens": 32768},
-        seed=3,
-    )
-
-    assert len(selected) == 1
-    assert selected[0].meta["target_input_tokens"] == 16384
-    assert selected[0].meta["context_window_tokens"] == 16448
-    assert selected[0].meta["max_new_tokens"] == 64
-    assert selected[0].meta["measurement_role"] == "capacity_probe"
-    assert selected[0].meta["declared_max_context_tokens"] == 32768
-
-
 def test_ruler_reports_missing_stratum_clearly():
     with pytest.raises(ValueError, match="window=32768"):
         select_configured_samples(

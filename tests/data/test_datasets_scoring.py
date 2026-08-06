@@ -26,7 +26,6 @@ from dllm_bench.datasets.mbpp import (
     extract_code,
 )
 from dllm_bench.datasets.ruler import (
-    RulerContextProbeDataset,
     RulerDataset,
     RulerReference,
     generate_ruler_bank,
@@ -1074,28 +1073,6 @@ def test_ruler_score_partial_match_for_multi_answer():
     result = ds.score(sample, "The answer involves Alice.")
     assert result.primary_score == pytest.approx(0.5)
     assert result.aux["all_answers_match"] == 0.0
-
-
-def test_ruler_context_probe_aggregate_uses_its_dataset_score_key():
-    dataset = RulerContextProbeDataset()
-    reference = RulerReference(
-        task_type="niah",
-        position="middle",
-        required_answers=["P123"],
-        context_length=4096,
-    )
-    sample = Sample(
-        sample_id="probe",
-        prompt="p",
-        reference=reference,
-        meta={"context_window_tokens": 4096},
-    )
-    result = dataset.score(sample, "P123")
-
-    summary = dataset.aggregate_records([sample], [result])
-
-    assert summary["ruler_context_probe_score"] == 1.0
-    assert summary["ruler_string_match_all"] == 1.0
 
 
 def test_position_robustness_perfect_when_equal():

@@ -715,6 +715,12 @@ def build_step_profiling(
             if total_time is not None and accepted is not None and accepted > 0
             else None
         ),
+        "accepted_token_tps": (
+            accepted / total_time
+            if total_time is not None and total_time > 0
+            and accepted is not None and accepted > 0
+            else None
+        ),
         "compute_per_accepted_token": (
             total_compute / accepted
             if total_compute is not None and accepted is not None and accepted > 0
@@ -766,9 +772,10 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
     axes[1, 0].set(title="Accepted tokens per step", xlabel="Step", ylabel="Tokens")
 
     accepted = [row.accepted_tokens for row in rows]
-    time_cost = [
-        row.time_seconds / count
-        if row.time_seconds is not None and count is not None and count > 0
+    accepted_token_tps = [
+        count / row.time_seconds
+        if row.time_seconds is not None and row.time_seconds > 0
+        and count is not None and count > 0
         else None
         for row, count in zip(rows, accepted)
     ]
@@ -778,7 +785,7 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
         else None
         for row, count in zip(rows, accepted)
     ]
-    axes[1, 1].plot(x, time_cost, label="Seconds / accepted token")
+    axes[1, 1].plot(x, accepted_token_tps, label="Accepted-token TPS")
     cost_axis = axes[1, 1].twinx()
     cost_axis.plot(
         x,
@@ -787,9 +794,9 @@ def plot_step_profiling(rows: list[StepProfilingRow], path: str | Path) -> bool:
         label="TFLOP / accepted token",
     )
     axes[1, 1].set(
-        title="Cost per accepted token",
+        title="Accepted-token throughput and compute cost",
         xlabel="Step",
-        ylabel="Seconds",
+        ylabel="Accepted tokens / second",
     )
     cost_axis.set_ylabel("TFLOP")
     handles, labels = axes[1, 1].get_legend_handles_labels()

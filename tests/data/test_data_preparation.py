@@ -21,7 +21,7 @@ from dllm_bench.runner.data_preparation import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 GSM8K_CONFIG = REPO_ROOT / "configs" / "datasets" / "gsm8k.yaml"
 FULL_MATRIX_CONFIG = REPO_ROOT / "configs" / "experiments" / "full_matrix.yaml"
 PREPARE_SCRIPT = REPO_ROOT / "prepare_data.py"
@@ -113,7 +113,7 @@ def test_prepare_data_cli_is_idempotent(tmp_path, monkeypatch):
     assert "cached: 4 samples" in second.output
 
 
-def test_full_matrix_prepare_visits_all_formal_and_probe_datasets(tmp_path, monkeypatch):
+def test_full_matrix_prepare_visits_all_declared_datasets(tmp_path, monkeypatch):
     monkeypatch.setenv("DLLM_DATA_ROOT", str(tmp_path / ".data"))
     monkeypatch.setattr(
         "dllm_bench.runner.data_preparation.build_dataset",
@@ -125,8 +125,8 @@ def test_full_matrix_prepare_visits_all_formal_and_probe_datasets(tmp_path, monk
 
     assert [item.dataset_name for item in first] == [
         "gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9",
-        "sudoku4_thinking", "sudoku9_thinking", "ruler", "hellobench",
-        "ruler_context_probe",
+        "sudoku4_1shot", "sudoku9_1shot", "sudoku4_thinking",
+        "sudoku9_thinking", "ruler", "hellobench",
     ]
     assert all(item.sample_count == 1 and item.prepared_now for item in first)
     assert all(not item.prepared_now for item in second)
@@ -163,6 +163,8 @@ def test_full_matrix_prepare_sudoku_group_expands_all_variants(
     assert [item.dataset_name for item in prepared] == [
         "sudoku4",
         "sudoku9",
+        "sudoku4_1shot",
+        "sudoku9_1shot",
         "sudoku4_thinking",
         "sudoku9_thinking",
     ]

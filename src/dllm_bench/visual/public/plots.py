@@ -116,20 +116,20 @@ def plot_answer_region_diagnostics(
     plt.close(fig)
 
 
-def plot_tpf_vs_tps(rows: list[dict[str, Any]], out_path: str) -> None:
+def plot_accepts_per_forward_vs_tps(rows: list[dict[str, Any]], out_path: str) -> None:
     usable = [
         row
         for row in rows
-        if row.get("Mean TPF") is not None and row.get("Tps") is not None
+        if row.get("Accepted tokens/forward") is not None and row.get("Accepted TPS") is not None
     ]
     if not usable:
         return
     fig, ax = plt.subplots(figsize=(6, 4.5))
     for row in usable:
-        ax.scatter(row["Mean TPF"], row["Tps"], s=60, label=_label(row))
-    ax.set_xlabel("Mean TPF (token/forward)")
-    ax.set_ylabel("Tps (token/s)")
-    ax.set_title("Algorithmic parallelism vs measured throughput")
+        ax.scatter(row["Accepted tokens/forward"], row["Accepted TPS"], s=60, label=_label(row))
+    ax.set_xlabel("Accepted tokens / accepting forward")
+    ax.set_ylabel("Accepted-token TPS")
+    ax.set_title("Acceptance parallelism vs accepted-token throughput")
     place_legend(ax)
     fig.tight_layout()
     fig.savefig(out_path)
@@ -317,8 +317,8 @@ def plot_task4_parallelism_signature(
     ]
     axes[0].bar(x, burst, color="#E15759")
     axes[0].axhline(1.0, color="black", linestyle="--", linewidth=0.8)
-    axes[0].set_ylabel("Peak / Mean TPF")
-    axes[0].set_title("Finalization burst ratio (1 = flat schedule)")
+    axes[0].set_ylabel("Peak / mean final-stable gain")
+    axes[0].set_title("Final-stable burst ratio (1 = flat schedule)")
     axes[1].bar(x, concentration, color="#F28E2B")
     axes[1].set_ylim(0, 1)
     axes[1].set_ylabel("Final token share")
@@ -376,7 +376,7 @@ def plot_task4_draft_volatility(rows: list[dict[str, Any]], out_path: str) -> No
 
 
 def plot_task4_forward_yield(rows: list[dict[str, Any]], out_path: str) -> None:
-    """Native final-stable TPF and DFlash target-verification yield."""
+    """Native accepted-token TPF and DFlash target-verification yield."""
     values: list[tuple[dict[str, Any], float, str]] = []
     for row in rows:
         mean_tpf = row.get("Mean TPF")
@@ -384,7 +384,7 @@ def plot_task4_forward_yield(rows: list[dict[str, Any]], out_path: str) -> None:
             "speculative_mean_acceptance_length"
         )
         if mean_tpf is not None:
-            values.append((row, float(mean_tpf), "final-stable / model forward"))
+            values.append((row, float(mean_tpf), "accepted events / model forward"))
         elif speculative is not None:
             values.append((row, float(speculative), "accepted / target verification"))
     if not values:
@@ -394,12 +394,12 @@ def plot_task4_forward_yield(rows: list[dict[str, Any]], out_path: str) -> None:
     ax.bar(
         range(len(values)),
         [value for _, value, _ in values],
-        color=["#4C78A8" if basis.startswith("final") else "#F28E2B" for _, _, basis in values],
+        color=["#4C78A8" if basis.startswith("accepted events") else "#F28E2B" for _, _, basis in values],
     )
     ax.set_xticks(range(len(values)))
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel("Tokens advanced per primary/target forward")
-    ax.set_title("Forward yield (basis is explicit; draft-model overhead remains in Tps)")
+    ax.set_title("Forward yield (re-accepted positions count again; DFlash uses a separate basis)")
     fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)

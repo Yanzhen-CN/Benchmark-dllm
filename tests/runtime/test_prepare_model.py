@@ -10,7 +10,7 @@ from pathlib import Path
 
 import prepare_model
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "prepare_model.py"
 CONFIGS_DIR = REPO_ROOT / "configs"
 
@@ -132,7 +132,6 @@ def test_prepare_model_defaults_to_all_matrix_models_via_isolated_scripts(tmp_pa
         "illada",
         "illada_vargen",
         "dreamreasoner",
-        "w1",
         "diffusiongemma",
         "gemma",
         "gemma_dflash",

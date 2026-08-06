@@ -15,10 +15,9 @@ Experimental results and temporary progress do not belong in the repository docu
 
 | Axis | Primary outputs |
 | --- | --- |
-| Task quality | Dataset primary score, official auxiliary metrics, completion/truncation |
-| Long input/output | Controlled RULER diagnostics, capacity probe, HelloBench reference cases |
-| Resource cost | Tps, Seconds/Sample, Energy/Sample, Average Power, Peak VRAM |
-| Generation process | time per step, step count, commit order, finalization geometry, certainty and Draft Volatility when observable |
+| Quality | Dataset primary score plus a small, task-specific set of failure diagnostics |
+| Parallelism | Accepted-token TPS, accepted tokens per forward, actual model forwards, acceptance trace |
+| Cost | Seconds/sample, joules/sample, average power, compute/sample, peak VRAM |
 
 Results are compared only inside compatible dataset, sample-set, prompt/output-budget, hardware, and measurement-protocol groups. Missing or unobservable metrics are `N/A`, never zero-filled.
 
@@ -344,20 +343,14 @@ output/
 
 `model_output` is the raw source of truth. A generation row is reportable only when `_meta.json` marks it complete and valid and every selected sample exists.
 
-Legacy flat directories (`<model_config>/<dataset>`) remain readable. Preview and apply the one-time migration from the repository root:
+Remove local test caches and temporary files from the repository root:
 
 ```bash
-python migrate_output_layout.py --output-root output
-python migrate_output_layout.py --output-root output --apply
+python tests/clean_test.py --dry-run
+python tests/clean_test.py
 ```
 
-The first command is dry-run only. The applied migration never merges into an existing destination and writes a rollback manifest under `output/_layout_migrations/`. To undo one migration:
-
-```bash
-python migrate_output_layout.py --rollback output/_layout_migrations/migration_<timestamp>.json
-```
-
-Run the migration independently on each local or server copy of `output`. Comparison directories under `visualization_output` are intentionally left unchanged.
+The cleaner removes only test, coverage, and Python cache artifacts. It does not touch `output`, prepared datasets, model files, or virtual environments.
 
 Score reuse is guarded by fingerprints over the generation text, dataset revision, prompt protocol, scorer revision, ordered sample-set hash, and primary metric. Changing a scorer triggers re-scoring without requiring a new GPU run.
 
@@ -377,7 +370,7 @@ These contracts keep server generation, local scoring, and later extensions comp
 - `SUCCESS` runs the dataset scorer normally. `TRUNCATED` scores the available output, preserves any already-present valid answer, and records `complete=false`. OOM, model-load failure, infrastructure failure, or a missing selected sample invalidates the complete model × variant × dataset row.
 - Score reuse requires matching dataset revision, prompt/protocol revision, scorer revision, ordered sample-set hash, generation-text hash, and primary metric. A scoring change therefore causes re-scoring, not model regeneration.
 - Model download, construction, device transfer, warmup, trace copying, serialization, scoring, visualization, and optional compute replay are outside the measured generation window.
-- Tps and average power are calculated from compatible window totals. Seconds/Sample and Energy/Sample divide total timed seconds or joules by completed samples; they are not means of per-sample ratios.
+- TPS is `sum(accepted_tokens_per_step) / total timed generation seconds`. Missing accepted-token observations remain `N/A`; final text length is not used as a throughput substitute. Average power is also calculated from compatible window totals. Seconds/Sample and Energy/Sample divide total timed seconds or joules by completed samples; they are not means of per-sample ratios.
 - Trace fields are capability-gated. Missing entropy, provisional-token, or verification information is reported as `N/A`, never inferred or replaced with zero.
 - `run_visualization.py` is the only user-facing visualization entry point. Shared renderers live under `dllm_bench.visual.public`; optional model-specific hooks live in `dllm_bench.visual.<model_name>`.
 
@@ -423,11 +416,11 @@ dataset_kwargs: {}
 
 `configs/experiments/full_matrix.yaml` selects formal models, variants, datasets, output ceilings, and per-model overrides. Change the matrix to change a run; do not edit runner code for experiment selection.
 
-LLaDA2.1-mini runs the checkpoint-native official Quality and Speed modes in
-the formal matrix and receives the same standard datasets, prompts, selected
-samples, and output ceilings as the other models. The adapter calls the remote
-checkpoint's `generate()` unchanged; observational wrappers only record the
-real canvas edits, confidence, and entropy needed by the public trace plots.
+LLaDA2.1-mini is intentionally outside the main cross-model matrix. Standard
+1-shot Sudoku4/9 runs use `configs/experiments/llada2_1_sudoku.yaml`; editable
+controlled-repair diagnostics use `llada2_1_repair.yaml`. The adapter calls the
+remote checkpoint's `generate()` unchanged, while observational wrappers record
+the real canvas edits, confidence, and entropy used by the public trace plots.
 
 ## Adding a new model
 
@@ -472,10 +465,10 @@ This explicit environment registration is intentional: dependency changes for on
 
 ### 4. Declare visualization capability
 
-Add `src/dllm_bench/visual/models/<name>.py`:
+Add `src/dllm_bench/visual/<name>.py`:
 
 ```python
-from ..base import public_model_visual
+from .base import public_model_visual
 
 MODEL_VISUAL = public_model_visual("<name>")
 main = MODEL_VISUAL.main
@@ -571,9 +564,25 @@ src/dllm_bench/
     public/
     <model>.py
 tests/
+  core/
+  data/
+  models/
+  metrics/
+  runtime/
+  visual/
+  clean_test.py
 ```
 
 ## Testing
+
+Tests are part of the repository and are grouped by responsibility:
+
+- `core`: matrix execution, stages, persistence, output layout, and CLI contracts
+- `data`: preparation, sampling, dataset I/O, and scoring
+- `models`: model adapters, prompts, caches, and sampling behavior
+- `metrics`: quality, resource, profiling, and trace metrics
+- `runtime`: environment setup, model preparation, device selection, and entry points
+- `visual`: shared and model-specific visualization contracts
 
 Run the suite from an activated development/root environment:
 
@@ -584,9 +593,9 @@ python -m pytest -q --import-mode=importlib
 Useful focused checks:
 
 ```bash
-python -m pytest tests/test_registry.py
-python -m pytest tests/test_runner_end_to_end.py
-python -m pytest tests/test_dataset_trace_report.py
+python -m pytest tests/core/test_registry.py
+python -m pytest tests/core/test_runner_end_to_end.py
+python -m pytest tests/visual/public/test_dataset_trace_report.py
 ```
 
 The repository includes a pure-Python mock adapter so generation, scoring, persistence, visualization, OOM handling, and resume behavior can be tested without a GPU.

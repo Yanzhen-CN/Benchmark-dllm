@@ -66,12 +66,18 @@ def plot_stage_profiling(
         else float("nan")
         for name in names
     ]
-    figure, axes = plt.subplots(1, 2, figsize=(14, max(4, len(names) * 0.42)))
+    figure, axes = plt.subplots(1, 2, figsize=(15.5, max(4.8, len(names) * 0.48)))
     axes[0].barh(names, times)
     axes[0].set(title="Measured time by generation stage", xlabel="Seconds")
     axes[1].barh(names, compute)
     axes[1].set(title="Compute by generation stage", xlabel="TFLOP")
-    figure.tight_layout()
+    figure.subplots_adjust(
+        left=0.16,
+        right=0.98,
+        top=0.90,
+        bottom=0.14,
+        wspace=0.38,
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=180, bbox_inches="tight")
     plt.close(figure)
@@ -184,6 +190,14 @@ def build_dataset_profiling_summary(
         "time_per_accepted_token": (
             total_time / total_accepted
             if total_time is not None
+            and total_accepted is not None
+            and total_accepted > 0
+            else None
+        ),
+        "accepted_token_tps": (
+            total_accepted / total_time
+            if total_time is not None
+            and total_time > 0
             and total_accepted is not None
             and total_accepted > 0
             else None

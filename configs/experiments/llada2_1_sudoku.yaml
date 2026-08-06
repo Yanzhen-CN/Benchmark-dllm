@@ -1,20 +1,22 @@
-# Diagnostic-only editable-canvas experiment. These custom datasets and
-# qmode/smode variants are not formal benchmark rows and must never replace
-# full_matrix's standard Sudoku4/Sudoku9 prompts or official generation path.
+# Standard 1-shot Sudoku comparison for the checkpoint-native Quality and
+# Speed modes. This is separate from the main cross-model matrix.
 base_dir: ../..
 output_root: output/model_output
+output_stage: model_output
 
 models:
   - config: configs/models/llada2_1.yaml
     variants: [qmode, smode]
 
 datasets:
-  - config: configs/datasets/editable_sudoku4.yaml
-    n_samples: 16
+  - config: configs/datasets/sudoku4_1shot.yaml
+    n_samples: 100
     max_new_tokens: 32
-  - config: configs/datasets/llada2_1_sudoku9.yaml
-    n_samples: 1
+  - config: configs/datasets/sudoku9_1shot.yaml
+    n_samples: 100
     max_new_tokens: 96
 
 seed: 42
 capture_trace: true
+resource_measurement: reuse_formal_samples
+trace_scope: all_samples

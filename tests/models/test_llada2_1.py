@@ -1,3 +1,5 @@
+import pytest
+
 from dllm_bench.interfaces import PositionState
 from dllm_bench.models.llada2_1 import _build_observational_trace, _count_revision_events
 from dllm_bench.registry import build_model_adapter
@@ -18,7 +20,7 @@ def test_llada21_registry_exposes_official_quality_and_speed_modes():
 
 
 def test_llada21_uses_shared_prompt_tokenization_for_mapping_results():
-    import torch
+    torch = pytest.importorskip("torch")
 
     class MappingTokenizer:
         def apply_chat_template(self, messages, **kwargs):
@@ -57,5 +59,5 @@ def test_observer_derives_mask_fills_and_real_edits_from_official_canvases():
     }
     assert trace[2].editing_state_by_position == {0: "stable", 1: "stable"}
     assert trace[1].current_token_confidence_by_position == {0: 0.2, 1: 0.0}
-    assert trace[1].confidence_margin_by_position == {0: 0.5, 1: 0.5}
+    assert trace[1].confidence_margin_by_position == pytest.approx({0: 0.5, 1: 0.5})
     assert _count_revision_events(trace, 99) == 1

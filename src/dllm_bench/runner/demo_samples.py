@@ -173,6 +173,5 @@ _BUILDERS = {
     "sudoku9": _sudoku9_samples,
     "sudoku_trace": _sudoku_trace_samples,
     "ruler": _ruler_samples,
-    "ruler_context_probe": _ruler_samples,
     "hellobench": _hellobench_samples,
 }

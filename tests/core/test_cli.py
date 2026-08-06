@@ -1,4 +1,4 @@
-"""End-to-end CLI test: generate -> score -> visualize -> report through the
+﻿"""End-to-end CLI test: generate -> score -> visualize -> report through the
 mock adapter, using Click's test runner (no subprocess needed)."""
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from dllm_bench.datasets.mbpp import MBPPDataset, MbppSample
 from dllm_bench.interfaces import GenerationResult, RunStatus
 from dllm_bench.models.mock import MockDiffusionAdapter
 
-CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
+CONFIGS_DIR = Path(__file__).resolve().parents[2] / "configs"
 
 
 def _run(runner, args):
@@ -31,7 +31,7 @@ def _run(runner, args):
 
 def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     runner = CliRunner()
-    output_root = tmp_path / "output"
+    output_root = tmp_path / "model_output"
     model_config = str(CONFIGS_DIR / "models" / "mock.yaml")
     dataset_config = str(CONFIGS_DIR / "datasets" / "gsm8k.yaml")
 
@@ -46,7 +46,7 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert "loading model into runtime device (outside sample timing)" in generate_result.output
     assert "[default] [#######-------------] 1/3" in generate_result.output
 
-    model_out = output_root / "model_output" / "mock_default" / "gsm8k"
+    model_out = output_root / "mock" / "default" / "gsm8k"
     assert (model_out / "_meta.json").exists()
     assert len(list(model_out.glob("gsm8k-demo-*.json"))) == 3
 
@@ -80,7 +80,7 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     ])
     assert "scored=3" in score_result.output
 
-    score_out = output_root / "score_output" / "mock_default" / "gsm8k"
+    score_out = output_root.parent / "score_output" / "mock" / "default" / "gsm8k"
     assert (score_out / "summary.json").exists()
 
     visualize_result = _run(runner, [
@@ -93,9 +93,9 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     ])
     assert "rendered 2 sample(s)" in visualize_result.output
 
-    viz_out = output_root / "visualization_output" / "mock_default" / "gsm8k"
-    assert len(list(viz_out.glob("*_all_updates.png"))) == 2
-    assert not list(viz_out.glob("*_trace.gif"))
+    viz_out = output_root.parent / "visualization_output" / "mock" / "default" / "gsm8k"
+    assert len(list(viz_out.glob("*_accept_trace.png"))) == 2
+    assert len(list(viz_out.glob("*_token_trace.gif"))) == 2
     trace_summary = json.loads(
         (viz_out / "dataset_trace_summary.json").read_text(encoding="utf-8")
     )
@@ -104,21 +104,22 @@ def test_generate_score_visualize_report_pipeline(tmp_path, monkeypatch):
     assert trace_summary["config"] == "default"
     assert not (viz_out / "dataset_finalization_map.png").exists()
     assert not (viz_out / "dataset_commit_order_tau.png").exists()
-    assert (viz_out / "dataset_tpf_tps.txt").exists()
+    assert (viz_out / "dataset_acceptance_throughput.txt").exists()
 
     report_result = _run(runner, [
-        "report", "--output-root", str(output_root), "--dataset", "gsm8k",
+        "report", "--output-root", str(output_root.parent), "--dataset", "gsm8k",
     ])
     assert "gsm8k" in report_result.output
     assert "mock" in report_result.output
-    assert not (output_root / "report" / "gsm8k" / "quality_tps.png").exists()
-    assert not (output_root / "report" / "gsm8k" / "quality_seconds_per_sample.png").exists()
-    assert not (output_root / "report" / "gsm8k" / "quality_energy_per_sample.png").exists()
-    assert (output_root / "report" / "raw_results.csv").exists()
-    assert (output_root / "report" / "gsm8k" / "trace_metrics.csv").exists()
-    assert not (output_root / "report" / "gsm8k" / "task4_tpf_vs_tps.png").exists()
+    report_out = output_root.parent / "report"
+    assert not (report_out / "gsm8k" / "quality_tps.png").exists()
+    assert not (report_out / "gsm8k" / "quality_seconds_per_sample.png").exists()
+    assert not (report_out / "gsm8k" / "quality_energy_per_sample.png").exists()
+    assert (report_out / "raw_results.csv").exists()
+    assert (report_out / "gsm8k" / "trace_metrics.csv").exists()
+    assert not (report_out / "gsm8k" / "task4_tpf_vs_tps.png").exists()
     assert not (
-        output_root / "report" / "gsm8k" / "task4_parallelism_signature.png"
+        report_out / "gsm8k" / "task4_parallelism_signature.png"
     ).exists()
 
 
@@ -231,17 +232,16 @@ def test_dataset_oom_stops_later_samples_but_other_variant_is_still_attempted(
         ("fast", "ruler-demo-0"),
     ]
     assert (
-        output_root / "model_output" / "mock_default" / "ruler" / "_meta.json"
+        output_root / "mock" / "default" / "ruler" / "_meta.json"
     ).exists()
     assert (
         output_root
-        / "model_output"
-        / "mock_default"
+        / "mock" / "default"
         / "ruler"
         / "oom_info.json"
     ).exists()
     assert (
-        output_root / "model_output" / "mock_fast" / "ruler" / "oom_info.json"
+        output_root / "mock" / "fast" / "ruler" / "oom_info.json"
     ).exists()
 
 
@@ -263,7 +263,7 @@ def test_warmup_oom_writes_invalid_info_before_raising(tmp_path, monkeypatch):
 
     assert result.exit_code != 0
     assert isinstance(result.exception, cli_module.OOMInvalidTestError)
-    out_dir = output_root / "model_output" / "mock_default" / "gsm8k"
+    out_dir = output_root / "mock" / "default" / "gsm8k"
     oom_info = json.loads((out_dir / "oom_info.json").read_text(encoding="utf-8"))
     assert oom_info["test_valid"] is False
     assert oom_info["failure_stage"] == "warmup"
@@ -274,7 +274,7 @@ def test_warmup_oom_writes_invalid_info_before_raising(tmp_path, monkeypatch):
 
 
 def test_generate_sweeps_every_variant_by_default(tmp_path):
-    """mock.yaml declares `default` and `fast` — omitting --variant/--variants
+    """mock.yaml declares `default` and `fast` 鈥?omitting --variant/--variants
     must run both, in one invocation, without reloading anything (the atomic
     unit of testing is the model, not model+variant)."""
     runner = CliRunner()
@@ -290,8 +290,8 @@ def test_generate_sweeps_every_variant_by_default(tmp_path):
         "--output-root", str(output_root),
     ])
     assert "['default', 'fast']" in result.output
-    assert (output_root / "model_output" / "mock_default" / "gsm8k" / "_meta.json").exists()
-    assert (output_root / "model_output" / "mock_fast" / "gsm8k" / "_meta.json").exists()
+    assert (output_root / "mock" / "default" / "gsm8k" / "_meta.json").exists()
+    assert (output_root / "mock" / "fast" / "gsm8k" / "_meta.json").exists()
 
 
 def test_generate_variants_option_selects_an_explicit_subset(tmp_path):
@@ -307,8 +307,8 @@ def test_generate_variants_option_selects_an_explicit_subset(tmp_path):
         "--demo", "--n-samples", "2", "--max-new-tokens", "16",
         "--output-root", str(output_root),
     ])
-    assert (output_root / "model_output" / "mock_fast" / "gsm8k" / "_meta.json").exists()
-    assert not (output_root / "model_output" / "mock_default").exists()
+    assert (output_root / "mock" / "fast" / "gsm8k" / "_meta.json").exists()
+    assert not (output_root / "mock" / "default").exists()
 
 
 def test_variant_and_variants_together_is_a_usage_error(tmp_path):
@@ -346,7 +346,7 @@ def test_generate_and_score_real_samples_use_the_same_seeded_selection(tmp_path,
 
     expected = list(available)
     random.Random(42).shuffle(expected)
-    model_out = output_root / "model_output" / "mock_default" / "gsm8k"
+    model_out = output_root / "mock" / "default" / "gsm8k"
     assert {path.stem for path in model_out.glob("official-*.json")} == {
         sample.sample_id for sample in expected[:3]
     }
@@ -382,7 +382,7 @@ def test_no_demo_auto_prepares_missing_real_dataset_cache(tmp_path, monkeypatch)
 
 
 def test_matrix_reports_oom_invalid_job_and_continues_later_jobs(tmp_path, monkeypatch):
-    """One invalid model×dataset row must not terminate the remaining matrix."""
+    """One invalid model脳dataset row must not terminate the remaining matrix."""
     runner = CliRunner()
     output_root = tmp_path / "output"
     model_config = CONFIGS_DIR / "models" / "mock.yaml"
@@ -406,7 +406,7 @@ def test_matrix_reports_oom_invalid_job_and_continues_later_jobs(tmp_path, monke
         calls.append(kwargs["dataset_config"])
         if kwargs["dataset_config"] == str(gsm8k_config):
             raise cli_module.OOMInvalidTestError(
-                "OOM invalidated the complete model×dataset test"
+                "OOM invalidated the complete model脳dataset test"
             )
         return real_generate(**kwargs)
 
@@ -629,7 +629,7 @@ def test_matrix_multiple_output_lengths_share_process_and_split_output(
 
 
 def test_matrix_still_aborts_on_a_non_oom_failure(tmp_path, monkeypatch):
-    """Only an OOM-shaped failure is swallowed per-job — anything else is
+    """Only an OOM-shaped failure is swallowed per-job 鈥?anything else is
     a real bug likely to affect every job, so it must still abort loudly."""
     runner = CliRunner()
     output_root = tmp_path / "output"
@@ -707,7 +707,7 @@ def test_visualize_and_report_exclude_oom_invalid_test_even_with_stale_scores(
     tmp_path
 ):
     runner = CliRunner()
-    output_root = tmp_path / "output"
+    output_root = tmp_path / "model_output"
     common = [
         "--model-config", str(CONFIGS_DIR / "models" / "mock.yaml"),
         "--variant", "default",
@@ -718,7 +718,7 @@ def test_visualize_and_report_exclude_oom_invalid_test_even_with_stale_scores(
     _run(runner, ["generate", *common, "--max-new-tokens", "16"])
     _run(runner, ["score", *common])
 
-    model_out = output_root / "model_output" / "mock_default" / "gsm8k"
+    model_out = output_root / "mock" / "default" / "gsm8k"
     meta_path = model_out / "_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     meta.update(test_valid=False, invalid_reason="oom")
@@ -739,7 +739,7 @@ def test_visualize_and_report_exclude_oom_invalid_test_even_with_stale_scores(
     assert isinstance(visualize_result.exception, cli_module.InvalidTestError)
 
     report_result = runner.invoke(
-        main, ["report", "--output-root", str(output_root)]
+        main, ["report", "--output-root", str(output_root.parent)]
     )
     assert report_result.exit_code != 0
     assert "excluding OOM-invalid test" in report_result.output
@@ -789,8 +789,8 @@ def test_matrix_yaml_uses_concrete_stage_directory_without_duplication(
         result = runner.invoke(main, arguments)
         assert result.exit_code == 0, result.output
 
-    expected_parent = str(tmp_path / "output")
     assert captured == [
-        (expected_parent, False),
-        (expected_parent, True),
+        (str(tmp_path / "output" / "model_output"), False),
+        (str(tmp_path / "output" / "model_profiling"), True),
     ]
+

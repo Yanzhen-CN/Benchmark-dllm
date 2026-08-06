@@ -13,10 +13,13 @@ import pytest
 from dllm_bench.datasets.base import ScoreResult
 from dllm_bench.datasets.gsm8k import GSM8KDataset
 from dllm_bench.interfaces import (
+    ForwardProfile,
     GenerationRequest,
     GenerationResult,
+    PositionState,
     RunStatus,
     TimingResult,
+    TraceStep,
 )
 from dllm_bench.models.mock import MockDiffusionAdapter
 from dllm_bench.visual.public.pairwise import compute_pairwise_row
@@ -103,10 +106,78 @@ def test_resource_rates_include_timed_failed_samples_in_window_denominator():
 
     assert summary.time_per_sample == pytest.approx(2.5)
     assert summary.energy_per_sample == pytest.approx(5.0)
-    assert summary.tps == pytest.approx(10 / 5)
+    assert summary.tps is None  # no accepted-token observation in these records
     assert summary.sps == pytest.approx(2 / 5)
     assert summary.eps == pytest.approx(10 / 5)
     assert summary.peak_vram_gb == pytest.approx(4.0)
+
+
+def test_tpf_and_tps_use_accepted_token_events_not_final_output_length():
+    dataset = GSM8KDataset()
+    sample = build_demo_samples("gsm8k", n=1)[0]
+    generation = GenerationResult(
+        request=GenerationRequest("one", 16),
+        output_text="#### 0",
+        status=RunStatus.SUCCESS,
+        num_forward_passes=2,
+        final_valid_length=3,
+        timing=TimingResult(2.0),
+        forward_profiles=[
+            ForwardProfile(0, "denoise_step", accepted_tokens=2),
+            ForwardProfile(1, "denoise_step", accepted_tokens=3),
+        ],
+    )
+    summary = summarize_records(
+        "model",
+        "config",
+        dataset,
+        [SampleRecord(sample=sample, generation=generation, score=ScoreResult(0.0))],
+    )
+
+    assert summary.total_accepted_tokens == 5
+    assert summary.tpf == pytest.approx(5 / 2)
+    assert summary.tps == pytest.approx(5 / 2)
+    assert summary.accepted_tokens_per_forward == pytest.approx(summary.tpf)
+    assert summary.accepted_tps == pytest.approx(summary.tps)
+
+
+def test_trace_fallback_counts_dg_reacceptance_as_another_accepted_event():
+    dataset = GSM8KDataset()
+    sample = build_demo_samples("gsm8k", n=1)[0]
+    generation = GenerationResult(
+        request=GenerationRequest("one", 16),
+        output_text="#### 0",
+        status=RunStatus.SUCCESS,
+        num_forward_passes=2,
+        final_valid_length=3,
+        timing=TimingResult(2.0),
+        trace=[
+            TraceStep(
+                0,
+                [1, 2, -1],
+                [PositionState.ACCEPTED, PositionState.ACCEPTED, PositionState.MASKED],
+                [0, 1],
+                "",
+            ),
+            TraceStep(
+                1,
+                [3, 2, 4],
+                [PositionState.ACCEPTED, PositionState.VISIBLE, PositionState.ACCEPTED],
+                [0, 2],
+                "",
+            ),
+        ],
+    )
+    summary = summarize_records(
+        "diffusiongemma",
+        "official",
+        dataset,
+        [SampleRecord(sample=sample, generation=generation, score=ScoreResult(0.0))],
+    )
+
+    assert summary.total_accepted_tokens == 4
+    assert summary.tpf == pytest.approx(2.0)
+    assert summary.tps == pytest.approx(2.0)
 
 
 def test_speculative_serving_metrics_aggregate_from_common_extra_interface():
@@ -255,5 +326,5 @@ def test_render_sample_report_from_a_real_run_record(tmp_path):
         dataset_name=dataset.name,
         sample=record.sample,
     )
-    assert set(written) >= {"all_updates", "result"}
+    assert set(written) >= {"accept_trace", "result"}
     assert "entropy" not in written

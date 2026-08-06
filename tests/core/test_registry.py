@@ -24,7 +24,7 @@ from dllm_bench.registry import (
     model_name,
 )
 
-CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
+CONFIGS_DIR = Path(__file__).resolve().parents[2] / "configs"
 MODEL_CONFIG_PATHS = sorted((CONFIGS_DIR / "models").glob("*.yaml"))
 
 

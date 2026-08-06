@@ -102,6 +102,35 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
         )
     if stage == "visualize":
         parser.add_argument(
+            "--preset",
+            choices=(
+                "report-assets",
+                "profiling-comparison",
+                "sudoku-trace-batch",
+                "platform-chart",
+            ),
+            default=None,
+            help="Generate one curated aggregate artifact set without model loading.",
+        )
+        parser.add_argument(
+            "--compare-run",
+            action="append",
+            default=[],
+            metavar="MODEL/VARIANT",
+            help="Repeat for every model/variant in a Sudoku trace comparison.",
+        )
+        parser.add_argument(
+            "--chart-spec",
+            default=None,
+            help="JSON chart specification used by the platform-chart preset.",
+        )
+        parser.add_argument(
+            "--scope",
+            choices=("all", "sample", "dataset", "comparison"),
+            default="all",
+            help="Limit rendering to the requested visualization layer.",
+        )
+        parser.add_argument(
             "--figure",
             action="extend",
             nargs="+",
@@ -129,6 +158,10 @@ def build_parser(stage: str) -> argparse.ArgumentParser:
                 "per dataset; dataset-level Task 4 summaries still use all traces."
             ),
         )
+        report = parser.add_mutually_exclusive_group()
+        report.add_argument("--report", dest="report", action="store_true")
+        report.add_argument("--no-report", dest="report", action="store_false")
+        parser.set_defaults(report=True)
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -154,6 +187,114 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
         )
     )
     selected_figures = ",".join(dict.fromkeys(getattr(args, "figure", [])))
+
+    if stage == "visualize" and args.preset == "sudoku-trace-batch":
+        if not args.compare_run:
+            raise SystemExit(
+                "sudoku-trace-batch requires at least one --compare-run value"
+            )
+        if not args.sample_ids or "," in args.sample_ids:
+            raise SystemExit(
+                "sudoku-trace-batch requires one --sample-ids value"
+            )
+        selected_datasets = [
+            part.strip()
+            for value in args.dataset
+            for part in value.split(",")
+            if part.strip()
+        ]
+        if len(selected_datasets) != 1:
+            raise SystemExit(
+                "sudoku-trace-batch requires exactly one dataset"
+            )
+
+        runs: list[tuple[str, str]] = []
+        for value in args.compare_run:
+            separator = "/" if "/" in value else ":"
+            model, found, variant = value.partition(separator)
+            if not found or not model.strip() or not variant.strip():
+                raise SystemExit(
+                    f"invalid --compare-run {value!r}; use MODEL/VARIANT"
+                )
+            if model.strip() not in models:
+                raise SystemExit(f"comparison model {model.strip()!r} was not selected")
+            runs.append((model.strip(), variant.strip()))
+
+        dataset_config = selected_datasets[0]
+        for index, (model, variant) in enumerate(runs, start=1):
+            command = [
+                sys.executable,
+                "-m",
+                "dllm_bench.cli",
+                "matrix",
+                "--experiment-config",
+                str(matrix_path),
+                "--model",
+                model,
+                "--stage",
+                "visualize",
+                "--no-demo" if args.real_data else "--demo",
+                "--output-root",
+                args.output_root,
+                "--visualization-scope",
+                "sample",
+                "--sample-ids",
+                args.sample_ids,
+                "--variants",
+                variant,
+                "--dataset",
+                dataset_config,
+            ]
+            if args.output_suffix:
+                command.extend(["--output-suffix", args.output_suffix])
+            print(
+                f"[{index}/{len(runs)}] {model}/{variant}: {' '.join(command)}",
+                flush=True,
+            )
+            if not args.dry_run:
+                subprocess.run(command, cwd=PROJECT_ROOT, check=True)
+        return 0
+
+    if stage == "visualize" and args.preset:
+        if args.preset == "platform-chart":
+            if not args.chart_spec:
+                raise SystemExit("platform-chart requires --chart-spec")
+            from ..visual.public.platform_chart import render_platform_chart
+
+            print(render_platform_chart(args.chart_spec))
+            return 0
+        from ..visual.public.targeted import (
+            render_profiling_comparison_from_output,
+            render_report_assets_from_output,
+        )
+
+        benchmark_output = Path(args.output_root).resolve().parent
+        selected_datasets = [
+            part.strip()
+            for value in args.dataset
+            for part in value.split(",")
+            if part.strip()
+        ]
+        if args.preset == "report-assets":
+            written = render_report_assets_from_output(
+                benchmark_output,
+                model_names=models,
+                dataset_names=selected_datasets,
+            )
+        else:
+            written = render_profiling_comparison_from_output(
+                benchmark_output,
+                model_names=models,
+                dataset_names=selected_datasets,
+            )
+        for path in written:
+            print(path)
+        if not written:
+            raise SystemExit(
+                f"no files were generated for preset {args.preset}; "
+                "check the selected models, datasets, and source artifacts"
+            )
+        return 0
 
     print(f"Matrix: {matrix_path}")
     print(f"Local stage: {stage}")
@@ -183,6 +324,7 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
             command.extend(["--output-suffix", args.output_suffix])
         if stage == "visualize":
             command.extend(["--n-representative", str(args.n_representative)])
+            command.extend(["--visualization-scope", args.scope])
             if args.sample_ids:
                 command.extend(["--sample-ids", args.sample_ids])
             if selected_figures:
@@ -208,7 +350,7 @@ def main(stage: str, argv: Sequence[str] | None = None) -> int:
                 check=True,
             )
 
-    if stage == "visualize":
+    if stage == "visualize" and args.report:
         generation_roots = (
             [Path(args.output_root) / f"len{length}" for length in max_new_tokens]
             if len(max_new_tokens) > 1

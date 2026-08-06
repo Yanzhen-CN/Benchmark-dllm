@@ -723,6 +723,12 @@ def score(
     help="Comma-separated model comparison figures: all,trace,state,convergence,yield,forward",
 )
 @click.option("--profiling-output/--standard-output", default=False, show_default=True)
+@click.option(
+    "--visualization-scope",
+    type=click.Choice(["all", "sample", "dataset", "comparison"]),
+    default="all",
+    show_default=True,
+)
 def visualize(
     model_config: str,
     variant: str | None,
@@ -738,6 +744,7 @@ def visualize(
     sample_ids: str | None,
     figures: str | None,
     profiling_output: bool,
+    visualization_scope: str,
 ) -> None:
     variant_list = _resolve_variants(model_config, variant, variants)
     dataset = build_dataset(dataset_config)
@@ -757,6 +764,9 @@ def visualize(
     else:
         representative_ids = {sample.sample_id for sample in all_samples}
 
+    render_samples = visualization_scope in {"all", "sample"}
+    render_dataset = visualization_scope in {"all", "dataset"}
+    render_comparison = visualization_scope in {"all", "comparison"}
     model_settings = load_yaml(model_config)
     invalid_rows: list[str] = []
     incomplete_rows: list[str] = []
@@ -810,9 +820,10 @@ def visualize(
                 click.echo(f"[{v}] skipping {sample.sample_id}: not generated yet")
                 continue
             generation = load_generation_result(gen_path)
-            trace_records.append((sample, generation))
+            if render_dataset or render_comparison:
+                trace_records.append((sample, generation))
 
-            if sample.sample_id not in representative_ids:
+            if not render_samples or sample.sample_id not in representative_ids:
                 continue
 
             score_path = score_out / f"{sample.sample_id}.json"
@@ -832,8 +843,9 @@ def visualize(
             )
             rendered += 1
 
-        if trace_records:
+        if trace_records and render_comparison:
             comparison_records[v] = trace_records
+        if trace_records and render_dataset:
             render_dataset_visualization(
                 model_name=configured_model,
                 dataset_name=dataset.name,
@@ -1016,7 +1028,7 @@ def pairwise_report(
         for s in comparisons
         if (s.get("model_name"), s.get("config_name"))
         != (base_model, selected_base_config)
-        and s.get("dataset_name") not in {"hellobench", "ruler_context_probe"}
+        and s.get("dataset_name") != "hellobench"
     ]
     if not comparisons:
         raise click.UsageError("no comparison summaries match the requested filters")
@@ -1124,6 +1136,12 @@ def pairwise_report(
     default=None,
     help="Comma-separated model comparison figures passed to the selected model visualizer",
 )
+@click.option(
+    "--visualization-scope",
+    type=click.Choice(["all", "sample", "dataset", "comparison"]),
+    default="all",
+    show_default=True,
+)
 @click.pass_context
 def matrix_command(
     ctx: click.Context,
@@ -1144,6 +1162,7 @@ def matrix_command(
     n_representative: int,
     sample_ids: str | None,
     figures: str | None,
+    visualization_scope: str,
 ) -> None:
     """Run every model-variant x dataset row declared in an experiment YAML."""
     os.environ["DLLM_BENCH_OUTPUT_SUFFIX"] = output_suffix or ""
@@ -1284,6 +1303,7 @@ def matrix_command(
                     sample_ids=sample_ids,
                     figures=figures,
                     profiling_output=job.profiling_output,
+                    visualization_scope=visualization_scope,
                 )
         except (IncompleteTestError, FileNotFoundError) as exc:
             incomplete_jobs += 1

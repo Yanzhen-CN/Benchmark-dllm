@@ -271,48 +271,6 @@ def _select_ruler(
     return selected
 
 
-def _select_ruler_context_probe(
-    samples: list[Sample],
-    config: dict[str, Any],
-    model_config: dict[str, Any],
-    rng: random.Random,
-) -> list[Sample]:
-    """Build one capacity-only probe at half the declared model context.
-
-    The probe lives in its own dataset/output namespace so an expected OOM
-    cannot invalidate or change the aggregates from the formal 4K RULER run.
-    """
-    max_output_tokens = _positive_int(
-        config.get("max_output_tokens"), "RULER probe max_output_tokens"
-    )
-    model_max = _positive_int(
-        model_config.get("max_context_tokens"), "model max_context_tokens"
-    )
-    fraction = float(config.get("model_context_fraction", 0.5))
-    if not 0 < fraction < 1:
-        raise ValueError("model_context_fraction must be between 0 and 1")
-    target_input_tokens = int(model_max * fraction)
-    if target_input_tokens <= 0:
-        raise ValueError("half-context probe resolved to an empty input")
-    if target_input_tokens + max_output_tokens > model_max:
-        raise ValueError(
-            "RULER context probe input plus output exceeds model max_context_tokens"
-        )
-
-    source = _take(samples, 1, rng, "RULER half-context probe")[0]
-    annotated = _annotate_ruler(
-        source, target_input_tokens + max_output_tokens, max_output_tokens
-    )
-    return [
-        _with_meta(
-            annotated,
-            measurement_role="capacity_probe",
-            declared_max_context_tokens=model_max,
-            model_context_fraction=fraction,
-        )
-    ]
-
-
 def select_configured_samples(
     samples: list[Sample],
     dataset_config: dict[str, Any],
@@ -335,12 +293,6 @@ def select_configured_samples(
         return _select_hellobench(samples, dataset_config, n_samples, rng)
     if dataset_name == "ruler":
         return _select_ruler(samples, dataset_config, model_config, n_samples, rng)
-    if dataset_name == "ruler_context_probe":
-        if n_samples not in {None, 1}:
-            raise ValueError("ruler_context_probe always runs exactly one sample")
-        return _select_ruler_context_probe(
-            samples, dataset_config, model_config, rng
-        )
     return _take(
         samples,
         _generic_count(dataset_config, n_samples),

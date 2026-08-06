@@ -185,8 +185,6 @@ def write_raw_report(summaries: list[dict[str, Any]], report_root: str | Path) -
 
     dataset_names = sorted({summary["dataset_name"] for summary in summaries})
     for dataset_name in dataset_names:
-        if dataset_name == "ruler_context_probe":
-            continue
         dataset_summaries = [
             summary for summary in summaries if summary["dataset_name"] == dataset_name
         ]

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
-import clean
+
+_CLEAN_SCRIPT = Path(__file__).resolve().parents[1] / "clean_test.py"
+_SPEC = importlib.util.spec_from_file_location("clean_test", _CLEAN_SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+clean = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(clean)
 
 
 def test_remove_target_deletes_nested_temporary_directory(tmp_path: Path):

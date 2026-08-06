@@ -3,8 +3,8 @@ every dataset renders through (one drawing method across all datasets).
 Design doc 4.1 is explicit that this display includes only
 things that are *inherently single-sample visualizations*:
 
-- Token Position x Forward accepted-event trace; first acceptance is blue and
-  later accepted events progress from yellow through orange to red
+- Token Position x Forward accept/revision trace; first acceptance is blue and
+  only token-changing re-acceptance is red
 - final task result
 
 Effective Tokens per Forward (4.2.1) and Structure/Constraint-vs-Content
@@ -32,7 +32,7 @@ from pathlib import Path
 
 from ...datasets.base import Sample
 from ...interfaces import TraceStep
-from .trace_distribution_viz import plot_all_updates, plot_block_acceptance_zoom
+from .trace_distribution_viz import plot_accept_revisions
 
 
 def _maybe_render_sudoku_gif(
@@ -112,6 +112,7 @@ def _maybe_render_sudoku_gif(
         prefix_context=prefix_context,
         suffix_context=suffix_context,
         forward_steps=forward_steps,
+        show_context=False,
     )
     return str(path)
 
@@ -134,27 +135,21 @@ def render_sample_report(
     title = f"{dataset_name or ''} - {sample_id}".strip(" -")
 
     if trace:
-        updates_path = out_dir_path / f"{sample_id}_all_updates.png"
-        plot_all_updates(
+        accept_trace_path = out_dir_path / f"{sample_id}_accept_trace.png"
+        plot_accept_revisions(
             trace,
-            updates_path,
+            accept_trace_path,
             title=title,
             block_length=block_length,
         )
-        if updates_path.exists():
-            written["all_updates"] = str(updates_path)
-
-        block_zoom_path = out_dir_path / f"{sample_id}_block_acceptance.png"
-        plot_block_acceptance_zoom(
-            trace,
-            block_zoom_path,
-            title=title,
-            block_length=block_length,
-        )
-        if block_zoom_path.exists():
-            written["block_acceptance"] = str(block_zoom_path)
+        if accept_trace_path.exists():
+            written["accept_trace"] = str(accept_trace_path)
 
     for suffix in (
+        "all_updates.png",
+        "block_acceptance.png",
+        "position_state.png",
+        "position_states.png",
         "entropy.png",
         "heatmap.png",
         "certainty.png",
@@ -169,14 +164,15 @@ def render_sample_report(
     ):
         (out_dir_path / f"{sample_id}_{suffix}").unlink(missing_ok=True)
 
-    if dataset_name is not None:
-        if dataset_name.startswith("sudoku") and trace:
-            from .token_grid_viz import render_token_grid_gif
+    if trace:
+        from .token_grid_viz import render_token_grid_gif
 
-            token_gif_path = out_dir_path / f"{sample_id}_token_trace.gif"
-            render_token_grid_gif(trace, token_gif_path, title=title)
-            if token_gif_path.exists():
-                written["token_trace_gif"] = str(token_gif_path)
+        token_gif_path = out_dir_path / f"{sample_id}_token_trace.gif"
+        render_token_grid_gif(trace, token_gif_path, title=title)
+        if token_gif_path.exists():
+            written["token_trace_gif"] = str(token_gif_path)
+
+    if dataset_name is not None:
         sudoku_gif = _maybe_render_sudoku_gif(
             dataset_name,
             sample,

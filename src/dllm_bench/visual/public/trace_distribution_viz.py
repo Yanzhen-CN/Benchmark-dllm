@@ -23,6 +23,7 @@ from matplotlib.colors import BoundaryNorm, ListedColormap, LogNorm, Normalize
 from matplotlib.ticker import MaxNLocator
 
 from ...interfaces import TraceStep
+from ...trace_events import extract_acceptance_events
 from .token_grid_viz import (
     compute_running_accept_counts,
     count_ticks,
@@ -69,6 +70,7 @@ def _draw_block_boundaries(
 
 
 FIRST_ACCEPTANCE_COLOR = "#2563eb"
+REVISION_COLOR = "#dc2626"
 
 
 def _acceptance_rank_cmap(
@@ -79,8 +81,7 @@ def _acceptance_rank_cmap(
         raise ValueError("max_rank must be at least one")
     warm = plt.get_cmap("YlOrRd")
     later_colors = [
-        warm(value)
-        for value in np.linspace(0.18, 0.92, max_rank - 1)
+        warm(value) for value in np.linspace(0.18, 0.92, max_rank - 1)
     ]
     cmap = ListedColormap(
         [FIRST_ACCEPTANCE_COLOR, *later_colors],
@@ -141,85 +142,159 @@ def plot_position_vs_first_commit(
     plt.close(fig)
 
 
-def plot_all_updates(
+def plot_accept_revisions(
     trace: list[TraceStep],
     out_path: str | Path,
     title: str = "",
     block_length: int | None = None,
 ) -> None:
-    """DGtest-style position versus every observable accepted event."""
+    """Plot every accept-state transition on real forwards."""
     if not trace:
         return
-    counts: dict[int, int] = {}
-    positions: list[int] = []
-    steps: list[int] = []
-    ranks: list[int] = []
-    for step_index, step in enumerate(trace):
-        for position in sorted(meaningful_committed_positions(trace, step_index)):
-            rank = counts.get(position, 0) + 1
-            counts[position] = rank
-            positions.append(position)
-            steps.append(step.forward_index)
-            ranks.append(rank)
-    if not positions:
+
+    events = extract_acceptance_events(trace)
+    accept_positions = events["accept_positions"]
+    accept_steps = events["accept_steps"]
+    accept_ranks = events["accept_ranks"]
+    renoise_positions = events["renoise_positions"]
+    renoise_steps = events["renoise_steps"]
+    reaccept_positions = events["reaccept_positions"]
+    revision_positions = events["revision_positions"]
+    revision_accept_indices = events["revision_accept_indices"]
+    accept_count_by_position = events["accept_count_by_position"]
+    if not accept_positions:
         return
 
-    max_rank = max(ranks)
-    cmap, norm = _acceptance_rank_cmap(max_rank)
-    fig, ax = plt.subplots(figsize=(8.2, 5.2))
-    mappable = ax.scatter(
-        positions,
-        steps,
-        c=ranks,
-        cmap=cmap,
-        norm=norm,
-        s=[16 + 3 * min(rank - 1, 8) for rank in ranks],
-        alpha=0.96,
-        linewidths=0,
+    fig, (ax, side_ax) = plt.subplots(
+        1,
+        2,
+        figsize=(11.4, 5.2),
+        gridspec_kw={"width_ratios": [4.6, 1.45]},
     )
+    side_ax.axis("off")
+    maximum_accept_rank = max(accept_ranks)
+    first_accept_indices = [
+        index for index, rank in enumerate(accept_ranks) if rank == 1
+    ]
+    reaccept_indices = [
+        index for index, rank in enumerate(accept_ranks) if rank > 1
+    ]
+    revision_accept_index_set = set(revision_accept_indices)
+    same_token_reaccept_indices = [
+        index
+        for index in reaccept_indices
+        if index not in revision_accept_index_set
+    ]
+    ax.scatter(
+        [accept_positions[index] for index in first_accept_indices],
+        [accept_steps[index] for index in first_accept_indices],
+        color=FIRST_ACCEPTANCE_COLOR,
+        marker="o",
+        s=30,
+        alpha=0.9,
+        linewidths=0,
+        label="First accept",
+    )
+    reaccept_scatter = None
+    if same_token_reaccept_indices:
+        reaccept_scatter = ax.scatter(
+            [accept_positions[index] for index in same_token_reaccept_indices],
+            [accept_steps[index] for index in same_token_reaccept_indices],
+            c=[accept_ranks[index] for index in same_token_reaccept_indices],
+            cmap="YlOrRd",
+            vmin=2,
+            vmax=max(3, maximum_accept_rank),
+            marker="o",
+            s=34,
+            alpha=0.95,
+            linewidths=0,
+            label="Re-accept, same token",
+        )
+    revision_scatter = None
+    if revision_accept_indices:
+        revision_scatter = ax.scatter(
+            [accept_positions[index] for index in revision_accept_indices],
+            [accept_steps[index] for index in revision_accept_indices],
+            c=[accept_ranks[index] for index in revision_accept_indices],
+            cmap="YlOrRd",
+            vmin=2,
+            vmax=max(3, maximum_accept_rank),
+            marker="x",
+            s=46,
+            alpha=0.98,
+            linewidths=1.5,
+            label="Re-accept, token changed",
+        )
+    if renoise_positions:
+        ax.scatter(
+            renoise_positions,
+            renoise_steps,
+            color="#9ca3af",
+            marker="v",
+            s=28,
+            alpha=0.8,
+            linewidths=0,
+            label="Re-noise",
+        )
+    color_mappable = revision_scatter or reaccept_scatter
+    if color_mappable is not None:
+        colorbar = fig.colorbar(
+            color_mappable,
+            ax=ax,
+            pad=0.02,
+            fraction=0.04,
+        )
+        colorbar.set_label("Accept number at this position")
+        colorbar.set_ticks(range(2, maximum_accept_rank + 1))
     n_positions = max(len(step.position_states) for step in trace)
     ax.set_xlim(-1, n_positions)
     ax.set_ylim(-1, max(step.forward_index for step in trace) + 1)
     ax.set_xlabel("Global token position")
-    if max_rank > 1:
-        ax.set_ylabel("Accepted / re-accepted step")
-        plot_description = "token position vs every accepted event"
-    else:
-        # Commitment-only adapters expose each final token once. Calling these
-        # events "revisions" would overstate what the trace can observe.
-        ax.set_ylabel("First accepted step")
-        plot_description = "token position vs first accepted step"
-    ax.set_title(
-        f"{title + ': ' if title else ''}{plot_description}",
-        pad=30,
-    )
-    ax.text(
-        1.0,
-        1.015,
-        "blue = first acceptance | yellow \u2192 red = later accepted events",
-        transform=ax.transAxes,
-        ha="right",
-        va="bottom",
-        fontsize=8,
-        color="#4b5563",
-    )
+    ax.set_ylabel("Forward step")
+    ax.set_title(f"{title + ': ' if title else ''}accept trace")
     ax.grid(True, alpha=0.22)
     _draw_block_boundaries(
         ax,
         n_positions=n_positions,
         block_length=block_length,
     )
-    if max_rank > 1:
-        colorbar = fig.colorbar(mappable, ax=ax, fraction=0.04, pad=0.02)
-        colorbar.set_label("Cumulative acceptance count")
-        ticks = count_ticks(max_rank)
-        colorbar.set_ticks(ticks)
-        colorbar.set_ticklabels([str(tick) for tick in ticks])
+    revised_positions = len(set(revision_positions))
+    repeatedly_accepted_positions = sum(
+        count > 1 for count in accept_count_by_position.values()
+    )
+    handles, labels = ax.get_legend_handles_labels()
+    side_ax.legend(handles, labels, loc="upper left", frameon=False)
+    side_ax.text(
+        0.0,
+        0.72,
+        f"accept events: {len(accept_positions)}\n"
+        f"re-noise events: {len(renoise_positions)}\n"
+        f"re-accept events: {len(reaccept_positions) + len(revision_positions)}\n"
+        f"token-changing accepts: {len(revision_positions)}\n"
+        f"revised positions: {revised_positions}\n"
+        f"accepted more than once: {repeatedly_accepted_positions}\n"
+        f"maximum accepts: {maximum_accept_rank}",
+        transform=side_ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8.5,
+        color="#4b5563",
+    )
     fig.tight_layout()
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_all_updates(
+    trace: list[TraceStep],
+    out_path: str | Path,
+    title: str = "",
+    block_length: int | None = None,
+) -> None:
+    """Backward-compatible name for the accept/re-noise/revision trace."""
+    plot_accept_revisions(trace, out_path, title=title, block_length=block_length)
 
 
 def plot_block_acceptance_zoom(

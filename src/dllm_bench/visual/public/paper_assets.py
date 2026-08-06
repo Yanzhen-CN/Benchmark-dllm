@@ -52,7 +52,9 @@ def _paper_rows(
     rows = []
     for summary in summaries:
         trace = _trace_summary(summary, output_root)
-        mean_tpf = (trace.get("mean_tpf") or {}).get("mean")
+        mean_tpf = summary.get("tpf", summary.get("accepted_tokens_per_forward"))
+        if not isinstance(mean_tpf, (int, float)):
+            mean_tpf = (trace.get("mean_tpf") or {}).get("mean")
         q = summary.get("q")
         seconds = summary.get("time_per_sample")
         if not all(isinstance(value, (int, float)) for value in (q, seconds, mean_tpf)):
@@ -194,9 +196,9 @@ def render_paper_assets(
     _small_multiple_scatter(
         rows,
         x_key="mean_tpf",
-        x_label="Mean final-stable tokens / forward (higher is better)",
+        x_label="Accepted-token events / model forward (TPF; higher is better)",
         title="Quality and measured algorithmic parallelism",
-        subtitle="Faceted by dataset; TPF uses each model's recorded trace",
+        subtitle="Faceted by dataset; repeated acceptance after re-noise is counted again",
         path=tpf_path,
     )
     if tpf_path.exists():

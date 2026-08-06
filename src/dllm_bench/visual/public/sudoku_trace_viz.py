@@ -769,6 +769,7 @@ def render_sudoku_layout_gif(
     fps: float = 3.0,
     final_hold_seconds: float = 2.0,
     title: str = "Sudoku generation trace",
+    show_context: bool = True,
 ) -> None:
     """Render prefix, aligned Sudoku span, and suffix as separate regions."""
     puzzle = _normalize_grid(puzzle)
@@ -787,18 +788,9 @@ def render_sudoku_layout_gif(
     gap = 18
     footer_h = 40
     width = max(620, board_px + margin * 2)
-    height = (
-        header_h
-        + label_h
-        + context_h
-        + gap
-        + label_h
-        + board_px
-        + gap
-        + label_h
-        + context_h
-        + footer_h
-    )
+    height = header_h + label_h + board_px + footer_h
+    if show_context:
+        height += label_h + context_h + gap + gap + label_h + context_h
     title_font = _load_font(20)
     meta_font = _load_font(13)
     board_font = _load_font(int(board_cell_px * 0.48), mono=True)
@@ -855,10 +847,11 @@ def render_sudoku_layout_gif(
         )
 
         y = header_h
-        draw.text((margin, y), "final visible text before Sudoku", fill=MUTED, font=meta_font)
-        y += label_h
-        draw_context(draw, prefix_context, y, "<start>")
-        y += context_h + gap
+        if show_context:
+            draw.text((margin, y), "final visible text before Sudoku", fill=MUTED, font=meta_font)
+            y += label_h
+            draw_context(draw, prefix_context, y, "<start>")
+            y += context_h + gap
 
         draw.text((margin, y), "Sudoku span located from final output", fill=MUTED, font=meta_font)
         y += label_h
@@ -886,11 +879,12 @@ def render_sudoku_layout_gif(
             line_y = y + index * board_cell_px
             draw.line((x, y, x, y + board_px), fill=TEXT, width=3)
             draw.line((grid_x0, line_y, grid_x0 + board_px, line_y), fill=TEXT, width=3)
-        y += board_px + gap
-
-        draw.text((margin, y), "final visible text after Sudoku", fill=MUTED, font=meta_font)
-        y += label_h
-        draw_context(draw, suffix_context, y, "<end>")
+        y += board_px
+        if show_context:
+            y += gap
+            draw.text((margin, y), "final visible text after Sudoku", fill=MUTED, font=meta_font)
+            y += label_h
+            draw_context(draw, suffix_context, y, "<end>")
         draw.text((margin, height - footer_h + 12), legend, fill=MUTED, font=meta_font)
         return image
 

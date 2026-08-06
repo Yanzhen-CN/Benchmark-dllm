@@ -7,7 +7,7 @@ from dllm_bench.models.hf_ar import QwenARAdapter
 from dllm_bench.registry import build_model_adapter
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_qwen3_8b_config_builds_distinct_ar_adapter():

@@ -62,7 +62,7 @@ def _reference(dataset_name: str, record: dict[str, Any]) -> Any:
     if dataset_name in {"sudoku4", "sudoku4_1shot", "sudoku4_thinking"}:
         from .sudoku4 import Sudoku4Reference
         return raw if isinstance(raw, Sudoku4Reference) else Sudoku4Reference(**raw)
-    if dataset_name in {"ruler", "ruler_context_probe"}:
+    if dataset_name == "ruler":
         from .ruler import RulerReference
         return raw if isinstance(raw, RulerReference) else RulerReference(**raw)
     if dataset_name == "hellobench":

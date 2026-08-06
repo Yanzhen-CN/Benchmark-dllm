@@ -186,51 +186,6 @@ class RulerDataset(Dataset):
         return summary
 
 
-class RulerContextProbeDataset(RulerDataset):
-    """One oversized source prompt, fitted per model to its half-context target."""
-
-    name = "ruler_context_probe"
-
-    def __init__(
-        self,
-        samples: list[Sample] | None = None,
-        source_input_tokens: int = 131072,
-        max_output_tokens: int = 64,
-        seed: int = 42,
-    ) -> None:
-        self._probe_samples = list(samples) if samples is not None else None
-        self._source_input_tokens = int(source_input_tokens)
-        self._max_output_tokens = int(max_output_tokens)
-        self._seed = int(seed)
-
-    def load_samples(self, n: int | None = None) -> list[Sample]:
-        if self._probe_samples is not None:
-            samples = list(self._probe_samples)
-        else:
-            rng = random.Random(self._seed)
-            answer = f"P{rng.randrange(10**11, 10**12)}"
-            samples = [
-                _make_generated_sample(
-                    "ruler-context-probe-000",
-                    "niah",
-                    "middle",
-                    [answer],
-                    f"The hidden access code is {answer}.",
-                    "What is the hidden access code? Answer with only the code.",
-                    self._source_input_tokens + self._max_output_tokens,
-                    self._max_output_tokens,
-                )
-            ]
-        return samples[:n] if n is not None else samples
-
-    def preparation_signature(self) -> dict[str, object]:
-        return {
-            "source_input_tokens": self._source_input_tokens,
-            "max_output_tokens": self._max_output_tokens,
-            "seed": self._seed,
-        }
-
-
 def position_robustness(scores_by_position: dict[str, float]) -> float:
     """worst-position score / best-position score, in [0, 1] (1 = fully robust)."""
     if not scores_by_position:

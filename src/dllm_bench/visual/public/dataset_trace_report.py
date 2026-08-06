@@ -619,7 +619,9 @@ def build_dataset_trace_summary(
 
     if not means:
         return summary, curves
-    curves["tpf"] = aggregate_curve_by_bins(tpf_samples, seed=seed)
+    curves["final_stable_tokens_per_forward"] = aggregate_curve_by_bins(
+        tpf_samples, seed=seed
+    )
     if certainty_samples:
         curves["certainty"] = aggregate_curve_by_bins(certainty_samples, seed=seed)
     if top1_samples:
@@ -632,8 +634,12 @@ def build_dataset_trace_summary(
             style_content_samples, seed=seed
         )
 
-    summary["mean_tpf"] = _jsonable(summarize(means, seed=seed))
-    summary["peak_tpf"] = _jsonable(summarize(peaks, seed=seed))
+    summary["mean_final_stable_tokens_per_forward"] = _jsonable(
+        summarize(means, seed=seed)
+    )
+    summary["peak_final_stable_tokens_per_forward"] = _jsonable(
+        summarize(peaks, seed=seed)
+    )
     summary["parallelism_signature"] = {
         "peak_to_mean_tpf": _jsonable(summarize(peak_to_mean_values, seed=seed)),
         "active_forward_ratio": _jsonable(
@@ -651,11 +657,90 @@ def build_dataset_trace_summary(
         key: _jsonable(summarize(values, seed=seed))
         for key, values in geometry_values.items()
     }
-    summary["tps"] = total_tokens / total_time if total_time > 0 else None
-    summary["tpf_tps"] = {
-        "mean_tpf": summary["mean_tpf"]["mean"],
-        "tps": summary["tps"],
-    }
+    productive_profiles = [
+        profile
+        for _, result in records
+        for profile in result.forward_profiles
+        if profile.phase not in {"prefill", "prefill_or_cache_build", "finalization"}
+    ]
+    acceptance_complete = bool(productive_profiles) and all(
+        profile.accepted_tokens is not None for profile in productive_profiles
+    )
+    accepted_events_per_forward: list[int] = []
+    productive_forward_count: int | None = None
+    acceptance_source: str | None = None
+    if acceptance_complete:
+        accepted_events_per_forward = [
+            int(profile.accepted_tokens or 0) for profile in productive_profiles
+        ]
+        productive_forward_count = len(productive_profiles)
+        acceptance_source = "forward_profiles"
+    elif all(result.trace and result.num_forward_passes > 0 for _, result in usable):
+        # Older complete runs may predate persisted ForwardProfile rows.  Their
+        # TraceStep.committed_positions still stores the accepted-event set for
+        # each real generation forward, including DG re-acceptance events.
+        accepted_events_per_forward = [
+            len({int(position) for position in step.committed_positions})
+            for _, result in usable
+            for step in result.trace
+        ]
+        productive_forward_count = sum(
+            int(result.num_forward_passes) for _, result in usable
+        )
+        acceptance_source = "trace_committed_events"
+    total_accepted_tokens = (
+        sum(accepted_events_per_forward)
+        if productive_forward_count is not None
+        else None
+    )
+    summary["accepted_tps"] = (
+        total_accepted_tokens / total_time
+        if total_accepted_tokens is not None and total_time > 0
+        else None
+    )
+    summary["total_accepted_tokens"] = total_accepted_tokens
+    accepted_tokens_per_forward = (
+        total_accepted_tokens / productive_forward_count
+        if total_accepted_tokens is not None
+        and productive_forward_count is not None
+        and productive_forward_count > 0
+        else None
+    )
+    summary["accepted_tokens_per_forward"] = accepted_tokens_per_forward
+    summary["tpf"] = accepted_tokens_per_forward
+    summary["mean_tpf"] = (
+        {
+            "mean": accepted_tokens_per_forward,
+            "basis": "total accepted-token events / productive model forwards",
+            "source": acceptance_source,
+        }
+        if accepted_tokens_per_forward is not None
+        else None
+    )
+    peak_accepted_tokens = (
+        max(accepted_events_per_forward)
+        if accepted_events_per_forward
+        else None
+    )
+    summary["peak_tpf"] = (
+        {
+            "mean": float(peak_accepted_tokens),
+            "basis": "maximum accepted-token events in one productive model forward",
+        }
+        if peak_accepted_tokens is not None
+        else None
+    )
+    summary["tps"] = summary["accepted_tps"]
+    summary["acceptance_throughput"] = (
+        {
+            "tpf": summary["tpf"],
+            "tps": summary["tps"],
+            "accepted_tokens_per_forward": summary["accepted_tokens_per_forward"],
+            "accepted_tps": summary["accepted_tps"],
+        }
+        if summary["accepted_tps"] is not None
+        else None
+    )
     summary["finalization_share"] = {
         stage: _jsonable(summarize(values, seed=seed)) for stage, values in shares.items()
     }
@@ -834,15 +919,15 @@ def render_dataset_trace_report(
     if write_auxiliary_performance_csv(auxiliary_rows, auxiliary_path):
         written["auxiliary_performance"] = str(auxiliary_path)
 
-    tpf_tps_path = out / "dataset_tpf_tps.txt"
-    tpf_tps = summary.get("tpf_tps")
-    if tpf_tps:
-        tpf_tps_path.write_text(
-            "Model | Mean TPF (token/forward) | Tps (token/s)\n"
+    acceptance_path = out / "dataset_acceptance_throughput.txt"
+    acceptance = summary.get("acceptance_throughput")
+    if acceptance:
+        acceptance_path.write_text(
+            "Model | Accepted tokens / accepting forward | Accepted-token TPS\n"
             f"{model_name or '-'} / {config_name or '-'} | "
-            f"{tpf_tps['mean_tpf']:.6g} | "
-            f"{tpf_tps['tps']:.6g}\n",
+            f"{acceptance['accepted_tokens_per_forward']:.6g} | "
+            f"{acceptance['accepted_tps']:.6g}\n",
             encoding="utf-8",
         )
-        written["tpf_tps"] = str(tpf_tps_path)
+        written["acceptance_throughput"] = str(acceptance_path)
     return written

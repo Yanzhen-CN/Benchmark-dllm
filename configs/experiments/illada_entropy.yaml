@@ -1,19 +1,14 @@
-# Formal iLLaDA entropy-acceptance benchmark. This is an independent model
-# run, not a fixed-sample pair against native iLLaDA.
+# Focused iLLaDA entropy-acceptance comparison on GSM8K.
 base_dir: ../..
 output_root: output/model_output
 output_stage: model_output
 
 models:
   - config: configs/models/illada_entropy.yaml
-    variants: [eb01, eb001, eb02]
+    variants: [eb03, eb05, eb1]
 
 datasets:
   - config: configs/datasets/gsm8k.yaml
-    max_new_tokens: 512
-  - config: configs/datasets/mbpp.yaml
-    max_new_tokens: 512
-  - config: configs/datasets/structeval_t.yaml
     max_new_tokens: 512
 
 seed: 42

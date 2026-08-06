@@ -26,6 +26,39 @@ class SampleRecord:
     score: ScoreResult
 
 
+_NON_ACCEPTING_FORWARD_PHASES = frozenset(
+    {"prefill", "prefill_or_cache_build", "finalization"}
+)
+
+
+def _accepted_token_count(generation: GenerationResult) -> int | None:
+    productive = [
+        profile
+        for profile in generation.forward_profiles
+        if profile.phase not in _NON_ACCEPTING_FORWARD_PHASES
+    ]
+    if productive and all(profile.accepted_tokens is not None for profile in productive):
+        return sum(int(profile.accepted_tokens or 0) for profile in productive)
+
+    accepted_draft = generation.extra.get("accepted_draft_tokens")
+    verification_passes = generation.extra.get("target_verification_passes")
+    if isinstance(accepted_draft, (int, float)) and isinstance(
+        verification_passes, (int, float)
+    ):
+        return int(accepted_draft) + int(verification_passes)
+
+    if generation.trace:
+        # ``committed_positions`` is the accepted-event set for that forward,
+        # not a cumulative set.  Summing per-step events deliberately counts a
+        # DG position again after re-noise and re-acceptance.
+        if any(step.committed_positions for step in generation.trace):
+            return sum(
+                len({int(position) for position in step.committed_positions})
+                for step in generation.trace
+            )
+    return None
+
+
 @dataclass
 class RunSummary:
     model_name: str
@@ -34,10 +67,14 @@ class RunSummary:
     q: float
     total_time_seconds: float | None
     total_energy_joules: float | None
-    total_output_tokens: int
+    total_accepted_tokens: int | None
+    accepted_tokens_per_sample: float | None
     timed_sample_count: int
     energy_sample_count: int
     tps: float | None
+    tpf: float | None
+    accepted_tps: float | None
+    accepted_tokens_per_forward: float | None
     sps: float | None
     eps: float | None
     cps: float | None
@@ -208,12 +245,51 @@ def summarize_records(
     peak_vram_gb = max(vrams) if vrams else None
 
     total_time = sum(times)
-    total_tokens = sum(r.generation.final_valid_length for r in timed)
     total_energy = sum(energies) if len(energies) == len(records) else None
     # Appendix B requires ratios of window totals, never a mean of per-sample
     # rates.  Energy/compute rates are only available if every timed sample in
     # the measurement window has the corresponding counter.
-    tps = total_tokens / total_time if complete_timing and total_time > 0 else None
+    accepted_counts = [_accepted_token_count(r.generation) for r in timed]
+    complete_acceptance = (
+        complete_timing
+        and bool(accepted_counts)
+        and all(value is not None for value in accepted_counts)
+    )
+    total_accepted_tokens = (
+        sum(int(value or 0) for value in accepted_counts)
+        if complete_acceptance
+        else None
+    )
+    accepted_tps = (
+        total_accepted_tokens / total_time
+        if total_accepted_tokens is not None and total_time > 0
+        else None
+    )
+    accepted_tokens_per_sample = (
+        total_accepted_tokens / len(records)
+        if total_accepted_tokens is not None and records
+        else None
+    )
+    generation_forward_counts = [
+        int(record.generation.num_forward_passes) for record in timed
+    ]
+    complete_generation_forwards = (
+        complete_timing
+        and bool(generation_forward_counts)
+        and all(value > 0 for value in generation_forward_counts)
+    )
+    total_generation_forwards = (
+        sum(generation_forward_counts) if complete_generation_forwards else None
+    )
+    accepted_tokens_per_forward = (
+        total_accepted_tokens / total_generation_forwards
+        if total_accepted_tokens is not None
+        and total_generation_forwards is not None
+        and total_generation_forwards > 0
+        else None
+    )
+    tps = accepted_tps
+    tpf = accepted_tokens_per_forward
     sps = len(records) / total_time if complete_timing and total_time > 0 else None
     eps = (
         sum(r.generation.energy_joules for r in timed) / total_time
@@ -255,10 +331,14 @@ def summarize_records(
         q=q,
         total_time_seconds=total_time if complete_timing else None,
         total_energy_joules=total_energy,
-        total_output_tokens=total_tokens,
+        total_accepted_tokens=total_accepted_tokens,
+        accepted_tokens_per_sample=accepted_tokens_per_sample,
         timed_sample_count=len(timed),
         energy_sample_count=len(energies),
         tps=tps,
+        tpf=tpf,
+        accepted_tps=accepted_tps,
+        accepted_tokens_per_forward=accepted_tokens_per_forward,
         sps=sps,
         eps=eps,
         cps=cps,

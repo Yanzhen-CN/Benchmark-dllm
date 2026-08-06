@@ -1,5 +1,5 @@
-# Reference list of the section-5 model x dataset matrix (11 model configs x
-# 9 task datasets plus one isolated context-capacity diagnostic).
+# Main cross-model matrix: 8 model configs x 9 default task datasets, plus
+# two optional 1-shot Sudoku prompt tracks.
 # This is consumed by `dllm-bench matrix`. Dataset entries may
 # also be mappings with
 # `config`, `samples_file`, and task-specific `max_new_tokens` fields.
@@ -55,26 +55,6 @@ models:
       hellobench:
         hellobench_lengths: [2k]
         n_samples: 1
-  - config: configs/models/illada_entropy.yaml # iLLaDA P2 budget + DG entropy acceptance
-    variants: [eb01]
-    dataset_overrides:
-      sudoku4:
-        n_samples: 1
-      sudoku9:
-        n_samples: 1
-      hellobench:
-        hellobench_lengths: [2k]
-        n_samples: 1
-  - config: configs/models/llada2_1.yaml # inclusionAI LLaDA2.1-mini
-    variants: [qmode, smode] # checkpoint-native official Quality/Speed modes
-    dataset_overrides:
-      sudoku4:
-        n_samples: 100
-  - config: configs/models/w1.yaml  # w1-instruct-4B
-    variants: [standard, jump, gidd]  # sampler difference
-    dataset_overrides:
-      sudoku9:
-        n_samples: 10
   - config: configs/models/diffusiongemma.yaml
     variants: [official]
     dataset_overrides:
@@ -125,10 +105,6 @@ datasets:
     max_new_tokens: 64  # fallback; formal samples also carry this per sample
   - config: configs/datasets/hellobench.yaml
     max_new_tokens: 6144  # fallback; 2K samples override this to 3072
-  # Keep this last: an expected OOM here must occur only after every formal
-  # timing row for the model has completed.
-  - config: configs/datasets/ruler_context_probe.yaml
-    max_new_tokens: 64
 
 seed: 42
 

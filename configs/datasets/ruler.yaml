@@ -1,8 +1,6 @@
 # RULER-inspired controlled long-input comparison, not an official 13-task
 # NVIDIA RULER leaderboard run. Every model receives exactly 4096 encoded
-# input tokens and may generate up to 64 answer tokens. Model-specific capacity
-# is tested by the separate ruler_context_probe dataset and never mixed into
-# this formal quality/resource row.
+# input tokens and may generate up to 64 answer tokens.
 dataset: ruler
 dataset_class: dllm_bench.datasets.ruler.RulerDataset
 primary_metric: ruler_string_match_all

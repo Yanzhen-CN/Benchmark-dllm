@@ -27,6 +27,9 @@ def test_model_owned_private_renderer_uses_the_same_contract():
     assert visual.render_comparison is not None
 
 
-def test_missing_model_visual_has_an_actionable_path():
-    with pytest.raises(RuntimeError, match="visual/models/not_registered.py"):
-        load_model_visual("not_registered")
+def test_missing_model_visual_falls_back_to_public_layers():
+    visual = load_model_visual("not_registered")
+
+    assert visual.model_name == "not_registered"
+    assert visual.public_sample is True
+    assert visual.public_dataset is True

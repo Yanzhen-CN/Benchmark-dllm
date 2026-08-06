@@ -12,7 +12,7 @@ from dllm_bench.runner.output_layout import (
 )
 
 
-CONFIGS_DIR = Path(__file__).resolve().parents[1] / "configs"
+CONFIGS_DIR = Path(__file__).resolve().parents[2] / "configs"
 
 
 def test_generate_writes_model_config_dataset_under_stage_root(tmp_path):

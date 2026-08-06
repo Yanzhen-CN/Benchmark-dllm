@@ -7,6 +7,7 @@ import pytest
 from dllm_bench.datasets.base import Sample
 from dllm_bench.datasets.sudoku9 import SudokuReference
 from dllm_bench.interfaces import (
+    ForwardProfile,
     GenerationRequest,
     GenerationResult,
     PositionState,
@@ -22,11 +23,28 @@ from dllm_bench.visual.public.plots import plot_sudoku_revision_diagnostics
 
 
 def _result(trace: list[TraceStep], length: int) -> GenerationResult:
+    previous_accepted: set[int] = set()
+    profiles = []
+    for index, step in enumerate(trace):
+        current_accepted = {
+            position
+            for position, state in enumerate(step.position_states)
+            if state == PositionState.ACCEPTED
+        }
+        profiles.append(
+            ForwardProfile(
+                index,
+                "denoise_step",
+                accepted_tokens=len(current_accepted - previous_accepted),
+            )
+        )
+        previous_accepted = current_accepted
     return GenerationResult(
         request=GenerationRequest(prompt="p", max_new_tokens=length),
         output_text="1" * length,
         status=RunStatus.SUCCESS,
         trace=trace,
+        forward_profiles=profiles,
         num_forward_passes=len(trace),
         final_valid_length=length,
         timing=TimingResult(2.0),
@@ -170,8 +188,12 @@ def test_sudoku_revision_is_easy_hard_and_mapping_coverage_gated(tmp_path: Path)
 
     written = render_dataset_trace_report("sudoku9", records, tmp_path)
     assert Path(written["summary"]).exists()
-    assert Path(written["tpf_tps"]).exists()
-    assert set(written) == {"summary", "tpf_tps", "auxiliary_performance"}
+    assert Path(written["acceptance_throughput"]).exists()
+    assert set(written) == {
+        "summary",
+        "acceptance_throughput",
+        "auxiliary_performance",
+    }
 
     comparison_path = tmp_path / "sudoku_comparison.png"
     plot_sudoku_revision_diagnostics(

@@ -29,6 +29,7 @@ def _summary(model, config, q, tps=1.0, eps=None):
         "config_name": config,
         "q": q,
         "tps": tps,
+        "accepted_tps": tps,
         "sps": 0.5,
         "eps": eps,
         "cps": None,
@@ -163,7 +164,7 @@ def test_render_and_write_pairwise_outputs_smoke(tmp_path):
 def test_plot_quality_vs_resource_writes_file(tmp_path):
     rows = [raw_results_row(_summary("mock", "default", 0.8, tps=1.5))]
     out = tmp_path / "quality_time.png"
-    plot_quality_vs_resource(rows, "Tps", str(out))
+    plot_quality_vs_resource(rows, "Accepted TPS", str(out))
     assert out.exists()
     assert out.stat().st_size > 0
 
@@ -209,9 +210,9 @@ def test_render_sample_report_writes_expected_files(tmp_path):
         final_output_text=result.output_text,
         final_score=1.0,
     )
-    # Curated sample evidence keeps one DGtest-style all-update trace.
+    # Curated sample evidence keeps one DGtest-style accept/revision trace.
     for key in (
-        "all_updates",
+        "accept_trace",
         "result",
     ):
         assert key in written

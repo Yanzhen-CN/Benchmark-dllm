@@ -5,7 +5,7 @@ base_dir: ../..
 
 models:
   - config: configs/models/diffusiongemma.yaml
-    variants: [official]
+    variants: [official, SC2, SC05, SC0, EB2, EB05, Lg2, Lg05]
   - config: configs/models/gemma.yaml
     variants: [ar-baseline]
   - config: configs/models/gemma_dflash.yaml
@@ -15,21 +15,6 @@ datasets:
   - configs/datasets/gsm8k.yaml
   - configs/datasets/mbpp.yaml
   - configs/datasets/structeval_t.yaml
-  - config: configs/datasets/sudoku4.yaml
-    n_samples: 10
-    max_new_tokens: 256
-  - config: configs/datasets/sudoku9.yaml
-    max_new_tokens: 256
-  - config: configs/datasets/sudoku4_thinking.yaml
-    max_new_tokens: 2048
-    n_samples: 1
-  - config: configs/datasets/sudoku9_thinking.yaml
-    max_new_tokens: 2048
-    n_samples: 1
-  - config: configs/datasets/ruler.yaml
-    max_new_tokens: 64
-  - config: configs/datasets/hellobench.yaml
-    max_new_tokens: 6144
 
 seed: 42
 resource_measurement: reuse_formal_samples
