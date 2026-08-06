@@ -73,6 +73,7 @@ def dispatch_model_scripts(
     action: str,
     scripts_dir: str | Path = DEFAULT_VENV_SCRIPTS_DIR,
     env_updates: Mapping[str, str] | None = None,
+    action_args: Sequence[str] = (),
     dry_run: bool = False,
 ) -> None:
     scripts_dir = Path(scripts_dir).resolve()
@@ -83,7 +84,7 @@ def dispatch_model_scripts(
         script = scripts_dir / f"{model_name}.py"
         if not script.is_file():
             raise FileNotFoundError(f"model script not found: {script}")
-        command = [sys.executable, str(script), action]
+        command = [sys.executable, str(script), action, *action_args]
         print(f"[{index}/{len(model_names)}] {model_name}: {' '.join(command)}", flush=True)
         if not dry_run:
             subprocess.run(command, cwd=PROJECT_ROOT, env=environment, check=True)

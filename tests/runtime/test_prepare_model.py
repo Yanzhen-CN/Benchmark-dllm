@@ -21,11 +21,18 @@ def _run(args, cwd):
     # which sets HF_HOME as a real env var when a CLI command runs) —
     # subprocess.run inherits the parent environment by default, and these
     # tests specifically exercise the "nothing set yet" default path.
-    env = {k: v for k, v in os.environ.items() if k not in ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")}
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in (
+            "DLLM_DATA_ROOT", "HF_HOME", "HF_HUB_CACHE", "HF_XET_CACHE",
+            "HF_ASSETS_CACHE", "TRANSFORMERS_CACHE",
+        )
+    }
     # These direct-mode tests exercise the implementation entered by a model's
     # isolated venv wrapper.  The public root-Python path is covered separately
     # by the dispatch tests below.
     env["DLLM_VENV"] = "1"
+    env["DLLM_MODEL"] = "test-model"
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         cwd=cwd,
@@ -150,7 +157,7 @@ def test_prepare_model_matrix_mode_can_select_models(tmp_path):
 def test_prepare_model_direct_mode_dispatches_when_started_outside_venv(tmp_path):
     env = {
         key: value for key, value in os.environ.items()
-        if key not in ("DLLM_VENV", "VIRTUAL_ENV")
+        if key not in ("DLLM_MODEL", "DLLM_VENV", "VIRTUAL_ENV")
     }
     code = (
         "import runpy, sys; "
@@ -165,3 +172,17 @@ def test_prepare_model_direct_mode_dispatches_when_started_outside_venv(tmp_path
     )
     assert result.returncode == 0, result.stderr
     assert "illada.py prepare" in result.stdout
+
+
+def test_arbitrary_active_venv_is_not_mistaken_for_model_venv(monkeypatch):
+    monkeypatch.delenv("DLLM_MODEL", raising=False)
+    monkeypatch.setenv("DLLM_VENV", "/some/venv")
+
+    assert prepare_model._running_in_model_venv() is False
+
+
+def test_model_wrapper_marker_enters_direct_prepare_mode(monkeypatch):
+    monkeypatch.setenv("DLLM_MODEL", "illada")
+    monkeypatch.setenv("DLLM_VENV", "/managed/.venvs/illada")
+
+    assert prepare_model._running_in_model_venv() is True

@@ -9,10 +9,10 @@ loaded via ``from_pretrained(repo_id)`` (no local-path checkpoints needed;
 see ``configs/models/*.yaml``'s comments), so where that download lands is
 the only thing to control.
 
-:func:`configure_default_cache_dir` sets ``HF_HOME`` to
-``<repository>/data/huggingface``
-unless the caller has already set ``HF_HOME``/``HF_HUB_CACHE``/
-``TRANSFORMERS_CACHE`` themselves (any of those always wins). Must run
+:func:`configure_default_cache_dir` binds every Hugging Face cache variable
+to ``<DLLM_DATA_ROOT>/huggingface``. Generic variables inherited from a cloud
+image are deliberately replaced so that no model venv can silently redirect
+downloads to an ephemeral home directory. Must run
 before ``transformers``/``huggingface_hub`` are imported anywhere — both
 ``cli.py`` and ``prepare_model.py`` call this first, before any adapter's
 lazy HF import happens.
@@ -23,23 +23,21 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_OVERRIDE_ENV_VARS = ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")
-
-
 def configure_default_cache_dir(base_dir: str | Path | None = None) -> Path:
-    """Returns the effective HF cache directory, setting `HF_HOME` to a
-    project-relative default only if the user hasn't already pinned one."""
-    for var in _OVERRIDE_ENV_VARS:
-        existing = os.environ.get(var)
-        if existing:
-            return Path(existing)
-
+    """Return and export the single HF cache shared by every model venv."""
     if base_dir is None:
         from .data_paths import ensure_data_layout
 
         cache_dir = ensure_data_layout()["huggingface"]
     else:
-        cache_dir = Path(base_dir) / "data" / "huggingface"
+        cache_dir = (Path(base_dir) / "data" / "huggingface").resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
+    hub_dir = cache_dir / "hub"
+    hub_dir.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(cache_dir)
+    os.environ["HF_HUB_CACHE"] = str(hub_dir)
+    os.environ["HF_XET_CACHE"] = str(cache_dir / "xet")
+    os.environ["HF_ASSETS_CACHE"] = str(cache_dir / "assets")
+    os.environ.pop("TRANSFORMERS_CACHE", None)
+    os.environ.pop("HUGGINGFACE_HUB_CACHE", None)
     return cache_dir

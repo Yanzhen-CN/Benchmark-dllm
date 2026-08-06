@@ -9,15 +9,18 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Sequence
 
+from venv_scripts._model_script import installation_environment, shared_data_environment
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROOT_VENV = Path(
-    os.environ.get("DLLM_ROOT_VENV_DIR", REPO_ROOT / ".venvs" / "root")
+    Path(os.environ.get("DLLM_VENV_ROOT", REPO_ROOT / ".venvs")) / "root"
 ).expanduser().resolve()
 INSIDE_ROOT_VENV = "DLLM_ROOT_VENV_ACTIVE"
 
@@ -28,16 +31,18 @@ def venv_python(directory: Path | None = None) -> Path:
     return windows if os.name == "nt" else directory / "bin" / "python"
 
 
-def ensure_environment() -> Path:
+def ensure_environment(*, recreate: bool = False) -> Path:
     """Create or repair the root environment after explicit confirmation."""
     python = venv_python()
-    install_environment = os.environ.copy()
-    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
-    pip_cache = Path(
-        os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache")
+    install_environment = installation_environment()
+    venv_root = Path(
+        os.environ.get("DLLM_VENV_ROOT", REPO_ROOT / ".venvs")
     ).expanduser().resolve()
-    pip_cache.mkdir(parents=True, exist_ok=True)
-    install_environment["PIP_CACHE_DIR"] = str(pip_cache)
+    if ROOT_VENV.parent != venv_root or ROOT_VENV == venv_root:
+        raise SystemExit(f"refusing to manage root venv outside {venv_root}: {ROOT_VENV}")
+    if recreate and ROOT_VENV.exists():
+        print(f"Recreating root environment: {ROOT_VENV}", flush=True)
+        shutil.rmtree(ROOT_VENV)
 
     if not python.is_file():
         print(f"Creating root environment: {ROOT_VENV}", flush=True)
@@ -119,7 +124,7 @@ def run_in_root_venv(script: str | Path, argv: Sequence[str]) -> None:
     if os.environ.get(INSIDE_ROOT_VENV) == "1":
         return
     python = data_preparation_environment()
-    environment = os.environ.copy()
+    environment = shared_data_environment()
     environment[INSIDE_ROOT_VENV] = "1"
     script = Path(script).resolve()
     command = [str(python), str(script), *argv]
@@ -144,8 +149,15 @@ def run_in_root_venv(script: str | Path, argv: Sequence[str]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", nargs="?", default="setup", choices=("setup", "check"))
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="Delete and rebuild the managed root venv (setup only)",
+    )
     args = parser.parse_args(argv)
-    python = ensure_environment()
+    if args.recreate and args.action != "setup":
+        raise SystemExit("--recreate is only valid with the setup action")
+    python = ensure_environment(recreate=args.recreate)
     if args.action == "check":
         subprocess.run([str(python), "-m", "pip", "check"], cwd=REPO_ROOT, check=True)
         subprocess.run(

@@ -33,11 +33,9 @@ def ensure_data_layout(root: str | Path | None = None) -> dict[str, Path]:
         "root": resolved_root,
         "huggingface": resolved_root / "huggingface",
         "datasets": resolved_root / "datasets",
-        "pip_cache": resolved_root / "pip-cache",
+        "tmp": resolved_root / "tmp",
+        "torch_extensions": resolved_root / "torch-extensions",
     }
-    # Older preparation/setup callers used ``pip``; retain the alias while
-    # keeping upstream's clearer ``pip_cache`` key.
-    paths["pip"] = paths["pip_cache"]
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)
     # Keep the legacy dataset-cache variable synchronized. DLLM_DATA_ROOT (or

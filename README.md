@@ -77,12 +77,24 @@ Large caches default to the project volume:
 ```text
 data/huggingface/
 data/datasets/prepared/
-data/pip-cache/
-data/uv-cache/
+data/tmp/
 data/torch-extensions/
 ```
 
-The main location overrides are `HF_HOME`, `DLLM_DATA_ROOT`, `DLLM_DATA_CACHE`, `DLLM_PIP_CACHE_DIR`, `DLLM_UV_CACHE_DIR`, `DLLM_TORCH_EXTENSIONS_DIR`, `DLLM_VENV_DIR`, and `DLLM_ROOT_VENV_DIR`.
+`DLLM_DATA_ROOT` is the only cache/data location control and applies to every
+model environment. Hugging Face Hub, Xet, datasets, build temporary files and
+Torch extensions are all bound below that tree; inherited `HF_HOME` and legacy
+cache variables cannot redirect individual models elsewhere. Pip/uv download
+caches are disabled because their wheels duplicate packages already installed
+inside each venv. Model dependencies remain isolated under `.venvs/<model>/`,
+with the local non-model tools under `.venvs/root`. `DLLM_VENV_ROOT` is the only
+venv location override.
+
+To deliberately discard and rebuild selected environments:
+
+```bash
+python setup_venv.py -m diffusiongemma --recreate --check
+```
 
 ### 2. Generate on the GPU server
 

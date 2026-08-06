@@ -39,8 +39,9 @@ for source_path in (PROJECT_ROOT, SOURCE_ROOT):
         sys.path.insert(0, str(source_path))
 
 
-def _running_in_venv() -> bool:
-    return bool(os.environ.get("DLLM_VENV")) or sys.prefix != sys.base_prefix
+def _running_in_model_venv() -> bool:
+    """True only for a per-model wrapper, never for an arbitrary active venv."""
+    return bool(os.environ.get("DLLM_MODEL") and os.environ.get("DLLM_VENV"))
 
 
 def _download_snapshot(repo_id: str, revision: str | None, cache_dir: Path) -> str:
@@ -124,7 +125,7 @@ def main() -> None:
     if args.variant and args.variants:
         raise SystemExit("pass either --variant or --variants, not both")
 
-    if args.model_config and _running_in_venv() and not args.dry_run:
+    if args.model_config and _running_in_model_venv() and not args.dry_run:
         if args.model:
             raise SystemExit("pass either --model-config or -m/--model, not both")
         _prepare_one(args.model_config, args.variant, args.variants)

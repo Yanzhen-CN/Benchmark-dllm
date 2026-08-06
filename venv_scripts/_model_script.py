@@ -99,14 +99,17 @@ PROFILES: Mapping[str, ModelProfile] = {
 
 
 def venv_dir(profile: ModelProfile) -> Path:
-    override = os.environ.get("DLLM_VENV_DIR")
-    if override:
-        return Path(override).expanduser().resolve()
-    preferred = REPO_ROOT / ".venvs" / profile.venv_subdir
+    root_override = os.environ.get("DLLM_VENV_ROOT")
+    venv_root = (
+        Path(root_override).expanduser().resolve()
+        if root_override
+        else REPO_ROOT / ".venvs"
+    )
+    preferred = venv_root / profile.venv_subdir
     if preferred.exists():
         return preferred
     for legacy_subdir in profile.legacy_venv_subdirs:
-        legacy = REPO_ROOT / ".venvs" / legacy_subdir
+        legacy = venv_root / legacy_subdir
         if legacy.exists():
             return legacy
     return preferred
@@ -131,42 +134,62 @@ def installation_environment(
     avoid_uv_cache: bool = False,
 ) -> dict[str, str]:
     """Keep package caches and large build artifacts on the persistent data volume."""
-    environment = os.environ.copy()
-    data_root = Path(os.environ.get("DLLM_DATA_ROOT", REPO_ROOT / "data"))
-    pip_cache = Path(
-        os.environ.get("DLLM_PIP_CACHE_DIR", data_root / "pip-cache")
-    )
-    uv_cache = Path(
-        os.environ.get(
-            "DLLM_UV_CACHE_DIR",
-            os.environ.get("UV_CACHE_DIR", data_root / "uv-cache"),
-        )
-    )
-    build_tmp = Path(
-        os.environ.get("DLLM_BUILD_TMPDIR", data_root / "tmp")
-    )
-    torch_extensions = Path(
-        os.environ.get(
-            "DLLM_TORCH_EXTENSIONS_DIR", data_root / "torch-extensions"
-        )
-    )
-    for directory in (pip_cache, uv_cache, build_tmp, torch_extensions):
-        directory.expanduser().mkdir(parents=True, exist_ok=True)
-
-    environment.update(
-        PIP_CACHE_DIR=str(pip_cache.expanduser()),
-        UV_CACHE_DIR=str(uv_cache.expanduser()),
-        TMPDIR=str(build_tmp.expanduser()),
-        TMP=str(build_tmp.expanduser()),
-        TEMP=str(build_tmp.expanduser()),
-        TORCH_EXTENSIONS_DIR=str(torch_extensions.expanduser()),
-    )
+    environment = shared_data_environment()
+    # Do not retain duplicate copies of multi-gigabyte Torch/CUDA wheels.
+    # Downloads still use data/tmp, while installed packages live only in the
+    # selected model venv.
+    environment["PIP_NO_CACHE_DIR"] = "1"
+    environment["UV_NO_CACHE"] = "1"
     if prefer_vllm_precompiled:
         environment.setdefault("VLLM_USE_PRECOMPILED", "1")
     if avoid_uv_cache:
         # A cached vLLM install retains expanded copies of heavyweight packages
         # such as Torch. Keep only the final model venv on quota-limited volumes.
         environment.setdefault("UV_NO_CACHE", "1")
+    return environment
+
+
+def shared_data_environment() -> dict[str, str]:
+    """Bind every isolated venv to one persistent benchmark data tree."""
+    environment = os.environ.copy()
+    data_root = Path(
+        environment.get("DLLM_DATA_ROOT", REPO_ROOT / "data")
+    ).expanduser().resolve()
+    huggingface = (data_root / "huggingface").resolve()
+    paths = {
+        "datasets": data_root / "datasets",
+        "tmp": data_root / "tmp",
+        "torch": data_root / "torch-extensions",
+        "hf": huggingface,
+        "hf_hub": huggingface / "hub",
+        "hf_xet": huggingface / "xet",
+        "hf_assets": huggingface / "assets",
+    }
+    for directory in paths.values():
+        directory.mkdir(parents=True, exist_ok=True)
+    environment.update(
+        DLLM_DATA_ROOT=str(data_root),
+        DLLM_DATA_CACHE=str(paths["datasets"]),
+        HF_HOME=str(paths["hf"]),
+        HF_HUB_CACHE=str(paths["hf_hub"]),
+        HF_XET_CACHE=str(paths["hf_xet"]),
+        HF_ASSETS_CACHE=str(paths["hf_assets"]),
+        TMPDIR=str(paths["tmp"]),
+        TMP=str(paths["tmp"]),
+        TEMP=str(paths["tmp"]),
+        TORCH_EXTENSIONS_DIR=str(paths["torch"]),
+        TORCH_HOME=str(data_root / "torch-hub"),
+    )
+    for legacy_variable in (
+        "DLLM_HF_CACHE_DIR",
+        "DLLM_PIP_CACHE_DIR",
+        "DLLM_UV_CACHE_DIR",
+        "DLLM_BUILD_TMPDIR",
+        "DLLM_TORCH_EXTENSIONS_DIR",
+        "TRANSFORMERS_CACHE",
+        "HUGGINGFACE_HUB_CACHE",
+    ):
+        environment.pop(legacy_variable, None)
     return environment
 
 
@@ -332,7 +355,9 @@ def apply_cuda_compatibility(
     return environment
 
 
-def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
+def setup_environment(
+    profile: ModelProfile, cuda_index: str, *, recreate: bool = False
+) -> Path:
     if cuda_index not in CUDA_INDEXES:
         raise SystemExit(f"unsupported CUDA index {cuda_index}; use {', '.join(CUDA_INDEXES)}")
     if profile.torch_version and cuda_index not in profile.torch_cuda_indexes:
@@ -343,6 +368,14 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
         )
 
     directory = venv_dir(profile)
+    venv_root = Path(
+        os.environ.get("DLLM_VENV_ROOT", REPO_ROOT / ".venvs")
+    ).expanduser().resolve()
+    if directory.parent != venv_root or directory == venv_root:
+        raise SystemExit(f"refusing to manage venv outside {venv_root}: {directory}")
+    if recreate and directory.exists():
+        print(f"Recreating {profile.model_id} environment: {directory}", flush=True)
+        shutil.rmtree(directory)
     base_python = os.environ.get("PYTHON_BIN", sys.executable)
     install_env = installation_environment(
         prefer_vllm_precompiled=bool(profile.setup_requirements),
@@ -431,8 +464,13 @@ def setup_environment(profile: ModelProfile, cuda_index: str) -> Path:
         )
     run([python, "-m", "pip", "install", "-e", f".[{profile.extras}]"], env=install_env)
     check_installed_dependencies(profile, python, env=install_env)
-    run([python, "-c", _IMPORT_CHECK])
-    print(f"Environment ready: {profile.model_id}\nPath: {directory}")
+    run([python, "-c", _IMPORT_CHECK], env=install_env)
+    print(
+        f"Environment ready: {profile.model_id}\n"
+        f"Venv: {directory}\n"
+        f"Data: {install_env['DLLM_DATA_ROOT']}\n"
+        f"HF cache: {install_env['HF_HOME']}"
+    )
     return python
 
 
@@ -710,7 +748,7 @@ def repair_profile_dependencies(
 
 
 def model_environment(profile: ModelProfile) -> dict[str, str]:
-    environment = os.environ.copy()
+    environment = shared_data_environment()
     transfer_enabled = environment.get("HF_HUB_ENABLE_HF_TRANSFER", "").lower()
     python = venv_python(venv_dir(profile))
     if transfer_enabled in {"1", "true", "yes", "on"} and (
@@ -827,17 +865,24 @@ def build_parser(profile: ModelProfile) -> argparse.ArgumentParser:
     )
     parser.add_argument("action", nargs="?", default="run", choices=("setup", "check", "prepare", "run"))
     parser.add_argument("--cuda-index", default=os.environ.get("CUDA_INDEX", "cu124"), choices=CUDA_INDEXES)
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="Delete and rebuild this model's managed venv (setup only)",
+    )
     return parser
 
 
 def main(model_id: str, argv: Sequence[str] | None = None) -> int:
     profile = PROFILES[model_id]
     args = build_parser(profile).parse_args(argv)
+    if args.recreate and args.action != "setup":
+        raise SystemExit("--recreate is only valid with the setup action")
     if args.action == "setup":
-        setup_environment(profile, args.cuda_index)
+        setup_environment(profile, args.cuda_index, recreate=args.recreate)
         return 0
 
-    if args.action == "run":
+    if args.action in {"run", "prepare"}:
         python = run_environment(profile, args.cuda_index)
     else:
         python = require_environment(profile)
