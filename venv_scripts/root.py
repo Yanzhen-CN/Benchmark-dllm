@@ -21,7 +21,11 @@ if str(REPO_ROOT) not in sys.path:
     # editable installation are rooted one directory above it.
     sys.path.insert(0, str(REPO_ROOT))
 
-from venv_scripts._model_script import installation_environment, shared_data_environment
+from venv_scripts._model_script import (
+    bootstrap_python,
+    installation_environment,
+    shared_data_environment,
+)
 
 
 ROOT_VENV = Path(
@@ -51,7 +55,7 @@ def ensure_environment(*, recreate: bool = False) -> Path:
 
     if not python.is_file():
         print(f"Creating root environment: {ROOT_VENV}", flush=True)
-        subprocess.run([sys.executable, "-m", "venv", str(ROOT_VENV)], check=True)
+        subprocess.run([bootstrap_python(), "-m", "venv", str(ROOT_VENV)], check=True)
         subprocess.run(
             [
                 str(python), "-m", "pip", "install", "--upgrade",
