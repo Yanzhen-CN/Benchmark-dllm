@@ -32,13 +32,28 @@ _NON_ACCEPTING_FORWARD_PHASES = frozenset(
 
 
 def _accepted_token_count(generation: GenerationResult) -> int | None:
-    productive = [
-        profile
-        for profile in generation.forward_profiles
-        if profile.phase not in _NON_ACCEPTING_FORWARD_PHASES
-    ]
-    if productive and all(profile.accepted_tokens is not None for profile in productive):
-        return sum(int(profile.accepted_tokens or 0) for profile in productive)
+    if generation.trace and any(step.committed_positions for step in generation.trace):
+        total = 0
+        previous_states: list[object] = []
+        previous_tokens: list[int] = []
+        for step in generation.trace:
+            for raw_position in set(step.committed_positions or []):
+                position = int(raw_position)
+                if position < 0 or position >= len(step.token_ids):
+                    continue
+                state = step.position_states[position] if position < len(step.position_states) else None
+                if getattr(state, "value", state) != "accepted":
+                    continue
+                previously_accepted = (
+                    position < len(previous_states)
+                    and getattr(previous_states[position], "value", previous_states[position]) == "accepted"
+                )
+                previous_token = previous_tokens[position] if position < len(previous_tokens) else None
+                if not previously_accepted or previous_token != step.token_ids[position]:
+                    total += 1
+            previous_states = list(step.position_states)
+            previous_tokens = list(step.token_ids)
+        return total
 
     accepted_draft = generation.extra.get("accepted_draft_tokens")
     verification_passes = generation.extra.get("target_verification_passes")
@@ -47,15 +62,14 @@ def _accepted_token_count(generation: GenerationResult) -> int | None:
     ):
         return int(accepted_draft) + int(verification_passes)
 
-    if generation.trace:
-        # ``committed_positions`` is the accepted-event set for that forward,
-        # not a cumulative set.  Summing per-step events deliberately counts a
-        # DG position again after re-noise and re-acceptance.
-        if any(step.committed_positions for step in generation.trace):
-            return sum(
-                len({int(position) for position in step.committed_positions})
-                for step in generation.trace
-            )
+    productive = [
+        profile
+        for profile in generation.forward_profiles
+        if profile.phase not in _NON_ACCEPTING_FORWARD_PHASES
+    ]
+    if productive and all(profile.accepted_tokens is not None for profile in productive):
+        return sum(int(profile.accepted_tokens or 0) for profile in productive)
+
     return None
 
 

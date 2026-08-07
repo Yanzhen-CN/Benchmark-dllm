@@ -6,6 +6,7 @@ import csv
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import statistics
 from typing import Any
 
 from ...datasets.base import Sample
@@ -163,10 +164,10 @@ def plot_profiling_totals_comparison(
     return True
 
 
-def plot_normalized_step_comparison(
+def plot_step_comparison(
     series: list[ProfilingComparisonSeries], path: str | Path
 ) -> bool:
-    """Compare different-length executions on a shared normalized step axis."""
+    """Compare different-length executions using their recorded forward steps."""
     output = Path(path)
     available = [item for item in series if item.rows]
     if not available:
@@ -174,41 +175,71 @@ def plot_normalized_step_comparison(
         return False
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    import numpy as np
-
     colors = plt.get_cmap("Dark2").colors
     figure, axes = plt.subplots(2, 2, figsize=(14, 9), constrained_layout=True)
     has_kv = False
     for index, item in enumerate(available):
         color = colors[index % len(colors)]
-        progress = np.linspace(0.0, 1.0, len(item.rows))
-        axes[0, 0].plot(
-            progress,
-            [
-                _finite(row.accepted_tokens / row.time_seconds)
-                if row.accepted_tokens is not None
-                and row.accepted_tokens > 0
-                and row.time_seconds is not None
-                and row.time_seconds > 0
+        forward_steps = [row.step_index for row in item.rows]
+        cumulative_accepted = 0.0
+        cumulative_time = 0.0
+        cumulative_accepted_tps = []
+        for row in item.rows:
+            if row.accepted_tokens is not None and row.accepted_tokens > 0:
+                cumulative_accepted += float(row.accepted_tokens)
+            if row.time_seconds is not None and row.time_seconds > 0:
+                cumulative_time += float(row.time_seconds)
+            cumulative_accepted_tps.append(
+                cumulative_accepted / cumulative_time
+                if cumulative_time > 0
                 else float("nan")
-                for row in item.rows
-            ],
+            )
+        axes[0, 0].plot(
+            forward_steps,
+            cumulative_accepted_tps,
             color=color,
             label=item.label,
         )
+        compute_values = [_finite(row.compute_tflops) for row in item.rows]
         axes[0, 1].plot(
-            progress,
-            [_finite(row.compute_tflops) for row in item.rows],
+            forward_steps,
+            compute_values,
             color=color,
             label=item.label,
         )
+        if item.label.split("/", 1)[0] == "dreamreasoner":
+            denoise_compute = [
+                float(row.compute_tflops)
+                for row in item.rows
+                if row.phase not in {"prefill", "prefill_or_cache_build", "finalization"}
+                and row.compute_tflops is not None
+                and math.isfinite(float(row.compute_tflops))
+                and row.compute_tflops > 0
+            ]
+            if denoise_compute:
+                typical_compute = statistics.median(denoise_compute)
+                axes[0, 1].annotate(
+                    f"Dream denoise ≈ {typical_compute:.2f} TFLOP / step",
+                    xy=(0.58, typical_compute),
+                    xytext=(0.34, 0.14),
+                    textcoords="axes fraction",
+                    arrowprops={"arrowstyle": "->", "color": color, "linewidth": 1.1},
+                    bbox={
+                        "boxstyle": "round,pad=0.25",
+                        "facecolor": "white",
+                        "edgecolor": color,
+                        "alpha": 0.92,
+                    },
+                    color=color,
+                    fontsize=9,
+                )
         axes[1, 0].plot(
-            progress,
+            forward_steps,
             [_finite(row.attention_tokens) for row in item.rows],
             color=color,
         )
         axes[1, 0].plot(
-            progress,
+            forward_steps,
             [_finite(row.input_tokens) for row in item.rows],
             color=color,
             linestyle="--",
@@ -218,20 +249,24 @@ def plot_normalized_step_comparison(
         if any(math.isfinite(value) for value in kv_values):
             has_kv = True
             axes[1, 1].plot(
-                progress,
+                forward_steps,
                 kv_values,
                 color=color,
                 label=item.label,
             )
     panels = [
-        (axes[0, 0], "Accepted-token throughput per step", "Accepted-token TPS"),
+        (
+            axes[0, 0],
+            "Cumulative accepted-token throughput by step",
+            "Cumulative accepted-token TPS",
+        ),
         (axes[0, 1], "Compute per step", "TFLOP"),
         (axes[1, 0], "Input and effective attention span", "Tokens"),
         (axes[1, 1], "KV-cache length", "Tokens"),
     ]
     for axis, title, ylabel in panels:
         axis.set_title(title, weight="bold")
-        axis.set_xlabel("Normalized generation-step progress")
+        axis.set_xlabel("Recorded forward step")
         axis.set_ylabel(ylabel)
         axis.grid(alpha=0.22)
         axis.spines[["top", "right"]].set_visible(False)
@@ -273,6 +308,10 @@ def plot_normalized_step_comparison(
     figure.savefig(output, dpi=200, bbox_inches="tight")
     plt.close(figure)
     return True
+
+
+# Backward-compatible public name retained for existing visualization callers.
+plot_normalized_step_comparison = plot_step_comparison
 
 
 def plot_stage_share_comparison(
@@ -417,7 +456,7 @@ def render_profiling_comparison_report(
         selected = [item for item in series if item.dataset == dataset]
         safe_name = dataset.replace("/", "_").replace("\\", "_")
         step_path = output / f"profiling_step_comparison_{safe_name}.png"
-        if plot_normalized_step_comparison(selected, step_path):
+        if plot_step_comparison(selected, step_path):
             written[f"step_comparison_{safe_name}"] = str(step_path)
         stage_path = output / f"profiling_stage_comparison_{safe_name}.png"
         if plot_stage_share_comparison(selected, stage_path):

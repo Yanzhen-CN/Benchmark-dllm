@@ -293,8 +293,15 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
                 with self._profile_stage("canvas_update"):
                     cur_x[transfer_index] = x0[transfer_index]
                     x[:, block_start:block_end] = cur_x
+                valid_start = max(prompt_len, block_start) - block_start
+                valid_end = min(prompt_len + gen_length, block_end) - block_start
+                accepted_tokens = (
+                    int(transfer_index[:, valid_start:valid_end].sum().item())
+                    if valid_end > valid_start
+                    else 0
+                )
                 self._annotate_last_forward(
-                    accepted_tokens=int(transfer_index.sum().item()),
+                    accepted_tokens=accepted_tokens,
                     active_tokens=block_end - block_start,
                     eligible_tokens=int(mask_index.sum().item()),
                 )
@@ -326,8 +333,32 @@ class DreamReasonerAdapter(HFDiffusionAdapter):
         self._last_num_forward_passes = global_step
         output_length = min(total_length, prompt_len + gen_length)
         final_ids = x[0, prompt_len:output_length].tolist()
+        raw_eos_token_ids = getattr(self._tokenizer, "eos_token_id", None)
+        if isinstance(raw_eos_token_ids, int):
+            eos_token_ids = {raw_eos_token_ids}
+        elif isinstance(raw_eos_token_ids, (list, tuple, set)):
+            eos_token_ids = {int(value) for value in raw_eos_token_ids}
+        else:
+            eos_token_ids = set()
+        effective_output_length = next(
+            (
+                index + 1
+                for index, token_id in enumerate(final_ids)
+                if token_id in eos_token_ids
+            ),
+            len(final_ids),
+        )
+        self._last_stop_metadata.update(
+            {
+                "effective_output_length": effective_output_length,
+                "eos_truncated": effective_output_length < len(final_ids),
+                "accepted_token_scope": "full_output_canvas",
+            }
+        )
         with self._profile_stage("output_decode"):
-            output_text = self._tokenizer.decode(final_ids, skip_special_tokens=True)
+            output_text = self._tokenizer.decode(
+                final_ids[:effective_output_length], skip_special_tokens=True
+            )
         return output_text, trace, len(final_ids)
 
 

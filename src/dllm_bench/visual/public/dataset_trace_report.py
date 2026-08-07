@@ -17,6 +17,7 @@ from .trace_metrics import (
     visible_revision_profile,
     write_auxiliary_performance_csv,
 )
+from .token_grid_viz import meaningful_committed_positions
 from ...metrics.commit_order import (
     aggregate_commit_order,
     commit_order_tau_windows,
@@ -669,27 +670,53 @@ def build_dataset_trace_summary(
     accepted_events_per_forward: list[int] = []
     productive_forward_count: int | None = None
     acceptance_source: str | None = None
-    if acceptance_complete:
+    accepted_total_override: int | None = None
+    speculative_acceptance = [
+        (
+            result.extra.get("accepted_draft_tokens"),
+            result.extra.get("target_verification_passes"),
+        )
+        for _, result in usable
+    ]
+    speculative_acceptance_complete = bool(speculative_acceptance) and all(
+        isinstance(accepted_draft, (int, float))
+        and isinstance(verification_passes, (int, float))
+        for accepted_draft, verification_passes in speculative_acceptance
+    )
+    if all(result.trace and result.num_forward_passes > 0 for _, result in usable):
+        accepted_events_per_forward = [
+            sum(
+                1
+                for position in meaningful_committed_positions(result.trace, step_index)
+                if not isinstance(result.extra.get("effective_output_length"), int)
+                or position < result.extra["effective_output_length"]
+            )
+            for _, result in usable
+            for step_index, _ in enumerate(result.trace)
+        ]
+        productive_forward_count = sum(
+            int(result.num_forward_passes) for _, result in usable
+        )
+        acceptance_source = "trace_accept_events"
+    elif speculative_acceptance_complete:
+        accepted_total_override = sum(
+            int(accepted_draft) + int(verification_passes)
+            for accepted_draft, verification_passes in speculative_acceptance
+        )
+        productive_forward_count = sum(
+            int(result.num_forward_passes) for _, result in usable
+        )
+        acceptance_source = "speculative_output_events"
+    elif acceptance_complete:
         accepted_events_per_forward = [
             int(profile.accepted_tokens or 0) for profile in productive_profiles
         ]
         productive_forward_count = len(productive_profiles)
         acceptance_source = "forward_profiles"
-    elif all(result.trace and result.num_forward_passes > 0 for _, result in usable):
-        # Older complete runs may predate persisted ForwardProfile rows.  Their
-        # TraceStep.committed_positions still stores the accepted-event set for
-        # each real generation forward, including DG re-acceptance events.
-        accepted_events_per_forward = [
-            len({int(position) for position in step.committed_positions})
-            for _, result in usable
-            for step in result.trace
-        ]
-        productive_forward_count = sum(
-            int(result.num_forward_passes) for _, result in usable
-        )
-        acceptance_source = "trace_committed_events"
     total_accepted_tokens = (
-        sum(accepted_events_per_forward)
+        accepted_total_override
+        if accepted_total_override is not None
+        else sum(accepted_events_per_forward)
         if productive_forward_count is not None
         else None
     )

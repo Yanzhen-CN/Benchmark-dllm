@@ -116,13 +116,11 @@ def _valid_length(result: GenerationResult) -> int:
 def visible_revision_profile(
     result: GenerationResult, valid_length: int
 ) -> dict[str, Any] | None:
-    """Describe accepted-token identity revisions, excluding re-noising.
+    """Describe post-accept state changes without stable-mask repeats.
 
-    A revision requires the position to be committed again with a token that
-    differs from its previously committed token. Adjacent visible-canvas
-    changes are deliberately ignored because they include proposal refresh
-    and re-noising. Direction labels remain relative to the final generated
-    token, not ground truth.
+    Revoking an acceptance through re-noising and accepting that position again
+    are separate revision events. Re-accepting the same token still records
+    model reconsideration; direction labels only classify token identity changes.
     """
     trace = result.trace
     if not trace or valid_length <= 0 or not any(
@@ -138,25 +136,37 @@ def visible_revision_profile(
     harmful_by_step = [0] * len(trace)
     lateral_by_step = [0] * len(trace)
     cumulative_positions: list[int] = []
+    previous_accepted_positions: set[int] = set()
 
     for step_index, step in enumerate(trace):
-        for position in sorted(set(int(value) for value in step.committed_positions)):
+        current_accepted_positions = {
+            position
+            for position in range(min(valid_length, len(step.position_states)))
+            if getattr(step.position_states[position], "value", step.position_states[position]) == "accepted"
+        }
+        renoised_positions = previous_accepted_positions - current_accepted_positions
+        if renoised_positions:
+            events_by_step[step_index] += len(renoised_positions)
+            revised_positions.update(renoised_positions)
+        for position in sorted(meaningful_committed_positions(trace, step_index)):
             if position < 0 or position >= valid_length or position >= len(step.token_ids):
                 continue
             token = step.token_ids[position]
             previous = previous_committed_tokens.get(position)
-            if previous is not None and previous != token:
+            if previous is not None:
                 events_by_step[step_index] += 1
                 revised_positions.add(position)
-                final_token = final_tokens[position]
-                if previous != final_token and token == final_token:
-                    helpful_by_step[step_index] += 1
-                elif previous == final_token and token != final_token:
-                    harmful_by_step[step_index] += 1
-                else:
-                    lateral_by_step[step_index] += 1
+                if previous != token:
+                    final_token = final_tokens[position]
+                    if previous != final_token and token == final_token:
+                        helpful_by_step[step_index] += 1
+                    elif previous == final_token and token != final_token:
+                        harmful_by_step[step_index] += 1
+                    else:
+                        lateral_by_step[step_index] += 1
             previous_committed_tokens[position] = token
         cumulative_positions.append(len(revised_positions))
+        previous_accepted_positions = current_accepted_positions
 
     total_events = sum(events_by_step)
     return {

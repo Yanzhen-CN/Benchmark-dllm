@@ -228,23 +228,40 @@ def _bar(spec: dict[str, Any], path: Path) -> str:
     facets = list(dict.fromkeys(str(row.get(facet_key, "")) for row in rows)) or [""]
     columns = min(2, len(facets))
     rows_count = math.ceil(len(facets) / columns)
-    fig, axes = plt.subplots(rows_count, columns, figsize=(6.2 * columns, 3.8 * rows_count), squeeze=False)
-    for panel, facet in zip(axes.flat, facets):
+    fig, axes = plt.subplots(
+        rows_count,
+        columns,
+        figsize=(5.8 * columns, 3.35 * rows_count),
+        squeeze=False,
+    )
+    for panel_index, (panel, facet) in enumerate(zip(axes.flat, facets)):
         values = [row for row in rows if str(row.get(facet_key, "")) == facet]
         labels = [_display_label(row.get(category_key, "")) for row in values]
         numbers = [float(row[value_key]) for row in values]
         order = np.arange(len(labels))
         panel.barh(order, numbers, color=[COLORS[i % len(COLORS)] for i in range(len(labels))])
-        panel.set_yticks(order, labels)
+        if panel_index % columns == 0:
+            panel.set_yticks(order, labels, fontsize=8)
+        else:
+            panel.set_yticks(order, [])
         panel.invert_yaxis()
-        panel.set_title(_display_label(facet))
+        panel.set_title(_display_label(facet), fontsize=10, pad=10)
         panel.grid(axis="x", alpha=0.22)
+        maximum = max(numbers, default=0.0)
+        panel.set_xlim(0, maximum * 1.22 if maximum > 0 else 1.0)
         for y, value in zip(order, numbers):
-            panel.text(value, y, f" {value:.4g}", va="center", fontsize=8)
+            panel.text(value + maximum * 0.018, y, f"{value:.4g}", va="center", fontsize=8)
     for panel in list(axes.flat)[len(facets):]:
         panel.set_visible(False)
     fig.suptitle(_title(spec, path, "Comparison"), fontsize=15, weight="bold")
-    fig.tight_layout()
+    fig.subplots_adjust(
+        left=0.24,
+        right=0.97,
+        top=0.92,
+        bottom=0.07,
+        wspace=0.28,
+        hspace=0.52,
+    )
     return _finish(fig, path)
 
 

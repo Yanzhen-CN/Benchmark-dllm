@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import math
 from pathlib import Path
 from typing import Any
 
@@ -13,195 +11,218 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.lines import Line2D
-
-from ...runner.output_layout import run_id
-from .style import variant_color
-
-CORE_DATASETS = ("gsm8k", "mbpp", "structeval_t", "sudoku4", "sudoku9")
+from matplotlib.patches import Patch
 
 
-def _trace_summary(summary: dict[str, Any], output_root: Path) -> dict[str, Any]:
-    path = (
-        output_root
-        / "visualization_output"
-        / summary["model_name"]
-        / summary["config_name"]
-        / summary["dataset_name"]
-        / "dataset_trace_summary.json"
-    )
-    if not path.exists():
-        path = (
-            output_root
-            / "visualization_output"
-            / run_id(summary["model_name"], summary["config_name"])
-            / summary["dataset_name"]
-            / "dataset_trace_summary.json"
-        )
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+CORE_DATASETS = ("gsm8k", "mbpp", "structeval_t")
+DATASET_LABELS = {
+    "gsm8k": "GSM8K",
+    "mbpp": "MBPP",
+    "structeval_t": "StructEval-T",
+}
+MAIN_RUNS = (
+    ("illada", "p2"),
+    ("dreamreasoner", "p2"),
+    ("diffusiongemma", "official"),
+    ("gemma", "ar-baseline"),
+)
+RUN_LABELS = {
+    ("illada", "p2"): "iLLaDA P2",
+    ("dreamreasoner", "p2"): "DreamReasoner P2",
+    ("diffusiongemma", "official"): "DiffusionGemma",
+    ("gemma", "ar-baseline"): "Gemma AR",
+}
+RUN_COLORS = {
+    ("illada", "p2"): "#d97706",
+    ("dreamreasoner", "p2"): "#2563eb",
+    ("diffusiongemma", "official"): "#0f766e",
+    ("gemma", "ar-baseline"): "#64748b",
+}
+HARDWARE_GROUPS = (
+    (
+        "A100 80GB",
+        (("diffusiongemma", "official"), ("gemma", "ar-baseline")),
+    ),
+    (
+        "RTX 4090",
+        (("dreamreasoner", "p2"), ("illada", "p2")),
+    ),
+)
 
 
-def _paper_rows(
-    summaries: list[dict[str, Any]], output_root: Path
-) -> list[dict[str, Any]]:
-    rows = []
+def _number(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _paper_rows(summaries: list[dict[str, Any]]) -> dict[tuple[str, str, str], dict[str, float | None]]:
+    rows: dict[tuple[str, str, str], dict[str, float | None]] = {}
     for summary in summaries:
-        trace = _trace_summary(summary, output_root)
-        mean_tpf = summary.get("tpf", summary.get("accepted_tokens_per_forward"))
-        if not isinstance(mean_tpf, (int, float)):
-            mean_tpf = (trace.get("mean_tpf") or {}).get("mean")
-        q = summary.get("q")
-        seconds = summary.get("time_per_sample")
-        if not all(isinstance(value, (int, float)) for value in (q, seconds, mean_tpf)):
+        run = (str(summary.get("model_name")), str(summary.get("config_name")))
+        dataset = str(summary.get("dataset_name"))
+        if run not in MAIN_RUNS or dataset not in CORE_DATASETS:
             continue
-        rows.append(
-            {
-                "dataset": summary["dataset_name"],
-                "model": summary["model_name"],
-                "config": summary["config_name"],
-                "label": f"{summary['model_name']}/{summary['config_name']}",
-                "q": float(q),
-                "seconds": float(seconds),
-                "mean_tpf": float(mean_tpf),
-                "n": summary.get("n_samples"),
-                "sample_set": (summary.get("scoring_metadata") or {}).get("sample_set_hash"),
-            }
-        )
+        rows[(run[0], run[1], dataset)] = {
+            "quality": _number(summary.get("q")),
+            "seconds": _number(summary.get("time_per_sample")),
+            "energy": _number(summary.get("energy_per_sample")),
+        }
     return rows
 
 
-def _small_multiple_scatter(
-    rows: list[dict[str, Any]],
-    *,
-    x_key: str,
-    x_label: str,
-    title: str,
-    subtitle: str,
-    path: Path,
+def _save(fig, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=220, facecolor="#f8f6ef")
+    plt.close(fig)
+
+
+def _quality_comparison(
+    rows: dict[tuple[str, str, str], dict[str, float | None]], path: Path
 ) -> None:
-    datasets = [name for name in CORE_DATASETS if any(row["dataset"] == name for row in rows)]
-    if not datasets:
-        return
-    comparison_labels = list(dict.fromkeys(row["label"] for row in rows))
-    label_colors = {
-        label: variant_color(index) for index, label in enumerate(comparison_labels)
-    }
-    columns = min(3, len(datasets))
-    rows_count = math.ceil(len(datasets) / columns)
-    fig = plt.figure(
-        figsize=(6.2 * columns + 2.8, 4.7 * rows_count),
-        constrained_layout=True,
-    )
-    grid = fig.add_gridspec(
-        rows_count,
-        columns + 1,
-        width_ratios=[1.0] * columns + [0.34],
-    )
-    axes = np.empty((rows_count, columns), dtype=object)
-    for row_index in range(rows_count):
-        for column_index in range(columns):
-            axes[row_index, column_index] = fig.add_subplot(
-                grid[row_index, column_index]
-            )
-    legend_ax = fig.add_subplot(grid[:, columns])
-    legend_ax.axis("off")
-    for index, dataset in enumerate(datasets):
-        ax = axes[index // columns, index % columns]
-        values = [row for row in rows if row["dataset"] == dataset]
-        for row in values:
-            ax.scatter(
-                row[x_key],
-                row["q"],
-                s=52,
-                color=label_colors[row["label"]],
-                edgecolor="#1f2937",
-                linewidth=0.5,
-                zorder=3,
-            )
-        ax.set_title(dataset, weight="bold")
-        ax.set_xlabel(x_label)
-        ax.set_ylabel("Official primary quality")
-        ax.grid(color="#d1d5db", alpha=0.55, linewidth=0.7)
-        if x_key == "seconds" and values:
-            positive = [row[x_key] for row in values if row[x_key] > 0]
-            if positive and max(positive) / min(positive) >= 20:
-                ax.set_xscale("log")
-    for index in range(len(datasets), rows_count * columns):
-        axes[index // columns, index % columns].axis("off")
-    legend_handles = [
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            linestyle="none",
-            markerfacecolor=label_colors[label],
-            markeredgecolor="#1f2937",
-            markersize=7,
+    fig, axes = plt.subplots(1, len(CORE_DATASETS), figsize=(11.8, 4.3))
+    positions = np.arange(len(MAIN_RUNS))
+    colors = [RUN_COLORS[run] for run in MAIN_RUNS]
+    for index, (axis, dataset) in enumerate(zip(axes, CORE_DATASETS)):
+        values = [
+            (rows.get((run[0], run[1], dataset)) or {}).get("quality")
+            for run in MAIN_RUNS
+        ]
+        plotted = [value if value is not None else 0.0 for value in values]
+        bars = axis.barh(positions, plotted, color=colors, height=0.62)
+        axis.set_xlim(0, 1.08)
+        axis.set_title(DATASET_LABELS[dataset], fontsize=11, weight="bold", pad=10)
+        axis.set_yticks(
+            positions,
+            [RUN_LABELS[run] for run in MAIN_RUNS] if index == 0 else [],
+            fontsize=9,
         )
-        for label in comparison_labels
-    ]
-    legend = legend_ax.legend(
-        legend_handles,
-        comparison_labels,
-        loc="center left",
-        frameon=False,
-        fontsize=8,
-        borderaxespad=0.0,
-    )
-    heading = fig.suptitle(
-        f"{title}\n{subtitle}",
+        axis.invert_yaxis()
+        axis.grid(axis="x", alpha=0.24, linewidth=0.7)
+        axis.set_axisbelow(True)
+        for bar, value in zip(bars, values):
+            label = "N/A" if value is None else f"{value:.3f}"
+            axis.text(
+                min(bar.get_width() + 0.018, 1.035),
+                bar.get_y() + bar.get_height() / 2,
+                label,
+                va="center",
+                fontsize=8,
+            )
+    fig.suptitle(
+        "Primary quality by task",
         fontsize=15,
         weight="bold",
+        y=0.98,
     )
-    extra_artists = tuple(
-        artist for artist in (legend, heading) if artist is not None
+    fig.text(
+        0.5,
+        0.025,
+        "Scores are task-specific and are not pooled across datasets.",
+        ha="center",
+        fontsize=9,
+        color="#475569",
     )
-    fig.savefig(
-        path,
-        dpi=220,
-        bbox_inches="tight",
-        bbox_extra_artists=extra_artists,
+    fig.subplots_adjust(left=0.19, right=0.985, top=0.82, bottom=0.16, wspace=0.12)
+    _save(fig, path)
+
+
+def _resource_comparison(
+    rows: dict[tuple[str, str, str], dict[str, float | None]], path: Path
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(11.8, 7.5))
+    positions = np.arange(len(CORE_DATASETS))
+    metrics = (("seconds", "Time / sample (s)"), ("energy", "Energy / sample (J)"))
+    bar_height = 0.34
+
+    for row_index, (hardware, runs) in enumerate(HARDWARE_GROUPS):
+        for column_index, (metric, metric_label) in enumerate(metrics):
+            axis = axes[row_index, column_index]
+            maximum = 0.0
+            plotted_groups = []
+            for run_index, run in enumerate(runs):
+                values = [
+                    (rows.get((run[0], run[1], dataset)) or {}).get(metric)
+                    for dataset in CORE_DATASETS
+                ]
+                plotted = [value if value is not None else 0.0 for value in values]
+                offset = (run_index - (len(runs) - 1) / 2) * bar_height
+                bars = axis.barh(
+                    positions + offset,
+                    plotted,
+                    height=bar_height * 0.88,
+                    color=RUN_COLORS[run],
+                    label=RUN_LABELS[run],
+                )
+                plotted_groups.append((bars, values))
+                maximum = max(maximum, max(plotted, default=0.0))
+            axis.set_xlim(0, maximum * 1.24 if maximum > 0 else 1.0)
+            axis.set_yticks(
+                positions,
+                [DATASET_LABELS[name] for name in CORE_DATASETS]
+                if column_index == 0
+                else [],
+                fontsize=9,
+            )
+            axis.invert_yaxis()
+            axis.set_title(f"{hardware} | {metric_label}", fontsize=11, weight="bold", pad=10)
+            axis.grid(axis="x", alpha=0.24, linewidth=0.7)
+            axis.set_axisbelow(True)
+            for bars, values in plotted_groups:
+                for bar, value in zip(bars, values):
+                    if value is None:
+                        label = "N/A"
+                    elif metric == "energy":
+                        label = f"{value:,.0f}"
+                    else:
+                        label = f"{value:.2f}"
+                    axis.text(
+                        bar.get_width() + maximum * 0.018,
+                        bar.get_y() + bar.get_height() / 2,
+                        label,
+                        va="center",
+                        fontsize=8,
+                    )
+
+    legend = [
+        Patch(facecolor=RUN_COLORS[run], label=RUN_LABELS[run])
+        for run in MAIN_RUNS
+    ]
+    fig.legend(
+        handles=legend,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.925),
+        ncol=4,
+        frameon=False,
+        fontsize=9,
     )
-    plt.close(fig)
+    fig.suptitle("Measured latency and energy within hardware groups", fontsize=15, weight="bold", y=0.99)
+    fig.text(
+        0.5,
+        0.025,
+        "A100 and RTX 4090 rows are separate comparison groups and must not be ranked against each other.",
+        ha="center",
+        fontsize=9,
+        color="#475569",
+    )
+    fig.subplots_adjust(left=0.13, right=0.985, top=0.83, bottom=0.1, wspace=0.15, hspace=0.42)
+    _save(fig, path)
 
 
 def render_paper_assets(
     summaries: list[dict[str, Any]], report_root: str | Path
 ) -> list[Path]:
     report_root = Path(report_root)
-    output_root = report_root.parent
     out_dir = report_root / "paper_assets"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows = _paper_rows(summaries, output_root)
-    written = []
+    rows = _paper_rows(summaries)
+    written: list[Path] = []
 
-    latency_path = out_dir / "fig1_parallelism_quality_latency.png"
-    _small_multiple_scatter(
-        rows,
-        x_key="seconds",
-        x_label="Measured seconds / sample (lower is better)",
-        title="Quality and measured latency",
-        subtitle="Faceted by dataset; labels are model/config and quality is not pooled across tasks",
-        path=latency_path,
-    )
-    if latency_path.exists():
-        written.append(latency_path)
+    quality_path = out_dir / "fig1_main_quality_comparison.png"
+    _quality_comparison(rows, quality_path)
+    if quality_path.exists():
+        written.append(quality_path)
 
-    tpf_path = out_dir / "fig2_parallelism_quality_tpf.png"
-    _small_multiple_scatter(
-        rows,
-        x_key="mean_tpf",
-        x_label="Accepted-token events / model forward (TPF; higher is better)",
-        title="Quality and measured algorithmic parallelism",
-        subtitle="Faceted by dataset; repeated acceptance after re-noise is counted again",
-        path=tpf_path,
-    )
-    if tpf_path.exists():
-        written.append(tpf_path)
+    resource_path = out_dir / "fig2_resource_comparison.png"
+    _resource_comparison(rows, resource_path)
+    if resource_path.exists():
+        written.append(resource_path)
 
     return written

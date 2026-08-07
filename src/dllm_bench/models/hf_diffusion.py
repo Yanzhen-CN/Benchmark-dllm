@@ -52,9 +52,9 @@ def first_eos_position(tokenizer, token_ids: list[int]) -> tuple[int, int] | Non
 def decode_generated_ids_until_eos(
     tokenizer, token_ids: list[int]
 ) -> tuple[str, int, int | None]:
-    """Decode only the valid prefix before the first EOS token."""
+    """Decode through the first EOS token and include it in the valid length."""
     stop = first_eos_position(tokenizer, token_ids)
-    valid_length = stop[0] if stop is not None else len(token_ids)
+    valid_length = stop[0] + 1 if stop is not None else len(token_ids)
     output_text = tokenizer.decode(
         token_ids[:valid_length], skip_special_tokens=True
     )

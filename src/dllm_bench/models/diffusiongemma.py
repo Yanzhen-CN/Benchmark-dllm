@@ -205,13 +205,28 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         def wrapped_prepare_sampler(generation_config):
             sampler = original_prepare_sampler(generation_config)
             original_accept_canvas = sampler.accept_canvas
+            previous_accept_mask = None
+            previous_accepted_canvas = None
+            previous_cur_step = None
 
             def wrapped_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step):
-                nonlocal forward_count
+                nonlocal forward_count, previous_accept_mask, previous_accepted_canvas, previous_cur_step
                 forward_count += 1
                 with self._profile_stage("token_selection_and_canvas_update"):
                     accepted_canvas = original_accept_canvas(current_canvas, denoiser_canvas, logits, cur_step)
-                accepted_count = int(sampler.accepted_token_mask.sum().item())
+                step_value = int(cur_step.detach().cpu().item()) if torch.is_tensor(cur_step) else int(cur_step)
+                if previous_cur_step is not None and step_value > previous_cur_step:
+                    previous_accept_mask = None
+                    previous_accepted_canvas = None
+                accepted_mask = sampler.accepted_token_mask.bool()
+                if previous_accept_mask is None or previous_accepted_canvas is None:
+                    accepted_event_mask = accepted_mask
+                    renoised_mask = torch.zeros_like(accepted_mask)
+                else:
+                    token_changed = accepted_canvas.ne(previous_accepted_canvas)
+                    accepted_event_mask = accepted_mask & (~previous_accept_mask | token_changed)
+                    renoised_mask = previous_accept_mask & ~accepted_mask
+                accepted_count = int(accepted_event_mask.sum().item())
                 canvas_tokens = int(sampler.accepted_token_mask.numel())
                 self._annotate_last_forward(
                     accepted_tokens=accepted_count,
@@ -226,10 +241,15 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
                                 "cur_step": cur_step,
                                 "accepted_canvas": accepted_canvas.detach().to("cpu"),
                                 "accepted_token_mask": sampler.accepted_token_mask.detach().to("cpu"),
+                                "accepted_event_mask": accepted_event_mask.detach().to("cpu"),
+                                "renoised_mask": renoised_mask.detach().to("cpu"),
                                 "entropy": entropy.detach().to("cpu"),
                                 "vocab_size": logits.shape[-1],
                             }
                         )
+                previous_accept_mask = accepted_mask.detach().clone()
+                previous_accepted_canvas = accepted_canvas.detach().clone()
+                previous_cur_step = step_value
                 return accepted_canvas
 
             sampler.accept_canvas = wrapped_accept_canvas
@@ -418,6 +438,12 @@ def _build_trace_from_captured_steps(
         offset = canvas_index * canvas_length
         accepted_canvas = step_data["accepted_canvas"][0].tolist()
         accepted_mask = step_data["accepted_token_mask"][0].tolist()
+        accepted_event_mask_tensor = step_data.get("accepted_event_mask")
+        accepted_event_mask = (
+            accepted_event_mask_tensor[0].tolist()
+            if accepted_event_mask_tensor is not None
+            else accepted_mask
+        )
         entropy = step_data["entropy"][0].tolist()
         vocab_size = step_data["vocab_size"]
 
@@ -436,7 +462,7 @@ def _build_trace_from_captured_steps(
         # by comparing repeated accepted events at the same position.
         committed_positions = [
             offset + index
-            for index, accepted in enumerate(accepted_mask)
+            for index, accepted in enumerate(accepted_event_mask)
             if accepted
         ]
 

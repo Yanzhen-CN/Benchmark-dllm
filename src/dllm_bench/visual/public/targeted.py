@@ -43,46 +43,6 @@ def render_report_assets_from_output(
         if not _selected(str(summary.get("dataset_name", "")), wanted_datasets):
             continue
         summaries.append(summary)
-    for summary in summaries:
-        model_name = str(summary.get("model_name", ""))
-        config_name = str(summary.get("config_name", ""))
-        dataset_name = str(summary.get("dataset_name", ""))
-        trace_path = (
-            output
-            / "visualization_output"
-            / model_name
-            / config_name
-            / dataset_name
-            / "dataset_trace_summary.json"
-        )
-        if trace_path.exists():
-            continue
-        tpf = summary.get("tpf", summary.get("accepted_tokens_per_forward"))
-        if not isinstance(tpf, (int, float)):
-            continue
-        trace_summary = {
-            "dataset": dataset_name,
-            "model": model_name,
-            "config": config_name,
-            "selected_samples": summary.get("n_samples"),
-            "trace_samples": 0,
-            "trace_coverage_rate": 0.0,
-            "tpf": float(tpf),
-            "mean_tpf": {
-                "mean": float(tpf),
-                "basis": "total accepted-token events / productive model forwards",
-            },
-            "overview_only": True,
-            "note": (
-                "Minimal report dependency: accepted-token TPF from score summary. "
-                "Generate dataset scope for the complete Task 4 diagnostics."
-            ),
-        }
-        trace_path.parent.mkdir(parents=True, exist_ok=True)
-        trace_path.write_text(
-            json.dumps(trace_summary, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
     return [
         str(path)
         for path in render_paper_assets(summaries, output / "report")
