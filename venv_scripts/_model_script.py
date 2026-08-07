@@ -15,6 +15,25 @@ from typing import Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CUDA_INDEXES = ("cu118", "cu121", "cu124", "cu126")
+BOOTSTRAP_PYTHON_MARKER = REPO_ROOT / ".venvs" / ".bootstrap-python"
+
+
+def bootstrap_python() -> str:
+    """Return the shared interpreter used to create every managed venv."""
+    override = os.environ.get("PYTHON_BIN")
+    if override:
+        return str(Path(override).expanduser().resolve())
+    if BOOTSTRAP_PYTHON_MARKER.is_file():
+        configured = BOOTSTRAP_PYTHON_MARKER.read_text(encoding="utf-8").strip()
+        if configured:
+            python = Path(configured).expanduser().resolve()
+            if python.is_file():
+                return str(python)
+            raise SystemExit(
+                f"shared bootstrap Python is missing: {python}; "
+                f"repair {BOOTSTRAP_PYTHON_MARKER} before recreating environments"
+            )
+    return sys.executable
 
 
 @dataclass(frozen=True)
@@ -376,7 +395,7 @@ def setup_environment(
     if recreate and directory.exists():
         print(f"Recreating {profile.model_id} environment: {directory}", flush=True)
         shutil.rmtree(directory)
-    base_python = os.environ.get("PYTHON_BIN", sys.executable)
+    base_python = bootstrap_python()
     install_env = installation_environment(
         prefer_vllm_precompiled=bool(profile.setup_requirements),
         avoid_uv_cache=bool(profile.setup_requirements),
