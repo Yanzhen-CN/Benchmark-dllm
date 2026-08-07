@@ -105,6 +105,11 @@ class BaseModelAdapter(ABC):
         except (ImportError, RuntimeError):
             return
 
+    def _forward_profile_modules(self) -> tuple[object, ...]:
+        """Return the hookable entry points that represent model forwards."""
+        model = getattr(self, "_model", None)
+        return (model,) if model is not None else ()
+
     @contextmanager
     def _capture_model_forwards(
         self,
@@ -112,8 +117,13 @@ class BaseModelAdapter(ABC):
         compute_handle: ComputeHandle | None = None,
     ):
         enabled = bool(request.config.get("step_profiling"))
-        model = getattr(self, "_model", None)
-        if not enabled or model is None or not hasattr(model, "register_forward_pre_hook"):
+        models = tuple(
+            model
+            for model in self._forward_profile_modules()
+            if hasattr(model, "register_forward_pre_hook")
+            and hasattr(model, "register_forward_hook")
+        )
+        if not enabled or not models:
             yield
             return
 
@@ -121,7 +131,9 @@ class BaseModelAdapter(ABC):
         capture_time = compute_handle is None
 
         def before_forward(_module, args, kwargs):
-            explicit_phase = getattr(self, "_active_forward_phase", None)
+            explicit_phase = kwargs.get("_dllm_profile_phase") or getattr(
+                self, "_active_forward_phase", None
+            )
             input_ids = kwargs.get("input_ids")
             if input_ids is None and args:
                 input_ids = args[0]
@@ -211,13 +223,19 @@ class BaseModelAdapter(ABC):
             if callable(compute_progress):
                 compute_progress(len(self._forward_profiles))
 
-        pre_handle = model.register_forward_pre_hook(before_forward, with_kwargs=True)
-        post_handle = model.register_forward_hook(after_forward, with_kwargs=True)
+        handles = []
+        for model in models:
+            handles.append(
+                model.register_forward_pre_hook(before_forward, with_kwargs=True)
+            )
+            handles.append(
+                model.register_forward_hook(after_forward, with_kwargs=True)
+            )
         try:
             yield
         finally:
-            pre_handle.remove()
-            post_handle.remove()
+            for handle in handles:
+                handle.remove()
 
     def _annotate_last_forward(
         self,

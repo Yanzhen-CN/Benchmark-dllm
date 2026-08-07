@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import copy
 import math
+from contextlib import contextmanager
 
 from ..interfaces import GenerationRequest, GenerationResult, PositionState, RunStatus, TraceStep
 from .base import BaseModelAdapter
@@ -39,6 +40,78 @@ from .prompting import tokenize_instruction_prompt
 
 DEFAULT_DIFFUSIONGEMMA_CHECKPOINT = "google/diffusiongemma-26B-A4B-it"
 DEFAULT_MAX_DENOISING_STEPS = 48
+
+
+class _HookHandle:
+    def __init__(self, hooks: dict[int, object], hook_id: int) -> None:
+        self._hooks = hooks
+        self._hook_id = hook_id
+
+    def remove(self) -> None:
+        self._hooks.pop(self._hook_id, None)
+
+
+class _ProfiledForwardRouter:
+    """Expose cached DG callables through the standard forward-hook interface."""
+
+    def __init__(self) -> None:
+        self._next_hook_id = 0
+        self._active_calls = 0
+        self._pre_hooks: dict[int, tuple[object, bool]] = {}
+        self._post_hooks: dict[int, tuple[object, bool]] = {}
+
+    def _register(self, hooks, hook, with_kwargs: bool):
+        hook_id = self._next_hook_id
+        self._next_hook_id += 1
+        hooks[hook_id] = (hook, with_kwargs)
+        return _HookHandle(hooks, hook_id)
+
+    def register_forward_pre_hook(self, hook, *, with_kwargs: bool = False):
+        return self._register(self._pre_hooks, hook, with_kwargs)
+
+    def register_forward_hook(self, hook, *, with_kwargs: bool = False):
+        return self._register(self._post_hooks, hook, with_kwargs)
+
+    def invoke(self, target, args, kwargs, phase: str):
+        if self._active_calls:
+            return target(*args, **kwargs)
+
+        self._active_calls += 1
+        profile_kwargs = dict(kwargs)
+        profile_kwargs["_dllm_profile_phase"] = phase
+        if "input_ids" not in profile_kwargs and "decoder_input_ids" in kwargs:
+            profile_kwargs["input_ids"] = kwargs["decoder_input_ids"]
+        try:
+            for hook, with_kwargs in tuple(self._pre_hooks.values()):
+                if with_kwargs:
+                    hook(self, args, profile_kwargs)
+                else:
+                    hook(self, args)
+
+            output = target(*args, **kwargs)
+
+            for hook, with_kwargs in tuple(self._post_hooks.values()):
+                if with_kwargs:
+                    replacement = hook(self, args, profile_kwargs, output)
+                else:
+                    replacement = hook(self, args, output)
+                if replacement is not None:
+                    output = replacement
+            return output
+        finally:
+            self._active_calls -= 1
+
+
+class _RoutedForward:
+    def __init__(
+        self, target, router: _ProfiledForwardRouter, phase: str
+    ) -> None:
+        self._target = target
+        self._router = router
+        self._phase = phase
+
+    def __call__(self, *args, **kwargs):
+        return self._router.invoke(self._target, args, kwargs, self._phase)
 
 
 class DiffusionGemmaAdapter(BaseModelAdapter):
@@ -73,6 +146,52 @@ class DiffusionGemmaAdapter(BaseModelAdapter):
         self._inference_dtype = "bfloat16"
         self._model = None
         self._processor = None
+
+    def _forward_profile_modules(self) -> tuple[object, ...]:
+        router = getattr(self, "_profiled_forward_router", None)
+        return (router,) if router is not None else super()._forward_profile_modules()
+
+    @contextmanager
+    def _capture_model_forwards(self, request, compute_handle=None):
+        enabled = bool(request.config.get("step_profiling"))
+        if not enabled or self._model is None:
+            with super()._capture_model_forwards(request, compute_handle):
+                yield
+            return
+
+        router = _ProfiledForwardRouter()
+        encoder = getattr(getattr(self._model, "model", None), "encoder", None)
+        original_forward = self._model.forward
+        original_encoder_forward = encoder.forward if encoder is not None else None
+        compiled_decoder = getattr(self._model, "_compiled_decoder_forward", None)
+        compiled_encoder = getattr(self._model, "_compiled_encoder", None)
+
+        self._profiled_forward_router = router
+        self._model.forward = _RoutedForward(original_forward, router, "denoise")
+        if encoder is not None:
+            encoder.forward = _RoutedForward(
+                original_encoder_forward, router, "prefill_or_cache_build"
+            )
+        if compiled_decoder is not None:
+            self._model._compiled_decoder_forward = _RoutedForward(
+                compiled_decoder, router, "denoise"
+            )
+        if compiled_encoder is not None:
+            self._model._compiled_encoder = _RoutedForward(
+                compiled_encoder, router, "prefill_or_cache_build"
+            )
+        try:
+            with super()._capture_model_forwards(request, compute_handle):
+                yield
+        finally:
+            self._model.forward = original_forward
+            if encoder is not None:
+                encoder.forward = original_encoder_forward
+            if compiled_decoder is not None:
+                self._model._compiled_decoder_forward = compiled_decoder
+            if compiled_encoder is not None:
+                self._model._compiled_encoder = compiled_encoder
+            self._profiled_forward_router = None
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
